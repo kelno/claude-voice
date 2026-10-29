@@ -8,7 +8,7 @@ import pytest
 from fakes import FakeClaude, result
 from mcp.client import Client
 
-from claude_voice.server import build_server
+from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 from claude_voice.transcripts import recent_turns
@@ -109,7 +109,7 @@ async def test_message_goes_to_the_open_session_by_name(tmp_path, root, live):
     _, srv = server_for(tmp_path, root, live, deliver=deliver)
     async with Client(srv) as c:
         out = await call(c, "message_active_session", session="billing-ab", message="status?")
-    assert deliver.sent == [("billing-ab", "status?")]
+    assert deliver.sent == [("billing-ab", f"status?\n\n{RELAYED_MESSAGE_NOTE}")]
     assert out["delivered"] is True
 
 

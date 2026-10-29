@@ -35,6 +35,14 @@ if TYPE_CHECKING:
 
 CANCEL_GRACE_SECONDS = 10.0
 MAX_FIELD_CHARS = 300
+# Added to the instructions of every session the bridge starts: who reads it, and how to answer.
+RELAYED_TASK_NOTE = (
+    "Your tasks come from the relay, the voice assistant the owner is talking to, through the "
+    "claude-voice bridge. The owner sees neither this conversation nor your replies unless the "
+    "relay passes them on; the relay reads your final reply text. Address the relay, not the "
+    "owner, write for an agent, and make every reply self-contained: name things instead of "
+    "pointing back to earlier text."
+)
 
 ClientFactory = Callable[[ClaudeAgentOptions], Any]
 
@@ -169,6 +177,7 @@ class SessionManager:
             # and permission rules apply, and nothing is silently pre-approved.
             setting_sources=["user", "project", "local"],
             permission_mode="default",
+            system_prompt={"type": "preset", "preset": "claude_code", "append": RELAYED_TASK_NOTE},
             # The owner's claude.ai connectors (Calendar, Drive, ...) are not the
             # task's business, and their sign-in notes would be read aloud.
             settings=json.dumps({"disableClaudeAiConnectors": True}),
