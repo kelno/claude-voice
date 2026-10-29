@@ -62,3 +62,9 @@ name = "no tool call waits longer than the cap"
 file = "src/claude_voice/server.py"
 find = 'return max\(0\.0, min\(seconds, max_wait_seconds\)\)'
 replace = 'return max(0.0, seconds)'
+
+[[rule]]
+name = "a reply is final only once the turn has ended"
+file = "src/claude_voice/server.py"
+find = '"reply_final": bool\(new\) and status in'
+replace = '"reply_final": True,'

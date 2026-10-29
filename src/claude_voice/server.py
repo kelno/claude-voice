@@ -94,6 +94,11 @@ Talking to a session
 - No call waits longer than 20 seconds, whatever wait_seconds asks: the app drops
   a call after about 30. Past that a call says "still_working" (or
   "still_running"), and you read on with the matching read tool.
+- An open session's reply is its final word only when reply_final is true. With
+  "still_working", reply is its latest message so far: whole, and possibly
+  already the answer, but more may follow. Don't report it as finished, or as
+  cut off; read on with read_session_output(after=next_after) until its status
+  is "idle", which means its turn has ended.
 - Open sessions and the side session have the same three ways in:
   - send and return (a few seconds): message_active_session, or
     message_forked_session for the side session. Use it when your next step
@@ -829,8 +834,10 @@ def build_server(
         session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
     ) -> dict[str, Any]:
         """Ask a Claude Code session that is open right now, and wait (at most 20 s) for its answer.
-        status: "answered", "needs_input" (it waits for its user), "still_working" (the
-        wait ran out; continue with read_session_output(after=next_after)),
+        reply_final is true once its turn has ended, so reply is its last word; while false,
+        reply is its latest message so far, whole and maybe already the answer, but more may
+        follow. status: "answered", "needs_input" (it waits for its user), "still_working" (the
+        wait ran out before its turn ended; continue with read_session_output(after=next_after)),
         "session_ended" (it exited meanwhile), "not_received" (the message never reached
         its conversation), "moved" (the conversation now lives in moved_to; nothing sent),
         or "needs_choice" (it waits for its user to pick one of question.options; answer
@@ -929,6 +936,8 @@ def build_server(
             "status": status,
             "session_ended": status == "session_ended",
             "reply": new[-1]["text"] if new else "",
+            # RULE: a reply is final only once the turn has ended
+            "reply_final": bool(new) and status in ("answered", "needs_input", "needs_choice"),
             "turns": new,
             "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),

@@ -125,6 +125,31 @@ async def test_a_session_still_working_when_the_wait_ends_gives_a_cursor(tmp_pat
     assert later["next_after"] == out["next_after"] + 1
 
 
+async def test_a_reply_is_final_only_once_the_turn_has_ended(tmp_path, root, live):
+    # Seen live: the whole answer was written, the turn not yet closed at the cap, and
+    # the relay could not tell a finished reply from a partial one.
+    target = Target(live, str(root / "billing"))
+    closes = []
+
+    async def deliver(name, text):
+        target.set("busy")
+        target.transcript.append(msg("user", text))
+        target.says("Here is the whole answer.")
+        if closes:
+            target.set("idle")
+        return {"delivered": True, "detail": "DELIVERED"}
+
+    async with Client(bridge(tmp_path, root, live, target, deliver)) as c:
+        so_far = await call(c, "ask_active_session", session="billing-ab", message="go", wait_seconds=0.2)
+        closes.append(True)
+        done = await call(c, "ask_active_session", session="billing-ab", message="again", wait_seconds=5)
+    assert so_far["status"] == "still_working"
+    assert so_far["reply"] == "Here is the whole answer."
+    assert so_far["reply_final"] is False
+    assert done["status"] == "answered"
+    assert done["reply_final"] is True
+
+
 async def test_a_session_that_exits_during_the_wait_is_reported_at_once(tmp_path, root, live):
     target = Target(live, str(root / "billing"))
 
