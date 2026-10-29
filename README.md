@@ -90,9 +90,9 @@ then give it a public address.
 | `request_access`, `revoke_access` | open a listed session's folder to the bridge for good, with your approval in the app; close it again |
 | `start_active_session` | start a new Claude Code session in the background, ready to talk to at once |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
-| `message_active_session` | send a message into a session that is open in a terminal |
+| `message_active_session` | send a message into a session that is open in a terminal, and return once delivered |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
-| `ask_forked_session` | ask the side session: a read-only fork of a busy session's whole conversation, which can read the code, while the session keeps working |
+| `ask_forked_session`, `message_forked_session`, `read_forked_session` | ask the side session, a read-only fork of a busy session's whole conversation that can read the code: ask and wait (at most 20 s), send and return, or read its answer later |
 | `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `read_session_output`, `search_session_history` | read what such a session said lately, or search everything it said |

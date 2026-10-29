@@ -56,3 +56,9 @@ name = "the side session never runs a tool that can change anything"
 file = "src/claude_voice/fork.py"
 find = 'if tool in READ_TOOLS:'
 replace = 'if True:'
+
+[[rule]]
+name = "no tool call waits longer than the cap"
+file = "src/claude_voice/server.py"
+find = 'return max\(0\.0, min\(seconds, max_wait_seconds\)\)'
+replace = 'return max(0.0, seconds)'
