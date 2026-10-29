@@ -34,6 +34,14 @@ MESSAGE = re.compile(r'<cross-session-message from="(?P<address>[^"]*)" from-nam
 SOCKET_PID = re.compile(r"/(\d+)\.sock$")
 
 
+def session_kind(d: dict[str, Any]) -> str:
+    """What a running session is, from its registry file: desktop, terminal or background."""
+    # The desktop app registers its sessions as interactive too; only the entrypoint tells.
+    if d.get("entrypoint") == "claude-desktop":
+        return "desktop"
+    return "terminal" if d.get("kind") == "interactive" else "background"
+
+
 def _pid_alive(pid: int) -> bool:
     return procs.alive(pid)
 
@@ -189,7 +197,7 @@ class SessionTree:
             nodes[sid] = {
                 "id": sid,
                 "name": d.get("name"),
-                "kind": "terminal" if d.get("kind") == "interactive" else "background",
+                "kind": session_kind(d),
                 "project": self._project(d.get("cwd")),
                 "status": d.get("status"),
                 "parent_id": None,

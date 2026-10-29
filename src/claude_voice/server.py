@@ -30,7 +30,7 @@ from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionBusy, SessionClosed, SessionManager
 from .store import SessionNotFound, Store
-from .tree import PROJECTS_DIR, SessionTree
+from .tree import PROJECTS_DIR, SessionTree, session_kind
 
 MIN_TOKEN_CHARS = 32
 READ_ONLY = ToolAnnotations(read_only_hint=True)
@@ -492,7 +492,8 @@ def build_server(
     def fleet_recap() -> dict[str, Any]:
         """Every session in one call: running Claude Code sessions and the bridge's own
         (active in the last day), each with status and `doing`, one line on what it is
-        doing. Answers "what are my sessions up to?" without reading each one."""
+        doing. Answers "what are my sessions up to?" without reading each one. kind:
+        "desktop" (open in the desktop app), "terminal", "background" or "bridge-session"."""
         sessions = []
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         for row in running():
@@ -510,7 +511,7 @@ def build_server(
             item = {
                 "id": row["claude_session_id"],
                 "name": row["name"],
-                "kind": "terminal" if row["kind"] == "interactive" else "background",
+                "kind": session_kind({**d, "kind": row["kind"]}),
                 "project": row["project"],
                 "status": row["status"],
                 "doing": doing,
