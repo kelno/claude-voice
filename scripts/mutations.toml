@@ -50,3 +50,9 @@ name = "only a Desktop scratch folder is opened inside a denied folder"
 file = "src/claude_voice/access.py"
 find = 'if inside is not None and not self._exempted\(p\):'
 replace = 'if inside is not None:'
+
+[[rule]]
+name = "the side session never runs a tool that can change anything"
+file = "src/claude_voice/fork.py"
+find = 'if tool in READ_TOOLS:'
+replace = 'if True:'

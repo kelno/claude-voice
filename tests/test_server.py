@@ -244,6 +244,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "digest_session",
         "peek_session",
         "wait_for_session",
+        "ask_forked_session",
     }
     for name in read_only:
         ann = tools[name].annotations

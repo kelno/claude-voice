@@ -24,7 +24,7 @@ from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 from starlette.types import ASGIApp
 
-from . import access, events, metrics, transcripts
+from . import access, events, fork, metrics, transcripts
 from .approvals import ApprovalBroker, ApprovalNotFound
 from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
@@ -941,6 +941,23 @@ def build_server(
         kept, skipped = conversation_end(target, side_chars)
         answer = await side_answer("\n".join(kept), question, language)
         return {"answer": transcripts.whole_sentences(answer, 300), "considered_turns": len(kept), "cut": bool(skipped)}
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def ask_forked_session(session: str, question: str, wait_seconds: float = 180) -> dict[str, Any]:
+        """Ask the side session: a new fork of a running session's whole conversation that can
+        read the project's files and answers `question` while the session itself keeps working,
+        untouched (each question forks anew, so it starts from the latest state). It is
+        read-only, since the bridge refuses any tool that could change something; it takes
+        seconds to minutes (wait up to 300 s), and you report its answer as the side session's."""
+        target = find_live(session)
+        out = await fork.ask(
+            manager.client_factory,
+            str(target["sessionId"]),
+            str(target["cwd"]),
+            question,
+            max(min(wait_seconds, 300), 1),
+        )
+        return {"session": target.get("name"), **out}
 
     @mcp.tool(annotations=READ_ONLY)
     async def digest_session(session: str, question: str | None = None, language: str | None = None) -> dict[str, Any]:
