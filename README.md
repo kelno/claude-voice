@@ -74,7 +74,7 @@ then give it a public address.
 
 | Tool | What it is for |
 | --- | --- |
-| `list_projects` | the folders Claude was used in lately, or any folder found by a word from its name |
+| `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
 | `wait_for_session` | wait until a session the bridge started finishes or needs an approval, then its recap; instead of asking again and again |

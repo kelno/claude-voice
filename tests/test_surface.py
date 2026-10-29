@@ -1,5 +1,6 @@
 """A small tool surface: few tools, few parameters, and a project list that fits in a voice."""
 
+import json
 import os
 import time
 
@@ -68,6 +69,39 @@ async def test_the_project_list_is_never_longer_than_twenty(world):
         folder(world, f"p{i:02}", used_days_ago=1)
     assert len(await projects(world[2])) == 20
     assert len(await projects(world[2], query="p")) == 20
+
+
+def used_elsewhere(world, path, days_ago=1):
+    """A folder outside the root that Claude Code was used in, as its history records it."""
+    _, projects, _ = world
+    path.mkdir(parents=True, exist_ok=True)
+    key = projects / project_key_for_directory(str(path))
+    key.mkdir()
+    f = key / "s0.jsonl"
+    lines = [{"type": "queue-operation"}, {"type": "user", "cwd": str(path)}]
+    f.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    when = time.time() - days_ago * DAY
+    os.utime(f, (when, when))
+
+
+async def projects_named(srv, **args):
+    return {p["name"]: p for p in await projects(srv, **args)}
+
+
+async def test_the_project_list_includes_folders_claude_was_used_in_anywhere(world):
+    root, _, srv = world
+    folder(world, "billing", used_days_ago=2)
+    notes = root.parent / "notes"
+    used_elsewhere(world, notes, days_ago=1)
+    used_elsewhere(world, root.parent / "old-notes", days_ago=60)
+    used_elsewhere(world, root.parent / "deleted-since", days_ago=1)
+    (root.parent / "deleted-since").rmdir()  # its history outlives it
+    out = await projects_named(srv)
+    assert list(out) == [str(notes.resolve()), "billing"]  # newest first
+    assert out[str(notes.resolve())]["access"] == "folder_not_open"
+    assert "access" not in out["billing"]
+    found = await projects_named(srv, query="notes")
+    assert set(found) == {str(notes.resolve()), str((root.parent / "old-notes").resolve())}
 
 
 async def test_tools_covered_by_others_are_gone_and_the_rest_take_few_parameters(world):
