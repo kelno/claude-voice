@@ -76,6 +76,17 @@ async def test_waiting_gives_up_after_the_wait_and_says_the_task_still_runs(tmp_
         await call(client, "cancel", session_id=s["id"])
 
 
+async def test_waiting_after_the_task_already_ended_says_it_finished(tmp_path, root):
+    m, server = make(tmp_path, root, [init("c-1"), result("Quick one.", "c-1")])
+    async with Client(server) as client:
+        s = await call(client, "create_session", project="app")
+        await call(client, "send_task", session_id=s["id"], prompt="go")
+        await m.wait(s["id"])  # done before anyone waits
+        out = await call(client, "wait_for_session", session_id=s["id"], wait_seconds=10)
+    assert out["waited"] == "finished"
+    assert out["last_result"] == "Quick one."
+
+
 async def test_waiting_on_a_session_with_no_task_returns_at_once(tmp_path, root):
     m, server = make(tmp_path, root)
     async with Client(server) as client:

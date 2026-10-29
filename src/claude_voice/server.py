@@ -359,12 +359,14 @@ def build_server(
         approval, then return its recap; use it after send_task or approve instead of
         polling session_recap. waited: "finished" (status says how it ended),
         "needs_approval" (read pending_approvals to the user), "still_running" (the wait
-        ran out; call again), or "not_running" (it had no task)."""
+        ran out; call again), or "not_running" (it was never given a task)."""
         session_id = known(session_id)
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(min(wait_seconds, 300), 0)
         if store.get_session(session_id)["status"] != "running":
-            waited = "not_running"
+            # A quick task can end before anyone waits: its end is still news.
+            had_task = any(e["kind"] == "prompt" for e in store.events(session_id))
+            waited = "finished" if had_task else "not_running"
         else:
             while True:
                 recap = manager.recap(session_id)
