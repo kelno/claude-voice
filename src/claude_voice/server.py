@@ -504,8 +504,8 @@ def build_server(
                 continue
             d = live_by_id.get(str(row["claude_session_id"]), {})
             if row["status"] == "moved":
-                where = row["moved_to"]["name"] or "en annen økt"
-                doing = f"flyttet til {where}"
+                where = row["moved_to"]["name"] or "another session"
+                doing = f"moved to {where}"
             else:
                 doing = transcripts.doing_line(str(row["claude_session_id"]), str(d.get("cwd")), projects_dir)
             item = {

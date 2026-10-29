@@ -41,7 +41,7 @@ def setup(tmp_path):
 
 
 class Answerer:
-    def __init__(self, answer="Elleve av tolv tester passerte. Den siste fikses nå."):
+    def __init__(self, answer="Eleven of twelve tests passed. The last one is being fixed now."):
         self.answer = answer
         self.calls = []
 
@@ -78,10 +78,10 @@ async def test_a_peek_is_answered_from_the_transcript_and_never_sent_into_the_se
 
 
 async def test_a_side_answer_is_short_enough_to_say_and_ends_on_a_whole_sentence(setup):
-    long = " ".join(f"Setning nummer {i} sier noe nyttig." for i in range(30))
+    long = " ".join(f"Sentence number {i} says something useful." for i in range(30))
     async with Client(bridge(setup, TURNS, Answerer(long), Recorder())) as c:
         out = (await c.call_tool("peek_session", {"session": "billing-ab", "question": "?"})).structured_content
-    assert len(out["answer"]) <= 300 and out["answer"].endswith("sier noe nyttig.")
+    assert len(out["answer"]) <= 300 and out["answer"].endswith("says something useful.")
 
 
 async def test_only_the_recent_end_is_read_and_the_answer_says_so(setup):
@@ -116,7 +116,7 @@ class ReaderClient:
 
     async def receive_response(self):
         asked = [p for p in self.prompts if p != "/clear"]
-        yield done("" if self.prompts[-1] == "/clear" else f"Svar {len(asked)}.")
+        yield done("" if self.prompts[-1] == "/clear" else f"Answer {len(asked)}.")
 
 
 async def test_the_reader_stays_warm_between_questions_and_starts_afresh_now_and_then():
@@ -128,7 +128,7 @@ async def test_the_reader_stays_warm_between_questions_and_starts_afresh_now_and
 
     reader = SideReader(client_factory=factory, fresh_after=2)
     answers = [await reader("Owner: hi", "Hva skjer?", "norsk") for _ in range(3)]
-    assert answers == ["Svar 1.", "Svar 2.", "Svar 1."]
+    assert answers == ["Answer 1.", "Answer 2.", "Answer 1."]
     assert len(made) == 2 and made[0].closed
     assert made[0].options.model == "haiku" and made[0].options.tools == []
     assert "claude-voice-msg-" in str(made[0].options.cwd)

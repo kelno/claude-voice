@@ -79,8 +79,9 @@ def test_doing_is_kept_to_one_short_line(world):
 
 
 def test_doing_names_an_open_question(world):
-    transcript(world, "billing", "s1", [says("Tests pass."), asks("Merge it now?", "Ja", "Nei")])
-    assert doing_line("s1", str(world / "home" / "billing"), world / "projects") == "venter på valg: Merge it now?"
+    transcript(world, "billing", "s1", [says("Tests pass."), asks("Merge it now?", "Yes", "No")])
+    line = doing_line("s1", str(world / "home" / "billing"), world / "projects")
+    assert line == "waiting for a choice: Merge it now?"
 
 
 async def test_fleet_recap_names_a_desktop_app_session_desktop(world):
@@ -100,7 +101,7 @@ async def test_one_call_covers_running_and_bridge_sessions(world):
     running(world, "billing-1", "billing", "s1", status="busy")
     running(world, "export-1", "export", "s2", status="waiting", pid=PID)
     transcript(world, "billing", "s1", [says("Fixing the export totals. More detail.")])
-    transcript(world, "export", "s2", [asks("Merge it now?", "Ja", "Nei")])
+    transcript(world, "export", "s2", [asks("Merge it now?", "Yes", "No")])
     store = Store(world / "b.db")
     m = SessionManager(store, project_root=world / "home", client_factory=FakeClaude([result("Report done.", "c")]))
     srv = build_server(m, conversations=lambda **k: [], live_dir=world / "live", projects_dir=world / "projects")
@@ -112,8 +113,8 @@ async def test_one_call_covers_running_and_bridge_sessions(world):
     rows = {r["name"]: r for r in fleet["sessions"]}
     assert rows["billing-1"]["doing"] == "Fixing the export totals."
     assert rows["billing-1"]["kind"] == "terminal" and rows["billing-1"]["status"] == "busy"
-    assert rows["export-1"]["doing"] == "venter på valg: Merge it now?"
-    assert rows["export-1"]["question"]["options"] == ["Ja", "Nei"]
+    assert rows["export-1"]["doing"] == "waiting for a choice: Merge it now?"
+    assert rows["export-1"]["question"]["options"] == ["Yes", "No"]
     assert rows["report"]["kind"] == "bridge-session"
     assert rows["report"]["doing"] == "Report done."
     assert set(rows["billing-1"]) >= {"id", "name", "kind", "project", "status", "doing", "minutes_since_update"}
@@ -125,9 +126,9 @@ def test_doing_leaves_out_web_addresses(world):
 
 
 def test_a_date_or_number_with_a_full_stop_does_not_end_the_sentence(world):
-    text = "Siden 4. oktober har 3. utkast ventet. Så kom resten."
+    text = "Item 4. was done and 3. drafts waited. Then came the rest."
     transcript(world, "billing", "s1", [says(text)])
     assert (
         doing_line("s1", str(world / "home" / "billing"), world / "projects")
-        == "Siden 4. oktober har 3. utkast ventet."
+        == "Item 4. was done and 3. drafts waited."
     )
