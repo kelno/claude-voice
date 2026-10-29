@@ -242,6 +242,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "health",
         "digest_session",
         "side_question",
+        "wait_for_session",
     }
     for name in read_only:
         ann = tools[name].annotations

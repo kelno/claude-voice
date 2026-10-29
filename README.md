@@ -77,6 +77,7 @@ then give it a public address.
 | `list_projects` | the folders Claude was used in lately, or any folder found by a word from its name |
 | `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
+| `wait_for_session` | wait until a session the bridge started finishes or needs an approval, then its recap; instead of asking again and again |
 | `whats_new` | only what happened since you last asked: finished, failed, waiting for you |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |

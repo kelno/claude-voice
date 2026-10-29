@@ -41,8 +41,8 @@ INSTRUCTIONS = """\
 Controls Claude Code sessions running on the user's own machine. The user is
 usually speaking, often while driving, so keep what you read back short.
 Poll whats_new (pass back its cursor) for news; it is cheap.
-Typical flow: list_projects -> create_session -> send_task -> poll
-session_recap until status is no longer "running" -> tell the user the result.
+Typical flow: list_projects -> create_session -> send_task -> wait_for_session
+(call it again while it says "still_running") -> tell the user the result.
 send_task returns immediately; Claude may work for minutes.
 To see what is running on the machine (including terminal sessions), call
 list_active_sessions; to continue one, attach_conversation with its id.
@@ -319,16 +319,45 @@ def build_server(
             msg = str(exc) if not isinstance(exc, SessionClosed) else "That session is closed."
             raise ToolError(msg) from None
 
-    @mcp.tool(annotations=READ_ONLY)
-    def session_recap(session_id: str, max_chars: int = 400) -> dict[str, Any]:
-        """Short status of one session: running or not, last prompt, latest words, result.
-        Texts are cut to max_chars each."""
-        session_id = known(session_id)
+    def clipped_recap(session_id: str, max_chars: int) -> dict[str, Any]:
         recap = manager.recap(session_id)
         for key in ("last_prompt", "latest_text", "last_result", "last_error"):
             if isinstance(recap.get(key), str):
                 recap[key] = transcripts.clip(recap[key], max(max_chars, 20))
         return recap
+
+    @mcp.tool(annotations=READ_ONLY)
+    def session_recap(session_id: str, max_chars: int = 400) -> dict[str, Any]:
+        """Short status of one session: running or not, last prompt, latest words, result.
+        Texts are cut to max_chars each."""
+        return clipped_recap(known(session_id), max_chars)
+
+    @mcp.tool(annotations=READ_ONLY)
+    async def wait_for_session(session_id: str, wait_seconds: float = 60, max_chars: int = 400) -> dict[str, Any]:
+        """Wait (up to 300 s) until a session this bridge started finishes or needs an
+        approval, then return its recap; use it after send_task or approve instead of
+        polling session_recap. waited: "finished" (status says how it ended),
+        "needs_approval" (read pending_approvals to the user), "still_running" (the wait
+        ran out; call again), or "not_running" (it had no task)."""
+        session_id = known(session_id)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(min(wait_seconds, 300), 0)
+        if store.get_session(session_id)["status"] != "running":
+            waited = "not_running"
+        else:
+            while True:
+                recap = manager.recap(session_id)
+                if recap["pending_approvals"]:
+                    waited = "needs_approval"
+                    break
+                if recap["status"] != "running":
+                    waited = "finished"
+                    break
+                if loop.time() >= deadline:
+                    waited = "still_running"
+                    break
+                await asyncio.sleep(poll_seconds)
+        return {**clipped_recap(session_id, max_chars), "waited": waited}
 
     @mcp.tool(annotations=READ_ONLY)
     def fleet_recap() -> dict[str, Any]:
