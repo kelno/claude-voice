@@ -13,7 +13,7 @@ import contextlib
 import json
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +27,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
+from .access import Access
 from .store import Store
 
 if TYPE_CHECKING:
@@ -54,9 +55,12 @@ class SessionManager:
         client_factory: ClientFactory = ClaudeSDKClient,
         clock: Callable[[], float] = time.time,
         approvals: ApprovalBroker | None = None,
+        denied: Iterable[Path] = (),
     ) -> None:
         self.store = store
         self.root = Path(project_root).expanduser().resolve()
+        # The bridge itself passes access.default_denied(); tests choose their own.
+        self.access = Access(store, self.root, denied)
         self.client_factory = client_factory
         self.clock = clock
         self.approvals = approvals
@@ -72,8 +76,8 @@ class SessionManager:
             path = self.root / path
         path = path.resolve()
         # RULE: a project outside the root is refused
-        if path != self.root and self.root not in path.parents:
-            raise ValueError(f"project must be under {self.root}")
+        if self.access.state(path) != "allowed":
+            raise ValueError(f"project must be under {self.root} or a folder opened with request_access")
         if not path.is_dir():
             raise ValueError(f"not a directory: {path}")
         return path

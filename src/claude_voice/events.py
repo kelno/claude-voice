@@ -62,14 +62,18 @@ class LiveWatcher:
         live_dir: Path,
         root: Path,
         clock: Callable[[], float] = time.time,
+        project_of: Callable[[str | None], str | None] | None = None,
     ) -> None:
         self.db = store.db
         self.db.executescript(SCHEMA)
         self.live_dir = live_dir
         self.root = Path(root).resolve()
         self.clock = clock
+        self.project_of = project_of  # the bridge's own rule, granted folders included
 
     def _project(self, cwd: str | None) -> str | None:
+        if self.project_of is not None:
+            return self.project_of(cwd)
         if not cwd:
             return None
         path = Path(cwd).resolve()

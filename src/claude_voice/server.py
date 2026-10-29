@@ -23,7 +23,7 @@ from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 from starlette.types import ASGIApp
 
-from . import events, metrics, transcripts
+from . import access, events, metrics, transcripts
 from .approvals import ApprovalBroker, ApprovalNotFound
 from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
@@ -48,6 +48,9 @@ Typical flow: list_projects -> create_session -> send_task -> wait_for_session
 send_task returns immediately; Claude may work for minutes.
 To see what is running on the machine (including terminal sessions), call
 list_active_sessions; to continue one, attach_conversation with its id.
+A session listed with access "needs_approval" can't be read or messaged yet: if
+the user wants it, call request_access; they approve it in their app. One listed
+as "blocked" can never be opened.
 A session marked side_chat is a quick aside the user opened from another session
 in the desktop app (its name starts with "btw:"), not where a project's work
 happens: do not send tasks or questions there unless the user names it.
@@ -198,8 +201,18 @@ def build_server(
         def read_transcript(sid: str, directory: str | None) -> list[Any]:
             return transcripts.read_raw_transcript(sid, directory or "", projects_dir)
 
-    watcher = events.LiveWatcher(manager.store, live_dir, manager.root, clock=manager.clock)
-    tree = SessionTree(manager.store, live_dir, manager.root, projects_dir=projects_dir, clock=manager.clock)
+    # under_root is defined further down; looked up when called, so granted folders count.
+    watcher = events.LiveWatcher(
+        manager.store, live_dir, manager.root, clock=manager.clock, project_of=lambda cwd: under_root(cwd)
+    )
+    tree = SessionTree(
+        manager.store,
+        live_dir,
+        manager.root,
+        projects_dir=projects_dir,
+        clock=manager.clock,
+        project_of=lambda cwd: under_root(cwd),
+    )
     side_answer = side_answer or transcripts.shared_reader()
     tree_version: list[str] = []  # the last shape seen, so a change can be reported
     last_check: list[str] = []
@@ -372,6 +385,11 @@ def build_server(
         sessions = []
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         for row in running():
+            if "access" in row:
+                # Not open to the bridge: nothing is read from it.
+                item = {k: v for k, v in row.items() if k != "claude_session_id"}
+                sessions.append({"id": row["claude_session_id"], **item, "doing": ""})
+                continue
             d = live_by_id.get(str(row["claude_session_id"]), {})
             if row["status"] == "moved":
                 where = row["moved_to"]["name"] or "en annen økt"
@@ -494,13 +512,23 @@ def build_server(
             raise ToolError(str(exc)) from None
 
     def under_root(cwd: str | None) -> str | None:
-        """Project name relative to the root, or None if the folder is outside it."""
+        """Project name: relative to the root, the full path in a granted folder, or None
+        if the folder is not open to the bridge."""
         if not cwd:
             return None
         try:
-            return str(manager.resolve_project(cwd).relative_to(manager.root))
+            path = manager.resolve_project(cwd)
         except ValueError:
             return None
+        if manager.access.base(path) == manager.root:
+            return str(path.relative_to(manager.root))
+        return str(path)
+
+    def is_courier(d: dict[str, Any]) -> bool:
+        """The bridge's own messengers, gone as soon as they deliver."""
+        return str(d.get("name", "")).startswith(COURIER_PREFIX) or Path(str(d.get("cwd"))).name.startswith(
+            COURIER_PREFIX
+        )
 
     def live_sessions() -> list[dict[str, Any]]:
         return events.read_live(live_dir)
@@ -529,8 +557,22 @@ def build_server(
         now_ms = manager.clock() * 1000
         sessions = []
         for d in live_sessions():
+            if is_courier(d):
+                continue
             name = under_root(d.get("cwd"))
             if name is None:
+                # Not open to the bridge: who and where only, so the owner can open it.
+                sessions.append(
+                    {
+                        "claude_session_id": d.get("sessionId"),
+                        "name": d.get("name"),
+                        "folder": str(Path(str(d.get("cwd"))).resolve()),
+                        "status": d.get("status"),
+                        "kind": d.get("kind"),
+                        "access": manager.access.state(str(d.get("cwd"))),
+                        "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
+                    }
+                )
                 continue
             row = {
                 "claude_session_id": d.get("sessionId"),
@@ -616,15 +658,40 @@ def build_server(
             history = []
         return manager.attach(claude_session_id, path, label, history=history)
 
-    def find_live(session: str) -> dict[str, Any]:
+    def find_any_live(session: str) -> dict[str, Any]:
         for d in live_sessions():
-            if str(d.get("name", "")).startswith(COURIER_PREFIX) or Path(str(d.get("cwd"))).name.startswith(
-                COURIER_PREFIX
-            ):
-                continue  # the bridge's own messengers, gone as soon as they deliver
-            if session in (d.get("name"), d.get("sessionId")) and under_root(d.get("cwd")):
+            if not is_courier(d) and session in (d.get("name"), d.get("sessionId")):
                 return d
         raise ToolError(f"No running session called {session!r}; see list_active_sessions")
+
+    def find_live(session: str) -> dict[str, Any]:
+        d = find_any_live(session)
+        if under_root(d.get("cwd")) is None:
+            if manager.access.state(str(d.get("cwd"))) == "blocked":
+                raise ToolError(f"{session!r} is in a folder the bridge never opens")
+            raise ToolError(f"{session!r} is in a folder not open to the bridge; ask for it with request_access")
+        return d
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    def request_access(session: str) -> dict[str, Any]:
+        """Open a listed session's folder, and everything under it, to the bridge for good,
+        so it can be read, messaged and worked in. The owner should set this tool to ask
+        each time in the Claude app, so they approve every grant themselves."""
+        d = find_any_live(session)
+        try:
+            folder = manager.access.grant(str(d.get("cwd")))
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return {"session": d.get("name"), "folder": str(folder), "granted": True}
+
+    @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def revoke_access(folder: str) -> dict[str, Any]:
+        """Close a folder opened with request_access again; health lists the granted ones."""
+        try:
+            closed = manager.access.revoke(folder)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return {"folder": str(closed), "granted": False}
 
     @mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
     async def message_active_session(session: str, message: str) -> dict[str, Any]:
@@ -883,7 +950,8 @@ def build_server(
     @mcp.tool(annotations=READ_ONLY)
     def health() -> dict[str, Any]:
         """The bridge's own state: since when and which version, memory, the last restart,
-        calls/errors/latency per tool since start, the latest errors, courier and watcher."""
+        calls/errors/latency per tool since start, the latest errors, courier, watcher, and
+        the root and granted folders."""
         snap = METRICS.snapshot()
         courier = transcripts.shared_courier()
         return {
@@ -901,6 +969,7 @@ def build_server(
                 "last_check_at": last_check[0] if last_check else None,
                 "tree_version": tree_version[0] if tree_version else tree.build()["version"],
             },
+            "access": {"root": str(manager.root), "granted": [str(p) for p in manager.access.granted()]},
         }
 
     @mcp.tool(annotations=READ_ONLY)
@@ -952,7 +1021,9 @@ def serve_forever(cfg: Config) -> None:
     """Run the bridge with a checked configuration until stopped."""
     transcripts.configure_courier(cfg.courier_name)
     store = Store(cfg.db)
-    manager = SessionManager(store, project_root=cfg.root, approvals=ApprovalBroker(store))
+    manager = SessionManager(
+        store, project_root=cfg.root, approvals=ApprovalBroker(store), denied=access.default_denied()
+    )
     if cfg.transport == "stdio":
         build_server(manager).run("stdio")
         return
