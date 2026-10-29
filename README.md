@@ -83,7 +83,7 @@ then give it a public address.
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
 | `list_pending_approvals`, `approve`, `deny` | answer Claude's requests to edit files, run commands and so on |
 | `cancel`, `close_session` | stop a turn, retire a session |
-| `list_sessions` | the sessions this bridge started, and every one running on the computer |
+| `list_sessions` | the sessions this bridge started, idle ones included, and every one running on the computer now |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a listed session's folder to the bridge for good, with your approval in the app; close it again |
@@ -91,8 +91,8 @@ then give it a public address.
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
 | `message_active_session` | send a message into a session that is open in a terminal |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
-| `side_question` | a quick answer about a busy session, read from what it wrote lately, never sent into it |
-| `digest_session` | a long conversation summed up, or a question about it answered, in a few sentences |
+| `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
+| `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `read_session_output`, `search_session_history` | read what such a session said lately, or search everything it said |
 | `list_claude_conversations`, `attach_conversation` | continue an earlier conversation, as a copy run by the bridge |
 

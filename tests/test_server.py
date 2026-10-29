@@ -242,7 +242,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "session_tree",
         "health",
         "digest_session",
-        "side_question",
+        "peek_session",
         "wait_for_session",
     }
     for name in read_only:

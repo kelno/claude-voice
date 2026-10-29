@@ -361,8 +361,10 @@ def build_server(
 
     @mcp.tool(annotations=READ_ONLY)
     def list_sessions() -> dict[str, Any]:
-        """Sessions this bridge started (`sessions`, newest 20) and every Claude Code session
-        running on the machine (`running_claude_code_sessions`)."""
+        """Two lists: `sessions`, the newest 20 sessions this bridge started, idle ones included,
+        and `running_claude_code_sessions`, every Claude Code session running on the machine now
+        (as list_active_sessions gives it). A bridge session is in the second list only while it
+        works on a task, since its Claude Code process only runs then."""
         rows = [s for s in store.list_sessions(limit=100) if s["status"] != "closed"][:20]
         return {"sessions": rows, "running_claude_code_sessions": running()}
 
@@ -930,9 +932,11 @@ def build_server(
         return kept, lines[: len(lines) - len(kept)]
 
     @mcp.tool(annotations=READ_ONLY)
-    async def side_question(session: str, question: str, language: str | None = None) -> dict[str, Any]:
-        """A quick answer (usually three to seven seconds) to a question about a running session, read from
-        what it has written lately. The question is never sent into the session."""
+    async def peek_session(session: str, question: str, language: str | None = None) -> dict[str, Any]:
+        """A quick look (3 to 7 s) at a running session: a small separate model with no tools
+        answers `question` from the last 8,000 characters of its conversation, a few turns of
+        words and tool names, never tool results or files. The question never enters the session,
+        and for the whole conversation use digest_session, which is slower."""
         target = find_live(session)
         kept, skipped = conversation_end(target, side_chars)
         answer = await side_answer("\n".join(kept), question, language)
@@ -940,9 +944,11 @@ def build_server(
 
     @mcp.tool(annotations=READ_ONLY)
     async def digest_session(session: str, question: str | None = None, language: str | None = None) -> dict[str, Any]:
-        """Sum up a running session's conversation, or answer `question` about it, in a few
-        speakable sentences, in `language` if given (e.g. "norsk"); takes about ten seconds.
-        A separate model reads it, so none of it fills your context."""
+        """Sum up a running session's whole conversation, or answer `question` about it, in a
+        few speakable sentences, in `language` if given (for example "norsk"), in about 10 s: a
+        small separate model with no tools reads up to its last 150,000 characters, words and
+        tool names, never tool results or files. The same kind of reader as peek_session with a
+        far longer window, so slower; none of it fills your context, and it cannot read code."""
         target = find_live(session)
         kept, skipped = conversation_end(target, digest_chars)
         digest = await summarize("\n".join(kept), question, language)
