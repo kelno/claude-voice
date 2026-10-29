@@ -366,6 +366,28 @@ async def test_active_sessions_are_the_running_claude_code_processes(tmp_path, r
     assert listed["conversations"][0]["open_in_terminal"] is True
 
 
+async def test_a_desktop_side_chat_is_marked_as_one(tmp_path, root):
+    # The desktop app opens a side chat from a session and names it "btw: <question>".
+    import os
+
+    live = tmp_path / "live"
+    live.mkdir()
+    live_entry(live, os.getpid(), "c-1", str(root / "app"), "app-fix", "idle")
+    live_entry(live, os.getppid(), "c-2", str(root / "app"), "btw: why is this test slow?", "idle")
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
+    async with Client(build_server(m, conversations=FakeConversations([]), live_dir=live)) as client:
+        active = await call(client, "list_active_sessions")
+        fleet = await call(client, "fleet_recap")
+
+    by_name = {s["name"]: s for s in active["sessions"]}
+    assert by_name["btw: why is this test slow?"]["side_chat"] is True
+    assert "side_chat" not in by_name["app-fix"]
+    assert {s["name"]: s.get("side_chat", False) for s in fleet["sessions"]} == {
+        "app-fix": False,
+        "btw: why is this test slow?": True,
+    }
+
+
 async def test_tool_calls_are_logged_by_name(tmp_path, root, caplog):
     import logging
 

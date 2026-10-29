@@ -34,6 +34,8 @@ from .tree import PROJECTS_DIR, SessionTree
 MIN_TOKEN_CHARS = 32
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 COURIER_PREFIX = "claude-voice-msg-"
+# The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
+SIDE_CHAT_PREFIX = "btw:"
 # Claude Code keeps one JSON file per running session here.
 LIVE_DIR = Path("~/.claude/sessions").expanduser()
 
@@ -46,6 +48,9 @@ Typical flow: list_projects -> create_session -> send_task -> wait_for_session
 send_task returns immediately; Claude may work for minutes.
 To see what is running on the machine (including terminal sessions), call
 list_active_sessions; to continue one, attach_conversation with its id.
+A session marked side_chat is a quick aside the user opened from another session
+in the desktop app (its name starts with "btw:"), not where a project's work
+happens: do not send tasks or questions there unless the user names it.
 When a recap shows pending_approvals, read the tool and its input to the user
 and call approve only if they clearly say yes; otherwise call deny.
 """
@@ -382,7 +387,7 @@ def build_server(
                 "doing": doing,
                 "minutes_since_update": row["minutes_since_update"],
             }
-            for key in ("waiting_for", "question", "moved_to"):
+            for key in ("waiting_for", "question", "moved_to", "side_chat"):
                 if key in row:
                     item[key] = row[key]
             sessions.append(item)
@@ -536,6 +541,8 @@ def build_server(
                 "managed_by_bridge": d.get("sessionId") in managed,
                 "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
             }
+            if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
+                row["side_chat"] = True
             moved = moved_to(d)
             if moved:
                 row["status"], row["moved_to"] = "moved", moved
