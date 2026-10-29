@@ -43,6 +43,7 @@ def server(world, root=None):
         project_root=root or world["root"],
         client_factory=FakeClaude(),
         denied=access.default_denied(world["home"]),
+        exempt=access.default_exempt(world["home"]),
     )
     return m, build_server(m, conversations=lambda **k: [], live_dir=world["live"])
 
@@ -67,7 +68,7 @@ async def test_a_session_outside_the_open_folders_is_listed_as_needing_approval(
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
     assert "access" not in listed["app-fix"]
     notes = listed["Notes"]
-    assert notes["access"] == "needs_approval"
+    assert notes["access"] == "folder_not_open"
     assert notes["folder"] == str(world["elsewhere"].resolve())
     assert set(notes) == {"claude_session_id", "name", "folder", "status", "kind", "access", "minutes_since_update"}
 
@@ -106,9 +107,15 @@ async def test_a_folder_holding_or_inside_a_denied_folder_is_never_granted(world
     _, srv = server(world)
     async with Client(srv) as c:
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
-        assert listed["Home"]["access"] == "blocked" and listed["Keys"]["access"] == "blocked"
-        assert "never" in await refused(c, "request_access", session="Home")
-        assert "never" in await refused(c, "request_access", session="Keys")
+        assert listed["Home"]["access"] == "folder_closed" and listed["Keys"]["access"] == "folder_closed"
+        holds = await refused(c, "request_access", session="Home")
+        inside = await refused(c, "request_access", session="Keys")
+        unreadable = await refused(c, "read_session_output", session="Keys")
+    ssh = str((world["home"] / ".ssh").resolve())
+    # The refusal names the closed folder and how the session's folder relates to it.
+    assert "holds" in holds and ssh in holds
+    assert "inside" in inside and ssh in inside
+    assert "inside" in unreadable and ssh in unreadable
 
 
 async def test_a_denied_folder_stays_closed_inside_the_root(world):
@@ -116,7 +123,7 @@ async def test_a_denied_folder_stays_closed_inside_the_root(world):
     _, srv = server(world, root=world["home"])
     async with Client(srv) as c:
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
-        assert listed["Keys"]["access"] == "blocked"
+        assert listed["Keys"]["access"] == "folder_closed"
         await refused(c, "create_session", project=".ssh")
 
 
@@ -127,8 +134,36 @@ async def test_revoking_a_grant_closes_the_folder_again(world):
         await call(c, "request_access", session="Notes")
         await call(c, "revoke_access", folder=str(world["elsewhere"]))
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
-        assert listed["Notes"]["access"] == "needs_approval"
+        assert listed["Notes"]["access"] == "folder_not_open"
         await refused(c, "revoke_access", folder=str(world["elsewhere"]))
+
+
+def scratch_world(world):
+    """The desktop app's scratch folders, under a closed AppData, as on Windows."""
+    workspaces = world["home"] / "AppData" / "Local" / "Claude-Data" / "pkg" / "scratch-workspaces"
+    scratch = workspaces / "acct" / "org" / "scratch-2026-10-29-f06e00"
+    (scratch / "notes").mkdir(parents=True)
+    (world["home"] / "AppData" / "Local" / "Claude-Data" / "pkg" / "Local Storage").mkdir()
+    return workspaces, scratch
+
+
+async def test_only_a_desktop_scratch_folder_is_opened_inside_a_denied_folder(world):
+    workspaces, scratch = scratch_world(world)
+    running(world, 7, "Scratch", scratch)
+    running(world, 8, "Scratch, deeper", scratch / "notes")
+    running(world, 9, "Workspaces", workspaces)
+    running(world, 10, "App storage", world["home"] / "AppData" / "Local" / "Claude-Data" / "pkg" / "Local Storage")
+    _, srv = server(world)
+    async with Client(srv) as c:
+        listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
+        assert listed["Scratch"]["access"] == "folder_not_open"
+        assert listed["Workspaces"]["access"] == "folder_closed"
+        assert listed["App storage"]["access"] == "folder_closed"
+        granted = await call(c, "request_access", session="Scratch")
+        assert granted["folder"] == str(scratch.resolve())
+        listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
+        assert "access" not in listed["Scratch"] and "access" not in listed["Scratch, deeper"]
+        await refused(c, "request_access", session="Workspaces")
 
 
 async def test_the_bridges_own_messengers_are_not_listed(world):

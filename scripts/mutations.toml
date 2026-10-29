@@ -24,7 +24,7 @@ replace = 'if False:'
 [[rule]]
 name = "a project outside the root is refused"
 file = "src/claude_voice/sessions.py"
-find = 'if self.access.state\(path\) != "allowed":'
+find = 'if self.access.state\(path\) != "open":'
 replace = 'if False:'
 
 [[rule]]
@@ -42,5 +42,11 @@ replace = 'if False:'
 [[rule]]
 name = "a folder holding or inside a denied folder is never granted"
 file = "src/claude_voice/access.py"
-find = 'if self.state\(p\) == "blocked":'
+find = 'if self.state\(p\) == "closed":'
 replace = 'if False:'
+
+[[rule]]
+name = "only a Desktop scratch folder is opened inside a denied folder"
+file = "src/claude_voice/access.py"
+find = 'if inside is not None and not self._exempted\(p\):'
+replace = 'if inside is not None:'
