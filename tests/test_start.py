@@ -109,6 +109,14 @@ async def test_an_unknown_effort_starts_nothing_and_the_error_lists_the_levels(t
     assert starter.calls == []
 
 
+async def test_a_chosen_model_comes_with_a_note_that_it_is_only_checked_at_the_first_reply(tmp_path, world):
+    async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
+        deep = (await c.call_tool("start_active_session", {"project": "billing", "model": "opus"})).structured_content
+        plain = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
+    assert "first reply" in deep["note"]
+    assert "note" not in plain
+
+
 class Stopper:
     """Stands in for `claude stop`: records the call and removes the session's registry entry."""
 

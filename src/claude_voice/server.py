@@ -44,6 +44,11 @@ RELAYED_MESSAGE_NOTE = (
     "Address the relay, not the owner, and make the reply self-contained: name things instead of "
     "pointing back to text it may not have.]"
 )
+# Claude Code starts a session on any model name and only refuses an unknown one in its first reply.
+MODEL_CHECKED_LATER = (
+    "Claude Code only checks the model name at the session's first reply: wait for that reply "
+    "before relying on the session."
+)
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
 # The Claude app drops a tool call that runs for about 30 seconds: no call waits longer than
@@ -644,6 +649,7 @@ def build_server(
                     "claude_session_id": found.get("sessionId"),
                     "project": under_root(str(path)),
                     "status": found.get("status") or "idle",
+                    **({"note": MODEL_CHECKED_LATER} if model else {}),
                 }
             await asyncio.sleep(0.2)
         raise ToolError(f"{wanted} was started but did not appear among the running sessions")
