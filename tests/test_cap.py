@@ -70,7 +70,7 @@ async def test_no_tool_call_waits_longer_than_the_cap(tmp_path, root, live):
     claude = FakeClaude([init("c-1"), pause, result("late", "c-1")], [init("f-1"), Pause()])
     m, srv = bridge(tmp_path, root, live, claude, target=target)
     async with Client(srv) as c:
-        s = await call(c, "create_session", project="billing")
+        s = m.create("billing")
         await call(c, "send_task", session_id=s["id"], prompt="go")
         await pause.reached.wait()
         started = time.monotonic()

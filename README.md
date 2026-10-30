@@ -76,7 +76,7 @@ then give it a public address.
 | --- | --- |
 | `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
-| `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
+| `send_task` | give a resumed conversation a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
 | `wait_for_session` | wait until a session the bridge started finishes or needs an approval, then its recap; instead of asking again and again |
 | `whats_new` | only what happened since you last asked: finished, failed, waiting for you |

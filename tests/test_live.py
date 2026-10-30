@@ -151,7 +151,7 @@ async def test_a_turn_that_does_nothing_is_an_error(tmp_path, root, live):
     claude = FakeClaude([result("", "c-1", num_turns=0)])
     m, srv = server_for(tmp_path, root, live, claude=claude)
     async with Client(srv) as c:
-        s = await call(c, "create_session", project="billing")
+        s = m.create("billing")
         await call(c, "send_task", session_id=s["id"], prompt="go")
         await m.wait(s["id"])
         recap = await call(c, "session_recap", session_id=s["id"])
@@ -288,7 +288,7 @@ async def test_recap_texts_are_cut_to_max_chars(tmp_path, root, live):
     claude = FakeClaude([result("z " * 500, "c-1")])
     m, srv = server_for(tmp_path, root, live, claude=claude)
     async with Client(srv) as c:
-        s = await call(c, "create_session", project="billing")
+        s = m.create("billing")
         await call(c, "send_task", session_id=s["id"], prompt="go")
         await m.wait(s["id"])
         recap = await call(c, "session_recap", session_id=s["id"], max_chars=60)
@@ -309,7 +309,7 @@ async def test_cancel_stops_only_the_turn_of_a_bridge_session_and_says_how(tmp_p
     pause = Pause()
     m, srv = server_for(tmp_path, root, live, claude=FakeClaude([pause]))
     async with Client(srv) as c:
-        s = await call(c, "create_session", project="billing")
+        s = m.create("billing")
         await call(c, "send_task", session_id=s["id"], prompt="go")
         await pause.reached.wait()
         out = await call(c, "cancel", session_id=s["id"])

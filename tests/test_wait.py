@@ -35,7 +35,7 @@ async def test_waiting_returns_once_the_task_is_finished(tmp_path, root):
     pause = Pause()
     m, server = make(tmp_path, root, [init("c-1"), pause, result("All done.", "c-1")])
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="go")
         await pause.reached.wait()
         waiting = asyncio.create_task(call(client, "wait_for_session", session_id=s["id"], wait_seconds=10))
@@ -55,7 +55,7 @@ async def test_waiting_returns_as_soon_as_an_approval_is_needed(tmp_path, root):
 
     m, server = make(tmp_path, root, [init("c-1"), Call(ask), result("built", "c-1")])
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="build")
         out = await call(client, "wait_for_session", session_id=s["id"], wait_seconds=10)
         assert out["waited"] == "needs_approval"
@@ -67,7 +67,7 @@ async def test_waiting_gives_up_after_the_wait_and_says_the_task_still_runs(tmp_
     pause = Pause()
     m, server = make(tmp_path, root, [init("c-1"), pause, result("late", "c-1")])
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="go")
         await pause.reached.wait()
         out = await call(client, "wait_for_session", session_id=s["id"], wait_seconds=0.1)
@@ -79,7 +79,7 @@ async def test_waiting_gives_up_after_the_wait_and_says_the_task_still_runs(tmp_
 async def test_waiting_after_the_task_already_ended_says_it_finished(tmp_path, root):
     m, server = make(tmp_path, root, [init("c-1"), result("Quick one.", "c-1")])
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="go")
         await m.wait(s["id"])  # done before anyone waits
         out = await call(client, "wait_for_session", session_id=s["id"], wait_seconds=10)
@@ -90,7 +90,7 @@ async def test_waiting_after_the_task_already_ended_says_it_finished(tmp_path, r
 async def test_waiting_on_a_session_with_no_task_returns_at_once(tmp_path, root):
     m, server = make(tmp_path, root)
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         out = await call(client, "wait_for_session", session_id=s["id"], wait_seconds=10)
     assert out["waited"] == "not_running"
     assert out["status"] == "idle"

@@ -88,14 +88,13 @@ Sessions
   process only runs during a task) and every session running on the machine.
   Side chats are marked side_chat: quick asides the owner opened from another
   session in the desktop app (named "btw: ..."); send them no work unless asked.
-- Prefer a session open in the desktop app: the owner can open it, see what
-  happened and take over. A session you start (create_session, send_task) never
-  shows in the desktop app; say so when you start one.
-- To start a session the owner can later find in the desktop app:
-  start_active_session, give it its task (message_active_session), let its turn
-  end, then hand_to_desktop. It then shows in the desktop sidebar, but waits
-  there until the owner opens it, and is off the phone until they turn Remote
-  Control on there: hand it over when its work is done.
+- New work: start_active_session, then give it its task (message_active_session
+  or ask_active_session). It is on Remote Control and in the desktop app's Code
+  sidebar (under Remote Control) from the start, so the owner can open it on the
+  phone or at the PC, see what happened and take over.
+- hand_to_desktop moves a session whose turn has ended into its project's group in
+  the desktop sidebar, but it then drops off the phone until the owner opens it at
+  the PC: only when the owner asks for it.
 - For deep work (restructuring, careful reviews), start_active_session can take a
   bigger model and a higher effort; say which when you propose it. A model name
   Claude Code doesn't know shows only in the session's first reply.
@@ -129,9 +128,9 @@ Talking to a session
 - The side session is a read-only fork of a session's whole conversation that
   can read the code; each question forks anew. Report its answer as the side
   session's.
-- For a session you started: send_task returns at once; then wait_for_session,
-  again while it says "still_running", then tell the owner the result. Poll
-  whats_new (pass back its cursor) for other news.
+- For a conversation you resumed with attach_conversation: send_task returns at
+  once; then wait_for_session, again while it says "still_running", then tell the
+  owner the result. Poll whats_new (pass back its cursor) for other news.
 - To learn about a session cheaply, without sending into it: peek_session
   (seconds, the last few turns' words) or digest_session (about ten seconds, the
   whole conversation's words); neither reads code.
@@ -139,10 +138,14 @@ Talking to a session
 Approvals
 - When a recap shows pending_approvals, read the tool and its input to the owner
   and call approve only if they clearly say yes; otherwise call deny.
-- A session the bridge runs (create_session, send_task, a conversation it
-  resumed) asks the bridge, not the desktop app or the phone: its prompts reach
-  the owner only through you, so check for them while it works.
-- In voice, the app's approval card for these tools shows no tool details. Before
+- A conversation the bridge resumed (attach_conversation, send_task) asks the
+  bridge, not the desktop app or the phone: its prompts reach the owner
+  only through you, so check for them while it works.
+- A session start_active_session started asks the owner directly, on the phone and
+  in the desktop app; you can't answer it. When it waits on one, its status is
+  "waiting" and prompt says what it asks: tell the owner, and that they answer it
+  there.
+- In voice, the app's approval card for this connector's tools shows no tool details. Before
   a call the owner may have to approve, say which tool you are calling and why,
   so they know what they are tapping.
 
@@ -291,6 +294,7 @@ def build_server(
     receive_seconds: float = 15.0,
     projects_dir: Path = PROJECTS_DIR,
     max_wait_seconds: float = MAX_WAIT_SECONDS,
+    read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
 ) -> MCPServer:
     def capped(seconds: float) -> float:
         """How long a call may wait: what it asked for, never past the cap."""
@@ -458,17 +462,6 @@ def build_server(
             rows.append((newest, row))
         rows.sort(key=lambda r: (-r[0], r[1]["name"]))
         return {"root": str(manager.root), "projects": [row for _, row in rows[:20]]}
-
-    @mcp.tool(
-        title="Create a bridge session in a project",
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
-    )
-    def create_session(project: str, label: str | None = None) -> dict[str, Any]:
-        """Start a new Claude Code session in a project (a name from list_projects)."""
-        try:
-            return manager.create(project, label)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from None
 
     @mcp.tool(title="List the bridge's sessions", annotations=READ_ONLY)
     def list_sessions() -> dict[str, Any]:
@@ -747,7 +740,8 @@ def build_server(
         "interactive" is one the user types in, "bg" a background one. A session outside
         the open folders has access "folder_not_open" (open it with request_access) or
         "folder_closed" (never opened), and only its name, folder and status; access is
-        absent when the session is open to the bridge."""
+        absent when the session is open to the bridge. A background session waiting on a permission
+        prompt carries it as prompt, which the owner answers on the phone or in the desktop app."""
         return {"sessions": running()}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
@@ -757,6 +751,12 @@ def build_server(
             return None
         name = next((x.get("name") for x in live_sessions() if x.get("sessionId") == new), None)
         return {"id": new, "name": name}
+
+    def permission_prompt(d: dict[str, Any]) -> str | None:
+        """The permission prompt a waiting background session shows its owner, if any."""
+        if d.get("waitingFor") != "permission prompt" or not d.get("jobId"):
+            return None
+        return read_prompt(str(d["jobId"]))
 
     def running() -> list[dict[str, Any]]:
         managed = {
@@ -803,6 +803,9 @@ def build_server(
                 question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
                 if question:
                     row["question"] = question
+                prompt = permission_prompt(d)
+                if prompt:
+                    row["prompt"] = prompt
             sessions.append(row)
         sessions.sort(key=lambda s: s["minutes_since_update"])
         return sessions
@@ -945,8 +948,9 @@ def build_server(
         """Ask a Claude Code session that is open right now, and wait (at most 20 s) for its answer.
         reply_final is true once its turn has ended, so reply is its last word; while false,
         reply is its latest message so far, whole and maybe already the answer, but more may
-        follow. status: "answered", "needs_input" (it waits for its user), "still_working" (the
-        wait ran out before its turn ended; continue with read_session_output(after=next_after)),
+        follow. status: "answered", "needs_input" (it waits for its user; prompt is the
+        permission prompt, if one), "still_working" (the wait ran out before its turn
+        ended; continue with read_session_output(after=next_after)),
         "session_ended" (it exited meanwhile), "not_received" (the message never reached
         its conversation), "moved" (the conversation now lives in moved_to; nothing sent),
         or "needs_choice" (it waits for its user to pick one of question.options; answer
@@ -969,7 +973,10 @@ def build_server(
             if d.get("status") != "waiting":
                 return None
             question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
-            return {"status": "needs_choice", "question": question} if question else {"status": "needs_input"}
+            if question:
+                return {"status": "needs_choice", "question": question}
+            prompt = permission_prompt(d)
+            return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
 
         blocked = waiting(target)
         if blocked:

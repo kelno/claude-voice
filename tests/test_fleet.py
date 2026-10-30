@@ -106,7 +106,7 @@ async def test_one_call_covers_running_and_bridge_sessions(world):
     m = SessionManager(store, project_root=world / "home", client_factory=FakeClaude([result("Report done.", "c")]))
     srv = build_server(m, conversations=lambda **k: [], live_dir=world / "live", projects_dir=world / "projects")
     async with Client(srv) as c:
-        s = (await c.call_tool("create_session", {"project": "billing", "label": "report"})).structured_content
+        s = m.create("billing", "report")
         await c.call_tool("send_task", {"session_id": s["id"], "prompt": "go"})
         await m.wait(s["id"])
         fleet = (await c.call_tool("fleet_recap", {})).structured_content
