@@ -33,5 +33,6 @@ def test_the_manual_states_its_central_rules():
         "ask_forked_session",
         "folder_not_open",
         "side_chat",
+        "keep waiting",  # asked to wait, the relay reads again rather than handing back
     ):
         assert words in manual, words
