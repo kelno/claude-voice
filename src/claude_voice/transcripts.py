@@ -633,8 +633,11 @@ def background_command(
     remote_control: bool = REMOTE_CONTROL_AT_START,
     model: str | None = None,
     effort: str | None = None,
+    resume: str | None = None,
+    permission_mode: str | None = None,
+    add_dirs: Iterable[str] = (),
 ) -> list[str]:
-    """The `claude --bg` command line that starts a named background session."""
+    """The `claude --bg` command line that starts a named background session, or resumes one."""
     return [
         cli,
         "--bg",
@@ -645,6 +648,9 @@ def background_command(
         BRIDGE_SETTINGS,
         *(["--model", model] if model else []),
         *(["--effort", effort] if effort else []),
+        *(["--resume", resume] if resume else []),
+        *(["--permission-mode", permission_mode] if permission_mode else []),
+        *(arg for d in add_dirs for arg in ("--add-dir", d)),
     ]
 
 
@@ -695,7 +701,7 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
         raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
 
 
-async def start_background(cwd: str, name: str, model: str | None = None, effort: str | None = None) -> None:
+async def start_background(cwd: str, name: str, **options: Any) -> None:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal.
 
     It runs under the owner's own Claude Code and settings, and appears in the running
@@ -708,7 +714,7 @@ async def start_background(cwd: str, name: str, model: str | None = None, effort
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     cli = shutil.which("claude") or str(bundled)
     proc = await asyncio.create_subprocess_exec(
-        *background_command(cli, name, model=model, effort=effort),
+        *background_command(cli, name, **options),
         cwd=cwd,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

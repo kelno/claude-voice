@@ -137,16 +137,6 @@ async def test_read_session_output_uses_the_current_transcript(tmp_path, root, l
     assert out["status"] == "idle"
 
 
-async def test_attaching_backfills_recent_history(tmp_path, root, live):
-    m, srv = server_for(tmp_path, root, live)
-    async with Client(srv) as c:
-        s = await call(c, "attach_conversation", claude_session_id="current-id")
-        recap = await call(c, "session_recap", session_id=s["id"])
-    assert recap["latest_text"] == "All 12 tests pass."
-    assert recap["last_prompt"] == "Run the tests too"
-    assert "history" in {e["kind"] for e in m.store.events(s["id"])}
-
-
 async def test_a_turn_that_does_nothing_is_an_error(tmp_path, root, live):
     claude = FakeClaude([result("", "c-1", num_turns=0)])
     m, srv = server_for(tmp_path, root, live, claude=claude)
@@ -223,9 +213,9 @@ def test_words_match_at_word_starts_only():
 
 
 async def test_session_tools_accept_the_claude_session_id(tmp_path, root, live):
-    _, srv = server_for(tmp_path, root, live)
+    m, srv = server_for(tmp_path, root, live)
+    s = m.attach("current-id", "billing")
     async with Client(srv) as c:
-        s = await call(c, "attach_conversation", claude_session_id="current-id")
         recap = await call(c, "session_recap", session_id="current-id")
         closed = await call(c, "close_session", session_id="current-id")
     assert recap["session_id"] == s["id"]
@@ -245,10 +235,10 @@ async def test_a_terminal_session_unknown_to_the_bridge_gets_a_clear_error(tmp_p
 
 
 async def test_active_sessions_say_whether_the_bridge_manages_them(tmp_path, root, live):
-    _, srv = server_for(tmp_path, root, live)
+    m, srv = server_for(tmp_path, root, live)
     async with Client(srv) as c:
         before = await call(c, "list_active_sessions")
-        await call(c, "attach_conversation", claude_session_id="current-id")
+        m.attach("current-id", "billing")
         after = await call(c, "list_active_sessions")
     assert before["sessions"][0]["managed_by_bridge"] is False
     assert after["sessions"][0]["managed_by_bridge"] is True

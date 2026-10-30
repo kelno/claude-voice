@@ -17,6 +17,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `create_session` is gone: new work starts with `start_active_session`, whose
   sessions the owner can also open on the phone and at the PC.
 - A background session waiting on a permission prompt shows what it asks.
+- `attach_conversation` resumes an earlier conversation as a background session,
+  on Remote Control and in its own permission mode and folders.
 - `start_active_session` can choose the model and effort of the session it
   starts; a model Claude Code doesn't know is reported in the first reply.
 - `whats_new`, a cheap delta of what happened since the last poll.
