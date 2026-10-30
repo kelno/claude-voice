@@ -157,3 +157,11 @@ def test_a_chosen_model_and_effort_are_passed_to_claude_code_and_left_out_otherw
     assert command[command.index("--effort") + 1] == "high"
     plain = transcripts.background_command("claude", "plain")
     assert "--model" not in plain and "--effort" not in plain
+
+
+def test_sessions_the_bridge_starts_may_edit_their_project_directly():
+    # Claude Code keeps a background session's edits in a worktree unless told otherwise;
+    # the owner wants that off for the bridge's sessions only, not every background session.
+    command = transcripts.background_command("claude", "deep")
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings == {"worktree": {"bgIsolation": "none"}}

@@ -621,6 +621,10 @@ SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
 # Which models exist is Claude Code's to say, so a name is only checked for its shape.
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# Claude Code keeps a background session's edits in a worktree of their own unless told
+# otherwise. The owner wants the bridge's sessions to edit their project directly, as a
+# session at the PC does; other background sessions keep Claude Code's default.
+BRIDGE_SETTINGS = json.dumps({"worktree": {"bgIsolation": "none"}})
 
 
 def background_command(
@@ -637,6 +641,8 @@ def background_command(
         "--name",
         name,
         *(["--remote-control", name] if remote_control else []),
+        "--settings",
+        BRIDGE_SETTINGS,
         *(["--model", model] if model else []),
         *(["--effort", effort] if effort else []),
     ]
