@@ -86,6 +86,10 @@ Sessions
 - Prefer a session open in the desktop app: the owner can open it, see what
   happened and take over. A session you start (create_session, send_task) never
   shows in the desktop app; say so when you start one.
+- To start a session the owner can later find in the desktop app:
+  start_active_session, give it its task (message_active_session), let its turn
+  end, then hand_to_desktop. It then shows in the desktop sidebar, but waits
+  there until the owner opens it: hand it over when its work is done.
 - access "folder_not_open": the session can't be read or messaged yet; if the
   owner wants it, call request_access, which they approve in their app.
   access "folder_closed": never opened; the refusal names the closed folder.
@@ -99,12 +103,12 @@ Talking to a session
   already the answer, but more may follow. Don't report it as finished, or as
   cut off; read on with read_session_output(after=next_after) until its status
   is "idle", which means its turn has ended.
-- When the owner asks you to wait for a result, keep waiting: read again every
-  few seconds until it's there, instead of handing back for them to ask again.
-  Pause between reads (a short sleep in your own code tool, if you have one),
-  keeping each call under 20 seconds. Say once that you're waiting, then wait
-  quietly. When they didn't ask you to wait and expect a quick answer, say it's
-  still running instead.
+- When the owner asks you to wait for an answer, in whatever words,
+  keep waiting: re-check every few seconds until it comes (a short sleep between
+  reads, each call under 20 seconds). Otherwise don't block the conversation:
+  hand back and check again on their next turn, unless the answer should come
+  within a few seconds. Before any wait, say a two- or three-word heads-up,
+  such as "Waiting on it.": silence during a wait sounds like a dropped call.
 - Open sessions and the side session have the same three ways in:
   - send and return (a few seconds): message_active_session, or
     message_forked_session for the side session. Use it when your next step
@@ -250,6 +254,7 @@ def build_server(
     restart: dict[str, Any] | None = None,
     start_background: Callable[[str, str], Awaitable[None]] = transcripts.start_background,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
+    open_in_desktop: Callable[[str, str, str], Awaitable[None]] = transcripts.open_in_desktop,
     start_seconds: float = 20.0,
     summarize: Callable[[str, str | None, str | None], Awaitable[str]] = transcripts.summarize,
     digest_chars: int = 150_000,
@@ -633,6 +638,36 @@ def build_server(
                 raise ToolError(f"{name} was asked to stop but is still running")
             await asyncio.sleep(0.2)
         return {"name": name, "status": "stopped"}
+
+    @mcp.tool(
+        title="Move a session into the desktop app",
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
+    )
+    async def hand_to_desktop(name: str) -> dict[str, Any]:
+        """Move a session start_active_session started into the desktop app's sidebar, with its
+        conversation, once its turn has ended: the bridge stops it and opens a terminal tab on
+        the PC, named after it, that hands it over; there it waits for the owner to open it.
+        status: "handed_over", "busy" (mid-turn; nothing done), "no_conversation" (it never
+        answered, so there is nothing to open), or "not_started_here"."""
+        live = next((d for d in live_sessions() if name in (d.get("name"), d.get("sessionId"))), None)
+        started = store.started_session(str(live.get("sessionId")) if live else name)
+        if started is None:
+            return {"name": name, "status": "not_started_here"}
+        sid, cwd = started["claude_session_id"], started["cwd"]
+        name = started["name"]
+        if live and live.get("status") != "idle":
+            return {"name": name, "claude_session_id": sid, "status": "busy"}
+        # Claude Code writes no conversation before the first turn: nothing to open then.
+        if not any(t["role"] == "assistant" for t in transcripts.recent_turns(read_transcript(sid, cwd), None)):
+            return {"name": name, "claude_session_id": sid, "status": "no_conversation"}
+        if live:
+            # The desktop app only takes a session that is no longer running elsewhere.
+            await stop_active_session(sid)
+        try:
+            await open_in_desktop(sid, cwd, name)
+        except Exception as exc:
+            raise ToolError(f"Could not open {name} in the desktop app: {exc}") from None
+        return {"name": name, "claude_session_id": sid, "status": "handed_over", "terminal_tab": name}
 
     @mcp.tool(
         title="Retire a bridge session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)

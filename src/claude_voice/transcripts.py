@@ -9,6 +9,7 @@ itself rather than in a copy of its conversation.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import contextvars
 import json
@@ -559,6 +560,66 @@ def shared_reader() -> SideReader:
 _courier = Courier()
 
 
+# HOOK, off on purpose: the owner decided that sessions the bridge starts should connect to
+# Remote Control, so the phone can reach them, but that waits for a live test the owner
+# approves at the PC. Turning it on means passing remote_control=True below.
+REMOTE_CONTROL_AT_START = False
+
+SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
+
+
+def background_command(cli: str, name: str, remote_control: bool = REMOTE_CONTROL_AT_START) -> list[str]:
+    """The `claude --bg` command line that starts a named background session."""
+    return [cli, "--bg", "--name", name, *(["--remote-control"] if remote_control else [])]
+
+
+def desktop_handover_command(session_id: str, cwd: str, title: str) -> list[str]:
+    """A Windows Terminal tab, named `title`, that hands a stopped session to the desktop app.
+
+    `claude --desktop` needs a real terminal, so the handover runs where the owner can see it:
+    the tab closes by itself once it worked and stays open with the error otherwise.
+    """
+    import shutil
+
+    if not SESSION_ID.fullmatch(session_id):
+        raise ValueError(f"not a session id: {session_id!r}")
+    # Windows Terminal splits its command line on ";", even inside an argument.
+    tab = " ".join(title.replace(";", " ").replace('"', " ").split()) or "Claude session"
+    script = (
+        f"claude --desktop --resume '{session_id}'\n"
+        "if ($LASTEXITCODE -ne 0) { Read-Host 'The handover to the desktop app failed. Press Enter to close' }\n"
+    )
+    shell = shutil.which("pwsh") or "powershell"
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    return [
+        shutil.which("wt") or "wt",
+        "-w",
+        "new",
+        "new-tab",
+        "--title",
+        tab,
+        "-d",
+        cwd.replace(";", r"\;"),
+        shell,
+        "-NoProfile",
+        "-EncodedCommand",
+        encoded,
+    ]
+
+
+async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
+    """Hand a stopped session to the desktop app, in a terminal tab the owner can see."""
+    proc = await asyncio.create_subprocess_exec(
+        *desktop_handover_command(session_id, cwd, title),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    # Windows Terminal hands the tab to its window and returns at once.
+    if await asyncio.wait_for(proc.wait(), 30):
+        raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
+
+
 async def start_background(cwd: str, name: str) -> None:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal.
 
@@ -572,10 +633,7 @@ async def start_background(cwd: str, name: str) -> None:
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     cli = shutil.which("claude") or str(bundled)
     proc = await asyncio.create_subprocess_exec(
-        cli,
-        "--bg",
-        "--name",
-        name,
+        *background_command(cli, name),
         cwd=cwd,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
