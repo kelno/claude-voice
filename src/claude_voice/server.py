@@ -24,7 +24,7 @@ from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 from starlette.types import ASGIApp
 
-from . import access, events, fork, metrics, transcripts
+from . import access, events, fork, metrics, permissions, transcripts
 from .approvals import ApprovalBroker, ApprovalNotFound
 from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
@@ -148,6 +148,7 @@ class Config:
     public_hosts: list[str] = field(default_factory=list)
     public_url: str = ""
     courier_name: str = transcripts.COURIER_NAME
+    new_session_mode: str = "default"
 
 
 MAKE_TOKEN = (
@@ -178,6 +179,12 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
         public_hosts=[h for h in env.get("CLAUDE_VOICE_PUBLIC_HOSTS", "").split(",") if h],
     )
     cfg.courier_name = env.get("CLAUDE_VOICE_COURIER_NAME", "").strip() or transcripts.COURIER_NAME
+    cfg.new_session_mode = env.get("CLAUDE_VOICE_PERMISSION_MODE", "").strip() or "default"
+    if cfg.new_session_mode not in permissions.MODES:
+        raise ConfigError(
+            f"CLAUDE_VOICE_PERMISSION_MODE is {cfg.new_session_mode!r}; "
+            f"use one of {', '.join(sorted(permissions.MODES))}."
+        )
     cfg.public_url = env.get("CLAUDE_VOICE_PUBLIC_URL", "").rstrip("/") or (
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
     )
@@ -1291,6 +1298,7 @@ def serve_forever(cfg: Config) -> None:
         approvals=ApprovalBroker(store),
         denied=access.default_denied(),
         exempt=access.default_exempt(),
+        new_mode=cfg.new_session_mode,
     )
     if cfg.transport == "stdio":
         build_server(manager).run("stdio")

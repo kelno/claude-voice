@@ -1,6 +1,7 @@
 import pytest
 from fakes import Boom, FakeClaude, Pause, init, result, say, use_tool
 
+from claude_voice.permissions import Grant
 from claude_voice.sessions import SessionBusy, SessionClosed, SessionManager
 from claude_voice.store import Store
 
@@ -215,16 +216,35 @@ async def test_attach_continues_a_conversation_started_elsewhere(store, root):
     assert claude.clients[0].options.resume == "term-7"
 
 
-async def test_claude_runs_with_normal_permissions_and_the_users_settings(store, root):
+async def test_claude_runs_with_the_mode_for_new_sessions_and_the_users_settings(store, root):
     claude = FakeClaude([result("ok", "c-1")])
-    m = manager(store, root, claude)
+    m = SessionManager(store, project_root=root, client_factory=claude, new_mode="auto")
     s = m.create("app")
     await m.send(s["id"], "go")
     await m.wait(s["id"])
 
     opts = claude.clients[0].options
-    assert opts.permission_mode == "default"
+    assert opts.permission_mode == "auto"
+    assert opts.add_dirs == []
     assert opts.setting_sources == ["user", "project", "local"]
+
+
+async def test_a_resumed_conversation_runs_with_its_own_permissions(store, root):
+    claude = FakeClaude([result("ok", "term-7")])
+    asked = []
+
+    def grant_for(session_id, cwd, new_mode):
+        asked.append((session_id, new_mode))
+        return Grant("acceptEdits", (r"D:\work\other",))
+
+    m = SessionManager(store, project_root=root, client_factory=claude, new_mode="auto", grant_for=grant_for)
+    s = m.attach("term-7", "app")
+    await m.send(s["id"], "go on")
+    await m.wait(s["id"])
+
+    opts = claude.clients[0].options
+    assert asked == [("term-7", "auto")]
+    assert (opts.permission_mode, opts.add_dirs) == ("acceptEdits", [r"D:\work\other"])
 
 
 async def test_recap_gives_a_short_spoken_summary_of_the_last_turn(store, root):

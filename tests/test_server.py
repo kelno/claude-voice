@@ -158,6 +158,19 @@ def test_config_refuses_an_api_key_so_the_subscription_is_used(tmp_path):
         load_config(env, transport="stdio")
 
 
+def test_config_reads_the_mode_for_new_sessions(tmp_path):
+    env = {"CLAUDE_VOICE_ROOT": str(tmp_path)}
+    assert load_config(env, transport="stdio").new_session_mode == "default"
+    env["CLAUDE_VOICE_PERMISSION_MODE"] = "auto"
+    assert load_config(env, transport="stdio").new_session_mode == "auto"
+
+
+def test_config_refuses_an_unknown_permission_mode(tmp_path):
+    env = {"CLAUDE_VOICE_ROOT": str(tmp_path), "CLAUDE_VOICE_PERMISSION_MODE": "yolo"}
+    with pytest.raises(ConfigError, match="CLAUDE_VOICE_PERMISSION_MODE"):
+        load_config(env, transport="stdio")
+
+
 def test_config_allows_an_api_key_when_explicitly_wanted(tmp_path):
     env = {
         "CLAUDE_VOICE_ROOT": str(tmp_path),

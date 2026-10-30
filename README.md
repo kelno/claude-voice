@@ -109,7 +109,9 @@ then give it a public address.
   `ANTHROPIC_API_KEY` is set, because Claude would then be billed per token.
   Set `CLAUDE_VOICE_ALLOW_API_KEY=1` if that is what you want.
 - **Your own Claude Code settings apply**, including your permission rules.
-  Nothing is pre-approved beyond them.
+  Nothing is pre-approved beyond them. A conversation the bridge resumes keeps
+  its own permission mode, and the folders added to it, as recorded by the
+  desktop app or in its transcript; a new one gets `CLAUDE_VOICE_PERMISSION_MODE`.
 - **Risky actions wait for a yes.**
   - Anything Claude Code would normally ask you about becomes a pending approval
     with a short number you can say aloud, such as "approval 3: Bash,
@@ -185,6 +187,7 @@ also the default.
 | `CLAUDE_VOICE_PUBLIC_HOSTS` | — | comma-separated hostnames the tunnel serves |
 | `CLAUDE_VOICE_HOST` / `_PORT` | `127.0.0.1` / `8811` | keep it on this computer and tunnel in |
 | `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Roy via stemmen` |
+| `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
 
 ### Signing in

@@ -68,3 +68,8 @@ name = "a reply is final only once the turn has ended"
 file = "src/claude_voice/server.py"
 find = '"reply_final": bool\(new\) and status in'
 replace = '"reply_final": True,'
+[[rule]]
+name = "a resumed session keeps the permissions it has where the owner runs it"
+file = "src/claude_voice/permissions.py"
+find = 'if session_id and SESSION_ID\.fullmatch\(session_id\):'
+replace = 'if False:'
