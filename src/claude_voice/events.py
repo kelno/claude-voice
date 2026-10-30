@@ -1,9 +1,9 @@
 """What has happened since the client last asked: a delta feed for polling clients.
 
-MCP clients pull; they cannot be pushed to. So the bridge keeps the news:
-bridge sessions already journal their events, and a LiveWatcher turns status
-changes of running Claude Code sessions (finished, waiting for input, started,
-ended) into feed entries. `whats_new` returns both after a cursor.
+MCP clients pull; they cannot be pushed to. So the bridge keeps the news: a
+LiveWatcher turns status changes of running Claude Code sessions (finished,
+waiting for input, started, ended) into feed entries, and `whats_new` returns
+them after a cursor.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ from typing import Any
 
 from . import procs
 from .store import Store
-from .transcripts import clip
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS live_snapshot(name TEXT PRIMARY KEY, status TEXT, session_id TEXT);
@@ -30,15 +29,6 @@ CREATE TABLE IF NOT EXISTS feed(
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 """
-
-BRIDGE_KINDS = {
-    "result",
-    "error",
-    "approval_requested",
-    "approval_expired",
-    "cancelled",
-    "interrupted",
-}
 
 
 def read_live(live_dir: Path) -> list[dict[str, Any]]:
@@ -150,18 +140,6 @@ def _live_sentence(name: str, kind: str, project: str | None) -> str:
     }.get(kind, f"{name}: {kind}.")
 
 
-def _describe(tool: str, tool_input: Any) -> str:
-    """'run Bash: make', 'use Edit on a.py': a tool request in a few spoken words."""
-    if not isinstance(tool_input, dict):
-        return f"use {tool}"
-    if tool == "Bash" and tool_input.get("command"):
-        return f"run Bash: {clip(str(tool_input['command']), 120)}"
-    path = tool_input.get("file_path") or tool_input.get("path")
-    if path:
-        return f"use {tool} on {Path(str(path)).name}"
-    return f"use {tool}"
-
-
 def _transition(old: str | None, new: str | None) -> str | None:
     if new == "waiting":
         return "needs_input"
@@ -170,43 +148,3 @@ def _transition(old: str | None, new: str | None) -> str | None:
     if old in ("idle", "waiting") and new == "busy":
         return "working"
     return None
-
-
-def bridge_events(store: Store, after: int, limit: int = 200) -> list[dict[str, Any]]:
-    """Newsworthy events from sessions run by the bridge, in voice-sized form."""
-    placeholders = ",".join("?" * len(BRIDGE_KINDS))
-    rows = store.db.execute(
-        "SELECT e.seq, e.ts, e.kind, e.payload, s.label, s.project_path FROM events e"
-        f" JOIN sessions s ON s.id=e.session_id WHERE e.seq>? AND e.kind IN ({placeholders})"
-        " ORDER BY e.seq LIMIT ?",
-        (after, *sorted(BRIDGE_KINDS), limit),
-    ).fetchall()
-    out = []
-    for seq, ts, kind, payload, label, project_path in rows:
-        p = json.loads(payload)
-        name = label or Path(project_path).name
-        extra: dict[str, Any] = {}
-        if kind == "result":
-            failed = p.get("is_error")
-            kind = "error" if failed else "finished"
-            result = clip(str(p.get("text") or ""), 300)
-            text = f"{name} failed: {result}" if failed else f"{name} finished. {result}".rstrip()
-        elif kind == "error":
-            text = f"{name} failed: {clip(str(p.get('error')), 300)}"
-        elif kind == "approval_requested":
-            kind = "needs_approval"
-            text = f"{name} wants to {_describe(p.get('tool'), p.get('input'))}. Yes or no?"
-            extra = {"approval_id": p.get("id"), "tool": p.get("tool"), "input": p.get("input")}
-        elif kind == "approval_expired":
-            extra = {"approval_id": p.get("id")}
-            text = f"An approval for {name} expired and was refused."
-        elif kind == "cancelled":
-            text = f"{name} was stopped."
-        else:
-            text = f"{name} was interrupted when the bridge restarted."
-        out.append({"seq": seq, "ts": ts, "session": name, "kind": kind, "text": text, **extra})
-    return out
-
-
-def last_bridge_seq(store: Store) -> int:
-    return store.db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()[0]

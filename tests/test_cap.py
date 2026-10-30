@@ -66,22 +66,17 @@ def desk(live, root):
 
 async def test_no_tool_call_waits_longer_than_the_cap(tmp_path, root, live):
     target = Target(live, str(root / "billing"), status="busy")  # never answers
-    pause = Pause()
-    claude = FakeClaude([init("c-1"), pause, result("late", "c-1")], [init("f-1"), Pause()])
-    m, srv = bridge(tmp_path, root, live, claude, target=target)
+    claude = FakeClaude([init("f-1"), Pause()], [init("f-2"), Pause()])
+    _, srv = bridge(tmp_path, root, live, claude, target=target)
     async with Client(srv) as c:
-        s = m.create("billing")
-        await call(c, "send_task", session_id=s["id"], prompt="go")
-        await pause.reached.wait()
         started = time.monotonic()
-        waited = await call(c, "wait_for_session", session_id=s["id"], wait_seconds=120)
         asked = await call(c, "ask_active_session", session="billing-ab", message="?", wait_seconds=120)
         forked = await call(c, "ask_forked_session", session="billing-ab", question="?", wait_seconds=120)
+        read = await call(c, "read_forked_session", fork_id=forked["fork_id"], wait_seconds=120)
         elapsed = time.monotonic() - started
-        await call(c, "cancel", session_id=s["id"])
-    assert waited["waited"] == "still_running"
     assert asked["status"] == "still_working"
     assert forked["status"] == "still_working" and forked["fork_id"]
+    assert read["status"] == "still_working"
     assert elapsed < 3 * CAP + 2  # three calls, each at most the cap
 
 

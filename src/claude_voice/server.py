@@ -25,11 +25,10 @@ from pydantic import AnyHttpUrl
 from starlette.types import ASGIApp
 
 from . import access, events, fork, metrics, permissions, transcripts
-from .approvals import ApprovalBroker, ApprovalNotFound
 from .metrics import METRICS
 from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
-from .sessions import SessionBusy, SessionClosed, SessionManager
-from .store import SessionNotFound, Store
+from .sessions import SessionManager
+from .store import Store
 from .tree import PROJECTS_DIR, SessionTree, session_kind
 
 MIN_TOKEN_CHARS = 32
@@ -86,11 +85,11 @@ The central rule: the owner sees nothing that passes through these tools
   machine, so keep what you read back short.
 
 Sessions
-- When asked which sessions there are, give every one you can see: list_sessions
-  returns the bridge's own sessions (idle ones included; their Claude Code
-  process only runs during a task) and every session running on the machine.
-  Side chats are marked side_chat: quick asides the owner opened from another
-  session in the desktop app (named "btw: ..."); send them no work unless asked.
+- When asked which sessions there are, give every one you can see:
+  list_active_sessions returns every session running on the machine, and
+  fleet_recap adds a line on what each is doing. Side chats are marked
+  side_chat: quick asides the owner opened from another session in the desktop
+  app (named "btw: ..."); send them no work unless asked.
 - New work: start_active_session, then give it its task (message_active_session
   or ask_active_session). It is on Remote Control and in the desktop app's Code
   sidebar (under Remote Control) from the start, so the owner can open it on the
@@ -107,8 +106,8 @@ Sessions
 
 Talking to a session
 - No call waits longer than 20 seconds, whatever wait_seconds asks: the app drops
-  a call after about 30. Past that a call says "still_working" (or
-  "still_running"), and you read on with the matching read tool.
+  a call after about 30. Past that a call says "still_working", and you read on
+  with the matching read tool.
 - An open session's reply is its final word only when reply_final is true. With
   "still_working", reply is its latest message so far: whole, and possibly
   already the answer, but more may follow. Don't report it as finished, or as
@@ -136,19 +135,13 @@ Talking to a session
   like new work (on the phone and in the sidebar, in its own permission mode);
   then talk to it like any open session. If the result has copied_from, Claude
   Code started a copy because the original is still open elsewhere: say so.
-- For an older bridge session (from list_sessions): send_task returns at once;
-  then wait_for_session, again while it says "still_running", then tell the owner
-  the result. Poll whats_new (pass back its cursor) for other news.
+- Poll whats_new (pass back its cursor) for news: a session finished, needs
+  input, started or ended.
 - To learn about a session cheaply, without sending into it: peek_session
   (seconds, the last few turns' words) or digest_session (about ten seconds, the
   whole conversation's words); neither reads code.
 
 Approvals
-- When a recap shows pending_approvals, read the tool and its input to the owner
-  and call approve only if they clearly say yes; otherwise call deny.
-- An older bridge session (send_task) asks the bridge, not the desktop app or the
-  phone: its prompts reach the owner only through you, so check for them while it
-  works.
 - A session start_active_session started or attach_conversation resumed asks the
   owner directly, on the phone and in the desktop app; you can't answer it. When
   it waits on one, its status is "waiting" and prompt says what it asks: tell the
@@ -230,12 +223,12 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
 log = logging.getLogger("claude_voice")
 
 
-def _parse_cursor(cursor: str | None) -> tuple[int | None, int | None]:
+def _parse_cursor(cursor: str | None) -> int | None:
+    """The feed position a cursor names; None, so the caller starts over, for any other text."""
     try:
-        b, f = (cursor or "").split(".")
-        return int(b.removeprefix("b")), int(f.removeprefix("f"))
+        return int(cursor or "")
     except ValueError:
-        return None, None
+        return None
 
 
 async def log_requests(ctx, call_next):
@@ -331,7 +324,6 @@ def build_server(
         manager.store, live_dir, manager.root, clock=manager.clock, project_of=lambda cwd: under_root(cwd)
     )
     tree = SessionTree(
-        manager.store,
         live_dir,
         manager.root,
         projects_dir=projects_dir,
@@ -390,26 +382,6 @@ def build_server(
         mcp.custom_route("/oauth/consent", methods=["GET"])(oauth.consent_page)
         mcp.custom_route("/oauth/consent", methods=["POST"])(oauth.consent_submit)
     store = manager.store
-
-    def known(session_id: str) -> str:
-        """Resolve a bridge session id, or a Claude session id the bridge has adopted,
-        to the bridge's id. Explain when it is a terminal session the bridge never saw."""
-        try:
-            return store.get_session(session_id)["id"]
-        except SessionNotFound:
-            pass
-        adopted = [s for s in store.list_sessions(limit=1000) if s["claude_session_id"] == session_id]
-        if adopted:
-            open_ = [s for s in adopted if s["status"] != "closed"]
-            return (open_ or adopted)[0]["id"]
-        if any(session_id in (d.get("sessionId"), d.get("name")) for d in live_sessions()):
-            raise ToolError(
-                f"{session_id} is a Claude Code session running on this machine (in a "
-                "terminal or in the background), not one this bridge started or attached. "
-                "Use message_active_session to talk to it, or "
-                "attach_conversation to resume its conversation in the background."
-            )
-        raise ToolError(f"No session with id {session_id}")
 
     def history_folder(conversations_dir: Path, by_key: dict[str, Path]) -> Path | None:
         """The real folder of one of Claude Code's history folders, which are named by a lossy
@@ -471,76 +443,11 @@ def build_server(
         rows.sort(key=lambda r: (-r[0], r[1]["name"]))
         return {"root": str(manager.root), "projects": [row for _, row in rows[:20]]}
 
-    @mcp.tool(title="List the bridge's sessions", annotations=READ_ONLY)
-    def list_sessions() -> dict[str, Any]:
-        """Two lists: `sessions`, the newest 20 sessions this bridge started, idle ones included,
-        and `running_claude_code_sessions`, every Claude Code session running on the machine now
-        (as list_active_sessions gives it). A bridge session is in the second list only while it
-        works on a task, since its Claude Code process only runs then."""
-        rows = [s for s in store.list_sessions(limit=100) if s["status"] != "closed"][:20]
-        return {"sessions": rows, "running_claude_code_sessions": running()}
-
-    @mcp.tool(
-        title="Send a task to a bridge session",
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True),
-    )
-    async def send_task(session_id: str, prompt: str) -> dict[str, Any]:
-        """Give Claude a task or follow-up. Returns at once; poll session_recap for progress."""
-        session_id = known(session_id)
-        try:
-            return await manager.send(session_id, prompt)
-        except (SessionBusy, SessionClosed, ValueError) as exc:
-            msg = str(exc) if not isinstance(exc, SessionClosed) else "That session is closed."
-            raise ToolError(msg) from None
-
-    def clipped_recap(session_id: str, max_chars: int) -> dict[str, Any]:
-        recap = manager.recap(session_id)
-        for key in ("last_prompt", "latest_text", "last_result", "last_error"):
-            if isinstance(recap.get(key), str):
-                recap[key] = transcripts.clip(recap[key], max(max_chars, 20))
-        return recap
-
-    @mcp.tool(title="Show a bridge session's status", annotations=READ_ONLY)
-    def session_recap(session_id: str, max_chars: int = 400) -> dict[str, Any]:
-        """Short status of one session: running or not, last prompt, latest words, result.
-        Texts are cut to max_chars each."""
-        return clipped_recap(known(session_id), max_chars)
-
-    @mcp.tool(title="Wait for a bridge session to finish", annotations=READ_ONLY)
-    async def wait_for_session(session_id: str, wait_seconds: float = 20, max_chars: int = 400) -> dict[str, Any]:
-        """Wait (at most 20 s, longer is cut) until a session this bridge started finishes or
-        needs an approval, then return its recap; use it after send_task or approve instead of
-        polling session_recap. waited: "finished" (status says how it ended),
-        "needs_approval" (read pending_approvals to the user), "still_running" (the wait
-        ran out; call again), or "not_running" (it was never given a task)."""
-        session_id = known(session_id)
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + capped(wait_seconds)
-        if store.get_session(session_id)["status"] != "running":
-            # A quick task can end before anyone waits: its end is still news.
-            had_task = any(e["kind"] == "prompt" for e in store.events(session_id))
-            waited = "finished" if had_task else "not_running"
-        else:
-            while True:
-                recap = manager.recap(session_id)
-                if recap["pending_approvals"]:
-                    waited = "needs_approval"
-                    break
-                if recap["status"] != "running":
-                    waited = "finished"
-                    break
-                if loop.time() >= deadline:
-                    waited = "still_running"
-                    break
-                await asyncio.sleep(poll_seconds)
-        return {**clipped_recap(session_id, max_chars), "waited": waited}
-
     @mcp.tool(title="Show what every session is doing", annotations=READ_ONLY)
     def fleet_recap() -> dict[str, Any]:
-        """Every session in one call: running Claude Code sessions and the bridge's own
-        (active in the last day), each with status and `doing`, one line on what it is
-        doing. Answers "what are my sessions up to?" without reading each one. kind:
-        "desktop" (open in the desktop app), "terminal", "background" or "bridge-session"."""
+        """Every running Claude Code session in one call, each with status and `doing`, one
+        line on what it is doing. Answers "what are my sessions up to?" without reading each
+        one. kind: "desktop" (open in the desktop app), "terminal" or "background"."""
         sessions = []
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         for row in running():
@@ -568,48 +475,7 @@ def build_server(
                 if key in row:
                     item[key] = row[key]
             sessions.append(item)
-        cutoff = manager.clock() - 24 * 3600
-        for s in store.list_sessions(limit=200):
-            if s["status"] == "closed" or s["updated_at"] < cutoff:
-                continue
-            recap = manager.recap(s["id"])
-            words = recap["latest_text"] or recap["last_result"] or recap["last_error"] or ""
-            sessions.append(
-                {
-                    "id": s["id"],
-                    "name": s["label"] or Path(s["project_path"]).name,
-                    "kind": "bridge-session",
-                    "project": under_root(s["project_path"]),
-                    "status": s["status"],
-                    "doing": transcripts.first_sentence(words) if words else "",
-                    "minutes_since_update": round((manager.clock() - s["updated_at"]) / 60),
-                }
-            )
         return {"sessions": sessions}
-
-    @mcp.tool(
-        title="Stop a session's current turn", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
-    )
-    async def cancel(session_id: str) -> dict[str, Any]:
-        """Stop the current turn of a session; the session stays usable. `status` says whether
-        it was interrupted, not running, or not_supported (a terminal session: stop it there)."""
-        try:
-            session_id = known(session_id)
-        except ToolError:
-            target = next((d for d in live_sessions() if session_id in (d.get("sessionId"), d.get("name"))), None)
-            if target is None:
-                raise
-            # Only Esc in its own window stops a turn there; a signal from outside ends the session.
-            return {
-                "session_id": target.get("sessionId"),
-                "cancelled": False,
-                "status": "not_supported",
-                "reason": "a session open in a terminal can only be stopped at its screen",
-            }
-        out = await manager.cancel(session_id)
-        if out["cancelled"]:
-            return {**out, "status": "interrupted", "how": "sdk"}
-        return {**out, "status": "not_running"}
 
     @mcp.tool(
         title="Start a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -713,17 +579,6 @@ def build_server(
             raise ToolError(f"Could not open {name} in the desktop app: {exc}") from None
         return {"name": name, "claude_session_id": sid, "status": "handed_over", "terminal_tab": name}
 
-    @mcp.tool(
-        title="Retire a bridge session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
-    )
-    def close_session(session_id: str) -> dict[str, Any]:
-        """Retire a session. Its history is kept."""
-        session_id = known(session_id)
-        try:
-            return manager.close(session_id)
-        except SessionBusy as exc:
-            raise ToolError(str(exc)) from None
-
     def under_root(cwd: str | None) -> str | None:
         """Project name: relative to the root, the full path in a granted folder, or None
         if the folder is not open to the bridge."""
@@ -771,11 +626,6 @@ def build_server(
         return read_prompt(str(d["jobId"]))
 
     def running() -> list[dict[str, Any]]:
-        managed = {
-            s["claude_session_id"]
-            for s in store.list_sessions(limit=1000)
-            if s["claude_session_id"] and s["status"] != "closed"
-        }
         now_ms = manager.clock() * 1000
         sessions = []
         for d in live_sessions():
@@ -802,7 +652,6 @@ def build_server(
                 "project": name,
                 "status": d.get("status"),
                 "kind": d.get("kind"),
-                "managed_by_bridge": d.get("sessionId") in managed,
                 "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
             }
             if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
@@ -1270,26 +1119,22 @@ def build_server(
     @mcp.tool(title="Check for news since last time", annotations=READ_ONLY)
     def whats_new(cursor: str | None = None) -> dict[str, Any]:
         """Has anything happened since I last asked? Returns only new events (a session
-        finished, failed, needs approval or input, started, ended) and a cursor to pass
-        next time. Call without a cursor first; cheap enough to poll."""
+        finished, needs input, started, ended) and a cursor to pass next time. Call without a
+        cursor first; cheap enough to poll."""
         check()
-        b, f = _parse_cursor(cursor)
-        latest_b, latest_f = events.last_bridge_seq(manager.store), watcher.last_seq()
-        items: list[dict[str, Any]] = []
-        if b is not None:
-            items = events.bridge_events(manager.store, b) + watcher.feed_after(f or 0)
-            items.sort(key=lambda e: e["ts"])
-        nb, nf = max(b or 0, latest_b), max(f or 0, latest_f)
+        after = _parse_cursor(cursor)
+        items = watcher.feed_after(after) if after is not None else []
+        latest = max(after or 0, watcher.last_seq())
         return {
-            "cursor": f"b{nb}.f{nf}",
+            "cursor": str(latest),
             "events": [{k: v for k, v in e.items() if k not in ("seq",)} for e in items],
         }
 
     @mcp.tool(title="Show the tree of sessions", annotations=READ_ONLY)
     def session_tree() -> dict[str, Any]:
         """The sessions to choose from, as a tree: the bridge, the Claude Code sessions
-        running on this machine, the sessions the bridge runs, helper agents, and for each
-        which others it has sent messages to in the last day (talks_to). `version` changes
+        running on this machine, helper agents, and for each which others it has sent
+        messages to in the last day (talks_to). `version` changes
         when the shape changes; whats_new reports that as kind "tree_changed"."""
         return tree.build()
 
@@ -1318,35 +1163,6 @@ def build_server(
             "access": {"root": str(manager.root), "granted": [str(p) for p in manager.access.granted()]},
         }
 
-    @mcp.tool(title="List tool calls awaiting approval", annotations=READ_ONLY)
-    def list_pending_approvals(session_id: str | None = None) -> dict[str, Any]:
-        """Tool calls Claude is waiting to be allowed to make. Read each one to the user."""
-        if manager.approvals is None:
-            return {"approvals": []}
-        return {"approvals": manager.approvals.pending(session_id)}
-
-    @mcp.tool(
-        title="Approve a pending tool call", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True)
-    )
-    def approve(approval_id: str) -> dict[str, Any]:
-        """Allow one pending tool call. Only after the user has clearly said yes to it."""
-        return _answer(lambda b: b.approve(approval_id))
-
-    @mcp.tool(
-        title="Refuse a pending tool call", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
-    )
-    def deny(approval_id: str, reason: str | None = None) -> dict[str, Any]:
-        """Refuse one pending tool call; the reason is passed on to Claude."""
-        return _answer(lambda b: b.deny(approval_id, reason))
-
-    def _answer(fn) -> dict[str, Any]:
-        if manager.approvals is None:
-            raise ToolError("Approvals are not enabled on this bridge")
-        try:
-            return fn(manager.approvals)
-        except ApprovalNotFound:
-            raise ToolError("No such pending approval; it may have expired") from None
-
     return mcp
 
 
@@ -1374,7 +1190,6 @@ def serve_forever(cfg: Config) -> None:
     manager = SessionManager(
         store,
         project_root=cfg.root,
-        approvals=ApprovalBroker(store),
         denied=access.default_denied(),
         exempt=access.default_exempt(),
         new_mode=cfg.new_session_mode,

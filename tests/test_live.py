@@ -5,7 +5,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
-from fakes import FakeClaude, result
+from fakes import FakeClaude
 from mcp.client import Client
 
 from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server
@@ -137,18 +137,6 @@ async def test_read_session_output_uses_the_current_transcript(tmp_path, root, l
     assert out["status"] == "idle"
 
 
-async def test_a_turn_that_does_nothing_is_an_error(tmp_path, root, live):
-    claude = FakeClaude([result("", "c-1", num_turns=0)])
-    m, srv = server_for(tmp_path, root, live, claude=claude)
-    async with Client(srv) as c:
-        s = m.create("billing")
-        await call(c, "send_task", session_id=s["id"], prompt="go")
-        await m.wait(s["id"])
-        recap = await call(c, "session_recap", session_id=s["id"])
-    assert recap["status"] == "error"
-    assert "open in another" in recap["last_error"]
-
-
 # -- searching a long transcript ---------------------------------------------------
 
 from claude_voice.transcripts import search_turns  # noqa: E402
@@ -209,41 +197,6 @@ def test_words_match_at_word_starts_only():
     assert [h["turn"] for h in search_turns(turns, "port")] == [1]
 
 
-# -- ids: bridge session ids and Claude session ids --------------------------------
-
-
-async def test_session_tools_accept_the_claude_session_id(tmp_path, root, live):
-    m, srv = server_for(tmp_path, root, live)
-    s = m.attach("current-id", "billing")
-    async with Client(srv) as c:
-        recap = await call(c, "session_recap", session_id="current-id")
-        closed = await call(c, "close_session", session_id="current-id")
-    assert recap["session_id"] == s["id"]
-    assert closed["id"] == s["id"] and closed["status"] == "closed"
-
-
-async def test_a_terminal_session_unknown_to_the_bridge_gets_a_clear_error(tmp_path, root, live):
-    _, srv = server_for(tmp_path, root, live)
-    async with Client(srv) as c:
-        by_id = await c.call_tool("close_session", {"session_id": "current-id"})
-        by_name = await c.call_tool("session_recap", {"session_id": "billing-ab"})
-        missing = await c.call_tool("close_session", {"session_id": "nope"})
-    assert by_id.is_error and "terminal" in by_id.content[0].text
-    assert "message_active_session" in by_id.content[0].text
-    assert by_name.is_error and "terminal" in by_name.content[0].text
-    assert missing.is_error and "no session" in missing.content[0].text.lower()
-
-
-async def test_active_sessions_say_whether_the_bridge_manages_them(tmp_path, root, live):
-    m, srv = server_for(tmp_path, root, live)
-    async with Client(srv) as c:
-        before = await call(c, "list_active_sessions")
-        m.attach("current-id", "billing")
-        after = await call(c, "list_active_sessions")
-    assert before["sessions"][0]["managed_by_bridge"] is False
-    assert after["sessions"][0]["managed_by_bridge"] is True
-
-
 # -- answers sized for speech ------------------------------------------------------------
 
 from claude_voice.transcripts import clip  # noqa: E402
@@ -272,40 +225,6 @@ async def test_search_excerpts_follow_max_chars(tmp_path, root, live):
         out = await call(c, "search_session_history", session="billing-ab", query="needle", max_chars=80)
     assert "needle" in out["matches"][0]["text"]
     assert len(out["matches"][0]["text"]) <= 80
-
-
-async def test_recap_texts_are_cut_to_max_chars(tmp_path, root, live):
-    claude = FakeClaude([result("z " * 500, "c-1")])
-    m, srv = server_for(tmp_path, root, live, claude=claude)
-    async with Client(srv) as c:
-        s = m.create("billing")
-        await call(c, "send_task", session_id=s["id"], prompt="go")
-        await m.wait(s["id"])
-        recap = await call(c, "session_recap", session_id=s["id"], max_chars=60)
-    assert len(recap["last_result"]) <= 60
-
-
-async def test_cancel_says_plainly_that_a_terminal_session_cannot_be_stopped_from_here(tmp_path, root, live):
-    _, srv = server_for(tmp_path, root, live)
-    async with Client(srv) as c:
-        out = await call(c, "cancel", session_id="billing-ab")
-    assert out["status"] == "not_supported" and out["cancelled"] is False
-    assert "screen" in out["reason"]
-
-
-async def test_cancel_stops_only_the_turn_of_a_bridge_session_and_says_how(tmp_path, root, live):
-    from fakes import Pause
-
-    pause = Pause()
-    m, srv = server_for(tmp_path, root, live, claude=FakeClaude([pause]))
-    async with Client(srv) as c:
-        s = m.create("billing")
-        await call(c, "send_task", session_id=s["id"], prompt="go")
-        await pause.reached.wait()
-        out = await call(c, "cancel", session_id=s["id"])
-        again = await call(c, "cancel", session_id=s["id"])
-    assert out["status"] == "interrupted" and out["how"] == "sdk" and out["cancelled"] is True
-    assert again["status"] == "not_running"
 
 
 async def test_reading_on_after_a_turn_says_how_many_turns_are_left(tmp_path, root, live):

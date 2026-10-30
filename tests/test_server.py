@@ -4,7 +4,7 @@ import socket
 import httpx
 import pytest
 import uvicorn
-from fakes import FakeClaude, Pause, init, result, say
+from fakes import FakeClaude
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.server.mcpserver.exceptions import ToolError
@@ -44,57 +44,42 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
         names = {t.name for t in (await client.list_tools()).tools}
     assert {
         "list_projects",
+        "list_active_sessions",
+        "fleet_recap",
+        "start_active_session",
+        "list_claude_conversations",
+        "attach_conversation",
+    } <= names
+    # New and resumed work runs as background sessions; the tools for sessions run inside the bridge are gone.
+    retired = {
+        "create_session",
         "list_sessions",
         "send_task",
         "session_recap",
-        "fleet_recap",
+        "wait_for_session",
         "cancel",
         "close_session",
-        "list_claude_conversations",
-        "attach_conversation",
         "list_pending_approvals",
         "approve",
         "deny",
-    } <= names
-    assert "create_session" not in names  # new work starts as a background session
-
-
-async def test_a_voice_round_trip(tmp_path, root):
-    m, server = make(tmp_path, root, FakeClaude([init("c-1"), say("On it."), result("Done.", "c-1")]))
-    async with Client(server) as client:
-        s = m.create("app", "demo")
-        sent = await call(client, "send_task", session_id=s["id"], prompt="do it")
-        assert sent["status"] == "running"
-        await m.wait(s["id"])
-
-        recap = await call(client, "session_recap", session_id=s["id"])
-        assert recap["last_result"] == "Done."
-        assert [e["kind"] for e in m.store.events(s["id"])] == ["prompt", "text", "result"]
-
-        listed = await call(client, "list_sessions")
-        assert [x["label"] for x in listed["sessions"]] == ["demo"]
+    }
+    assert not retired & names
 
 
 async def test_mistakes_come_back_as_readable_tool_errors(tmp_path, root):
-    pause = Pause()
-    m, server = make(tmp_path, root, FakeClaude([pause]))
+    _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
-        s = m.create("app")
-        await call(client, "send_task", session_id=s["id"], prompt="go")
-        await pause.reached.wait()
-        busy = await client.call_tool("send_task", {"session_id": s["id"], "prompt": "again"})
-        assert busy.is_error and "still working" in busy.content[0].text
+        outside = await client.call_tool("start_active_session", {"project": str(tmp_path)})
+        assert outside.is_error and "under" in outside.content[0].text
 
-        unknown = await client.call_tool("session_recap", {"session_id": "nope"})
-        assert unknown.is_error and "no session" in unknown.content[0].text.lower()
-
-        await call(client, "cancel", session_id=s["id"])
+        unknown = await client.call_tool("read_session_output", {"session": "nope"})
+        assert unknown.is_error and "no running session" in unknown.content[0].text.lower()
 
 
 async def test_tool_errors_are_tool_errors_not_crashes(tmp_path, root):
     _, server = make(tmp_path, root, FakeClaude())
     with pytest.raises(ToolError):
-        await server.call_tool("session_recap", {"session_id": "nope"})
+        await server.call_tool("read_session_output", {"session": "nope"})
 
 
 # -- over HTTP -----------------------------------------------------------------
@@ -192,39 +177,6 @@ def test_root_must_exist(tmp_path):
         load_config({"CLAUDE_VOICE_ROOT": str(tmp_path / "nope")}, transport="stdio")
 
 
-async def test_approvals_can_be_answered_through_tools(tmp_path, root):
-    from claude_agent_sdk import PermissionResultAllow, ToolPermissionContext
-    from fakes import Call
-
-    from claude_voice.approvals import ApprovalBroker
-
-    outcomes = []
-
-    async def ask(options):
-        outcomes.append(await options.can_use_tool("Bash", {"command": "make"}, ToolPermissionContext()))
-
-    store = Store(tmp_path / "bridge.db")
-    broker = ApprovalBroker(store)
-    claude = FakeClaude([Call(ask), result("built", "c-1")])
-    m = SessionManager(store, project_root=root, client_factory=claude, approvals=broker)
-    async with Client(build_server(m)) as client:
-        s = m.create("app")
-        await call(client, "send_task", session_id=s["id"], prompt="build")
-        for _ in range(200):
-            pending = (await call(client, "list_pending_approvals"))["approvals"]
-            if pending:
-                break
-            await asyncio.sleep(0.01)
-        assert pending[0]["tool"] == "Bash"
-
-        bad = await client.call_tool("approve", {"approval_id": "zz"})
-        assert bad.is_error
-
-        await call(client, "approve", approval_id=pending[0]["id"])
-        await m.wait(s["id"])
-    assert isinstance(outcomes[0], PermissionResultAllow)
-
-
 def test_public_url_comes_from_the_tunnel_host(tmp_path):
     env = {"CLAUDE_VOICE_ROOT": str(tmp_path), "CLAUDE_VOICE_TOKEN": "x" * 32}
     assert load_config(env, "http").public_url == "http://127.0.0.1:8811"
@@ -240,11 +192,8 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         tools = {t.name: t for t in (await client.list_tools()).tools}
     read_only = {
         "list_projects",
-        "list_sessions",
-        "session_recap",
         "fleet_recap",
         "list_claude_conversations",
-        "list_pending_approvals",
         "list_active_sessions",
         "read_session_output",
         "search_session_history",
@@ -253,7 +202,6 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "health",
         "digest_session",
         "peek_session",
-        "wait_for_session",
         "ask_forked_session",
         "guide",
         "message_forked_session",
@@ -265,8 +213,8 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
     for name in set(tools) - read_only:
         ann = tools[name].annotations
         assert ann is None or not ann.read_only_hint, name
-    assert tools["approve"].annotations.destructive_hint is True
-    assert tools["close_session"].annotations.destructive_hint is False
+    assert tools["stop_active_session"].annotations.destructive_hint is True
+    assert tools["revoke_access"].annotations.destructive_hint is False
 
 
 class FakeConversations:
@@ -362,7 +310,6 @@ async def test_active_sessions_are_the_running_claude_code_processes(tmp_path, r
             "project": "app",
             "status": "busy",
             "kind": "interactive",
-            "managed_by_bridge": False,
             "minutes_since_update": 2,
         }
     ]
@@ -398,10 +345,10 @@ async def test_tool_calls_are_logged_by_name(tmp_path, root, caplog):
     with caplog.at_level(logging.INFO, logger="claude_voice"):
         async with Client(server) as client:
             await call(client, "list_projects")
-            await client.call_tool("session_recap", {"session_id": "nope"})
+            await client.call_tool("read_session_output", {"session": "nope"})
     lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
     assert any(line.startswith("mcp tools/call list_projects -> ok ") and line.endswith("trace=-") for line in lines)
-    assert any(line.startswith("mcp tools/call session_recap -> error ") for line in lines)
+    assert any(line.startswith("mcp tools/call read_session_output -> error ") for line in lines)
 
 
 async def test_a_trace_id_sent_with_a_call_is_logged_with_it_and_its_time(tmp_path, root, caplog):
@@ -424,30 +371,17 @@ async def test_every_call_is_counted_with_its_time_and_outcome(tmp_path, root):
     async with Client(server) as client:
         await client.call_tool("list_projects", {})
         await client.call_tool("list_projects", {})
-        await client.call_tool("session_recap", {"session_id": "nope"}, meta={"trace_id": "t1"})
+        await client.call_tool("read_session_output", {"session": "nope"}, meta={"trace_id": "t1"})
     snap = METRICS.snapshot()
     tools = {t["name"]: t for t in snap["tools"]}
     assert tools["list_projects"]["calls"] == 2 and tools["list_projects"]["errors"] == 0
-    assert tools["session_recap"]["errors"] == 1
+    assert tools["read_session_output"]["errors"] == 1
     assert (
         tools["list_projects"]["p50_ms"] >= 0 and tools["list_projects"]["p95_ms"] >= tools["list_projects"]["p50_ms"]
     )
     err = snap["errors"][0]
-    assert err["tool"] == "session_recap" and err["trace_id"] == "t1" and err["kind"] == "tool_error"
+    assert err["tool"] == "read_session_output" and err["trace_id"] == "t1" and err["kind"] == "tool_error"
     assert "nope" in err["error"] and len(err["error"]) <= 200
-
-
-async def test_list_sessions_also_shows_running_claude_code_sessions(tmp_path, root):
-    import os
-
-    live = tmp_path / "live"
-    live.mkdir()
-    live_entry(live, os.getpid(), "c-1", str(root / "app"), "app-fix", "idle")
-    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
-    async with Client(build_server(m, conversations=FakeConversations([]), live_dir=live)) as c:
-        out = await call(c, "list_sessions")
-    assert out["sessions"] == []
-    assert [s["name"] for s in out["running_claude_code_sessions"]] == ["app-fix"]
 
 
 def test_the_courier_name_comes_from_the_environment(tmp_path):
