@@ -157,9 +157,6 @@ Missing tools
 - The app caches this connector's tool list. If a tool this guide names isn't
   in yours, search for it by its exact name; if it still isn't there, tell the
   owner the tool list needs a refresh in claude.ai Settings → Connectors.
-- In voice, a refresh reaches you only in a new call: until the owner restarts
-  the call, you keep the old tools and parameters, though calls already run the
-  new behaviour.
 """
 
 
