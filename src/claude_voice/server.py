@@ -91,6 +91,9 @@ Sessions
   end, then hand_to_desktop. It then shows in the desktop sidebar, but waits
   there until the owner opens it, and is off the phone until they turn Remote
   Control on there: hand it over when its work is done.
+- For deep work (restructuring, careful reviews), start_active_session can take a
+  bigger model and a higher effort; say which when you propose it. A model name
+  Claude Code doesn't know shows only in the session's first reply.
 - access "folder_not_open": the session can't be read or messaged yet; if the
   owner wants it, call request_access, which they approve in their app.
   access "folder_closed": never opened; the refusal names the closed folder.
@@ -271,7 +274,7 @@ def build_server(
     read_transcript: Callable[[str, str | None], list[Any]] | None = None,
     watch_interval: float | None = None,
     restart: dict[str, Any] | None = None,
-    start_background: Callable[[str, str], Awaitable[None]] = transcripts.start_background,
+    start_background: Callable[..., Awaitable[None]] = transcripts.start_background,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     open_in_desktop: Callable[[str, str, str], Awaitable[None]] = transcripts.open_in_desktop,
     start_seconds: float = 20.0,
@@ -605,10 +608,20 @@ def build_server(
     @mcp.tool(
         title="Start a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
     )
-    async def start_active_session(project: str, name: str | None = None) -> dict[str, Any]:
+    async def start_active_session(
+        project: str, name: str | None = None, model: str | None = None, effort: str | None = None
+    ) -> dict[str, Any]:
         """Start a new Claude Code session in the background in a project (from list_projects),
-        named `name` or after the project. It is listed at once, so ask_active_session reaches it.
-        It also connects to Remote Control, so the owner can open it on the phone under that name."""
+        named `name` or after the project. It is listed at once, so ask_active_session reaches it,
+        and connects to Remote Control, so the owner can open it on the phone under that name.
+        Optional: `model`, any name Claude Code accepts (for example opus, sonnet,
+        claude-opus-5-5, ...; not a complete list; a wrong one shows only in the first reply),
+        and `effort`, one of low, medium, high, xhigh, max; left out, Claude Code's defaults apply."""
+        # RULE: only a well-formed model name and a known effort reach Claude Code
+        if model is not None and not transcripts.MODEL_NAME.fullmatch(model):
+            raise ToolError(f"Not a model name: {model!r}. Use an alias such as opus, or a full model name.")
+        if effort is not None and effort not in transcripts.EFFORTS:
+            raise ToolError(f"Unknown effort {effort!r}; use one of: {', '.join(transcripts.EFFORTS)}.")
         try:
             path = manager.resolve_project(project)
         except ValueError as exc:
@@ -618,7 +631,7 @@ def build_server(
         while wanted in taken:
             wanted = f"{wanted}-{secrets.token_hex(2)}"
         try:
-            await start_background(str(path), wanted)
+            await start_background(str(path), wanted, model=model, effort=effort)
         except Exception as exc:
             raise ToolError(f"Claude Code could not start a session: {exc}") from None
         deadline = time.monotonic() + start_seconds

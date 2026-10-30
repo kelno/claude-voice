@@ -21,9 +21,11 @@ class Starter:
         self.live = live
         self.register = register
         self.calls = []
+        self.options = []
 
-    async def __call__(self, cwd, name):
+    async def __call__(self, cwd, name, **options):
         self.calls.append((cwd, name))
+        self.options.append(options)
         if self.register:
             (self.live / f"{name}.json").write_text(
                 json.dumps(
@@ -78,6 +80,33 @@ async def test_a_session_that_never_appears_is_reported_not_promised(tmp_path, w
     async with Client(bridge(tmp_path, world, Starter(world[1], register=False))) as c:
         bad = await c.call_tool("start_active_session", {"project": "billing", "name": "ghost"})
     assert bad.is_error and "did not appear" in bad.content[0].text
+
+
+async def test_a_session_can_be_started_on_a_chosen_model_and_effort(tmp_path, world):
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        await c.call_tool(
+            "start_active_session", {"project": "billing", "name": "deep", "model": "opus", "effort": "max"}
+        )
+        await c.call_tool("start_active_session", {"project": "billing", "name": "plain"})
+    assert starter.options == [{"model": "opus", "effort": "max"}, {"model": None, "effort": None}]
+
+
+@pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "opus; rm", "", "o" * 200])
+async def test_only_a_well_formed_model_name_and_a_known_effort_reach_claude_code(tmp_path, world, model):
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        bad = await c.call_tool("start_active_session", {"project": "billing", "model": model})
+    assert bad.is_error and "model" in bad.content[0].text
+    assert starter.calls == []
+
+
+async def test_an_unknown_effort_starts_nothing_and_the_error_lists_the_levels(tmp_path, world):
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        bad = await c.call_tool("start_active_session", {"project": "billing", "effort": "huge"})
+    assert bad.is_error and all(level in bad.content[0].text for level in ("low", "medium", "high", "xhigh", "max"))
+    assert starter.calls == []
 
 
 class Stopper:

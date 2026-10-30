@@ -14,5 +14,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   local tools.
 - Risky actions wait for a spoken approval and are refused after ten minutes.
 - Sessions open elsewhere can be listed, messaged, read and searched.
+- `start_active_session` can choose the model and effort of the session it
+  starts; a model Claude Code doesn't know is reported in the first reply.
 - `whats_new`, a cheap delta of what happened since the last poll.
 - `claude-voice check` and `claude-voice serve`, and a user service installer.

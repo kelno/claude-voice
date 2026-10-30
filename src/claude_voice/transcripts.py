@@ -37,6 +37,13 @@ from claude_agent_sdk import (
 
 MESSAGING_TOOLS = frozenset({"ListAgents", "SendMessage", "ToolSearch"})
 
+# Claude Code accepts any model name at start and only refuses it at the first message, with
+# a reply of its own; this says what the caller can do about it.
+MODEL_NOT_FOUND_NOTE = (
+    "\n\nThis session can't work: Claude Code doesn't know its model. Stop it with "
+    "stop_active_session and start it again with start_active_session and a valid model."
+)
+
 
 def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[str, Any]]:
     """What a person would read: prompts and Claude's text, with tool names folded in."""
@@ -58,7 +65,10 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[s
                 if b.get("type") == "tool_use":
                     pending_tools.append(b.get("name", "?"))
                 elif b.get("type") == "text" and b.get("text", "").strip():
-                    turns.append({"role": "assistant", "text": b["text"], "tools": pending_tools})
+                    text = b["text"]
+                    if getattr(m, "error", None) == "model_not_found":
+                        text += MODEL_NOT_FOUND_NOTE
+                    turns.append({"role": "assistant", "text": text, "tools": pending_tools})
                     pending_tools = []
     return turns if limit is None else turns[-limit:]
 
@@ -252,7 +262,7 @@ def read_raw_transcript(session_id: str, cwd: str, projects_dir: Path = PROJECTS
             continue
         if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") != "peer":
             continue
-        out.append(SimpleNamespace(type=entry["type"], message=entry.get("message") or {}))
+        out.append(SimpleNamespace(type=entry["type"], message=entry.get("message") or {}, error=entry.get("error")))
     return out
 
 
@@ -567,10 +577,28 @@ REMOTE_CONTROL_AT_START = True
 
 SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
 
+# Which models exist is Claude Code's to say, so a name is only checked for its shape.
+MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._\[\]-]{0,99}")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
-def background_command(cli: str, name: str, remote_control: bool = REMOTE_CONTROL_AT_START) -> list[str]:
+
+def background_command(
+    cli: str,
+    name: str,
+    remote_control: bool = REMOTE_CONTROL_AT_START,
+    model: str | None = None,
+    effort: str | None = None,
+) -> list[str]:
     """The `claude --bg` command line that starts a named background session."""
-    return [cli, "--bg", "--name", name, *(["--remote-control", name] if remote_control else [])]
+    return [
+        cli,
+        "--bg",
+        "--name",
+        name,
+        *(["--remote-control", name] if remote_control else []),
+        *(["--model", model] if model else []),
+        *(["--effort", effort] if effort else []),
+    ]
 
 
 def desktop_handover_command(session_id: str, cwd: str, title: str) -> list[str]:
@@ -620,7 +648,7 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
         raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
 
 
-async def start_background(cwd: str, name: str) -> None:
+async def start_background(cwd: str, name: str, model: str | None = None, effort: str | None = None) -> None:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal.
 
     It runs under the owner's own Claude Code and settings, and appears in the running
@@ -633,7 +661,7 @@ async def start_background(cwd: str, name: str) -> None:
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     cli = shutil.which("claude") or str(bundled)
     proc = await asyncio.create_subprocess_exec(
-        *background_command(cli, name),
+        *background_command(cli, name, model=model, effort=effort),
         cwd=cwd,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,

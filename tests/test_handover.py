@@ -149,3 +149,11 @@ def test_sessions_the_bridge_starts_connect_to_remote_control_under_their_name()
     command = transcripts.background_command("claude", "invoices")
     assert command[command.index("--remote-control") + 1] == "invoices"
     assert "--remote-control" not in transcripts.background_command("claude", "invoices", remote_control=False)
+
+
+def test_a_chosen_model_and_effort_are_passed_to_claude_code_and_left_out_otherwise():
+    command = transcripts.background_command("claude", "deep", model="claude-opus-5-5", effort="high")
+    assert command[command.index("--model") + 1] == "claude-opus-5-5"
+    assert command[command.index("--effort") + 1] == "high"
+    plain = transcripts.background_command("claude", "plain")
+    assert "--model" not in plain and "--effort" not in plain

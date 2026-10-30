@@ -56,3 +56,21 @@ def test_peer_messages_that_arrive_mid_turn_are_kept_and_other_meta_entries_are_
 
 def test_a_missing_transcript_reads_as_empty(tmp_path):
     assert read_raw_transcript("nope", "/x", projects_dir=tmp_path) == []
+
+
+def test_a_model_claude_code_does_not_know_reads_as_a_clear_error_with_what_to_do(tmp_path):
+    cwd = "/home/someone/project"
+    text = "There's an issue with the selected model (opsu). It may not exist or you may not have access to it."
+    entry = {
+        "type": "assistant",
+        "error": "model_not_found",
+        "isApiErrorMessage": True,
+        "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": text}]},
+    }
+    path = tmp_path / project_key_for_directory(cwd) / "sid-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    [turn] = recent_turns(read_raw_transcript("sid-1", cwd, projects_dir=tmp_path), None)
+    assert turn["text"].startswith(text)
+    assert "stop_active_session" in turn["text"] and "start_active_session" in turn["text"]
