@@ -588,7 +588,8 @@ def build_server(
     )
     async def start_active_session(project: str, name: str | None = None) -> dict[str, Any]:
         """Start a new Claude Code session in the background in a project (from list_projects),
-        named `name` or after the project. It is listed at once, so ask_active_session reaches it."""
+        named `name` or after the project. It is listed at once, so ask_active_session reaches it.
+        It also connects to Remote Control, so the owner can open it on the phone under that name."""
         try:
             path = manager.resolve_project(project)
         except ValueError as exc:

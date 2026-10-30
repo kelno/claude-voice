@@ -145,6 +145,7 @@ def test_only_a_session_id_is_ever_put_into_the_handover_script():
         transcripts.desktop_handover_command("x'; Remove-Item", r"D:\work", "x")
 
 
-def test_remote_control_stays_off_until_the_owner_turns_it_on():
-    assert "--remote-control" not in transcripts.background_command("claude", "invoices")
-    assert "--remote-control" in transcripts.background_command("claude", "invoices", remote_control=True)
+def test_sessions_the_bridge_starts_connect_to_remote_control_under_their_name():
+    command = transcripts.background_command("claude", "invoices")
+    assert command[command.index("--remote-control") + 1] == "invoices"
+    assert "--remote-control" not in transcripts.background_command("claude", "invoices", remote_control=False)

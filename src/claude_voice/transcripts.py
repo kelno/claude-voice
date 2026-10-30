@@ -560,17 +560,17 @@ def shared_reader() -> SideReader:
 _courier = Courier()
 
 
-# HOOK, off on purpose: the owner decided that sessions the bridge starts should connect to
-# Remote Control, so the phone can reach them, but that waits for a live test the owner
-# approves at the PC. Turning it on means passing remote_control=True below.
-REMOTE_CONTROL_AT_START = False
+# Sessions the bridge starts connect to Remote Control, so the owner can also reach them from
+# the phone (owner's decision; tested live at the PC, 2026-10-30). It adds no control the
+# bridge doesn't already have.
+REMOTE_CONTROL_AT_START = True
 
 SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
 
 
 def background_command(cli: str, name: str, remote_control: bool = REMOTE_CONTROL_AT_START) -> list[str]:
     """The `claude --bg` command line that starts a named background session."""
-    return [cli, "--bg", "--name", name, *(["--remote-control"] if remote_control else [])]
+    return [cli, "--bg", "--name", name, *(["--remote-control", name] if remote_control else [])]
 
 
 def desktop_handover_command(session_id: str, cwd: str, title: str) -> list[str]:
