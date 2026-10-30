@@ -636,8 +636,15 @@ def background_command(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
+    wake: bool = False,
 ) -> list[str]:
-    """The `claude --bg` command line that starts a named background session, or resumes one."""
+    """The `claude --bg` command line that starts a named background session, or resumes one.
+
+    A conversation that has been a background session before keeps its saved options, and
+    Claude Code starts a copy of it when given any other flag; `wake` continues it in place.
+    """
+    if wake and resume:
+        return [cli, "--resume", resume, "--bg"]
     return [
         cli,
         "--bg",
@@ -701,11 +708,11 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
         raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
 
 
-async def start_background(cwd: str, name: str, **options: Any) -> None:
+async def start_background(cwd: str, name: str, **options: Any) -> str:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal.
 
     It runs under the owner's own Claude Code and settings, and appears in the running
-    sessions like any other background session.
+    sessions like any other background session. Returns what Claude Code printed.
     """
     import shutil
 
@@ -723,6 +730,26 @@ async def start_background(cwd: str, name: str, **options: Any) -> None:
     out, _ = await asyncio.wait_for(proc.communicate(), 60)
     if proc.returncode:
         raise RuntimeError(out.decode(errors="replace").strip()[-300:] or f"claude --bg exited {proc.returncode}")
+    return out.decode(errors="replace")
+
+
+async def background_sessions() -> set[str]:
+    """The ids of every conversation Claude Code has run as a background session, finished ones too."""
+    import shutil
+
+    import claude_agent_sdk
+
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    cli = shutil.which("claude") or str(bundled)
+    listing = await asyncio.create_subprocess_exec(
+        cli, "agents", "--json", "--all", stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE
+    )
+    raw, _ = await asyncio.wait_for(listing.communicate(), 60)
+    try:
+        jobs = json.loads(raw.decode(errors="replace") or "[]")
+    except ValueError:
+        return set()
+    return {str(j["sessionId"]) for j in jobs if isinstance(j, dict) and j.get("sessionId")}
 
 
 async def stop_background(session_id: str) -> None:
