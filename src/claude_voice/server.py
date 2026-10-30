@@ -54,6 +54,9 @@ SIDE_CHAT_PREFIX = "btw:"
 # The Claude app drops a tool call that runs for about 30 seconds: no call waits longer than
 # this, and past it the call says the work is still going and how to read on.
 MAX_WAIT_SECONDS = 20.0
+# How much text a read of a session's turns returns when no count is asked for: many short
+# progress turns fit, a few long reports don't flood the reply.
+READ_BUDGET = 3_000
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
@@ -1063,17 +1066,18 @@ def build_server(
     @mcp.tool(title="Read an open session's latest turns", annotations=READ_ONLY)
     def read_session_output(
         session: str,
-        limit: int = 6,
+        limit: int | None = None,
         max_chars: int = 600,
         after: int | None = None,
         turn: int | None = None,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """The latest turns of a running Claude Code session (name or id from
-        list_active_sessions). Turns are numbered: pass next_after back as `after` to get
-        the first `limit` turns after it, oldest first, with turns_left saying how many
-        more follow (read on until it is 0). A turn longer than max_chars is cut and says so (cut, length); read
-        it whole with `turn` (its index) and `offset`, page by page via next_offset."""
+        """The latest turns of a running Claude Code session (name or id from list_active_sessions),
+        as many as fit in about 3,000 characters unless `limit` sets a count. Turns are
+        numbered: pass next_after back as `after` for the next ones, oldest first, with
+        turns_left saying how many more follow (read on until it is 0); a turn longer than
+        max_chars is cut and says so (cut, length), and `turn` (its index) with `offset`
+        reads it whole, page by page via next_offset."""
         target = find_live(session)
         turns = numbered_turns(target)
         size = max(max_chars, 20)
@@ -1095,12 +1099,25 @@ def build_server(
                 "has_more": end < len(whole["text"]),
                 "length": len(whole["text"]),
             }
+
+        def fitting(candidates: list[dict[str, Any]]) -> int:
+            """How many of `candidates`, in order, a read takes: `limit`, or what fits the budget."""
+            if limit is not None:
+                return min(max(limit, 1), 30)
+            used, count = 0, 0
+            for t in candidates[:30]:
+                used += min(len(t["text"]), size)
+                if count and used > READ_BUDGET:
+                    break
+                count += 1
+            return count
+
         left: dict[str, int] = {}
         if after is None:
-            turns = turns[-min(max(limit, 1), 30) :]
+            turns = turns[len(turns) - fitting(turns[::-1]) :]
         else:
             newer = [t for t in turns if t["index"] > after]
-            turns = newer[: min(max(limit, 1), 30)]
+            turns = newer[: fitting(newer)]
             left = {"turns_left": len(newer) - len(turns)}
         for t in turns:
             t["length"] = len(t["text"])

@@ -328,3 +328,25 @@ async def test_reading_on_after_a_turn_says_how_many_turns_are_left(tmp_path, ro
     assert first["turns_left"] == 5  # turns 5 to 9 follow: read on with next_after
     assert [t["index"] for t in rest["turns"]] == [5, 6, 7, 8, 9]
     assert rest["turns_left"] == 0
+
+
+def turns_of(sizes):
+    return [
+        msg("user" if i % 2 else "assistant", [{"type": "text", "text": f"{i:02d}" + "x" * (n - 2)}])
+        for i, n in enumerate(sizes)
+    ]
+
+
+async def test_without_a_limit_a_read_fills_a_budget_of_text_rather_than_a_count(tmp_path, root, live):
+    short = turns_of([20] * 25)  # many short progress turns fit
+    long = turns_of([600] * 10)  # a few long reports don't flood the read
+    async with Client(server_for(tmp_path, root, live, read=lambda sid, directory: short)[1]) as c:
+        many = await call(c, "read_session_output", session="billing-ab")
+    async with Client(server_for(tmp_path, root, live, read=lambda sid, directory: long)[1]) as c:
+        few = await call(c, "read_session_output", session="billing-ab")
+        on = await call(c, "read_session_output", session="billing-ab", after=-1)
+        counted = await call(c, "read_session_output", session="billing-ab", limit=2)
+    assert len(many["turns"]) == 25
+    assert [t["index"] for t in few["turns"]] == [5, 6, 7, 8, 9]  # the newest that fit
+    assert [t["index"] for t in on["turns"]] == [0, 1, 2, 3, 4] and on["turns_left"] == 5
+    assert [t["index"] for t in counted["turns"]] == [8, 9]
