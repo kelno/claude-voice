@@ -110,7 +110,8 @@ Talking to a session
   "still_working", reply is its latest message so far: whole, and possibly
   already the answer, but more may follow. Don't report it as finished, or as
   cut off; read on with read_session_output(after=next_after) until its status
-  is "idle", which means its turn has ended.
+  is "idle", which means its turn has ended, and turns_left is 0: one read gives
+  only the first few turns after `after`.
 - When the owner asks you to wait for an answer, in whatever words,
   keep waiting: re-check every few seconds until it comes (a short sleep between
   reads, each call under 20 seconds). Otherwise don't block the conversation:
@@ -1070,7 +1071,8 @@ def build_server(
     ) -> dict[str, Any]:
         """The latest turns of a running Claude Code session (name or id from
         list_active_sessions). Turns are numbered: pass next_after back as `after` to get
-        only new ones. A turn longer than max_chars is cut and says so (cut, length); read
+        the first `limit` turns after it, oldest first, with turns_left saying how many
+        more follow (read on until it is 0). A turn longer than max_chars is cut and says so (cut, length); read
         it whole with `turn` (its index) and `offset`, page by page via next_offset."""
         target = find_live(session)
         turns = numbered_turns(target)
@@ -1093,16 +1095,25 @@ def build_server(
                 "has_more": end < len(whole["text"]),
                 "length": len(whole["text"]),
             }
+        left: dict[str, int] = {}
         if after is None:
             turns = turns[-min(max(limit, 1), 30) :]
         else:
-            turns = [t for t in turns if t["index"] > after][: min(max(limit, 1), 30)]
+            newer = [t for t in turns if t["index"] > after]
+            turns = newer[: min(max(limit, 1), 30)]
+            left = {"turns_left": len(newer) - len(turns)}
         for t in turns:
             t["length"] = len(t["text"])
             t["cut"] = t["length"] > size
             t["text"] = transcripts.clip(t["text"], size)
         next_after = turns[-1]["index"] if turns else (after if after is not None else -1)
-        return {"session": target["name"], "status": target.get("status"), "turns": turns, "next_after": next_after}
+        return {
+            "session": target["name"],
+            "status": target.get("status"),
+            "turns": turns,
+            "next_after": next_after,
+            **left,
+        }
 
     def conversation_end(target: dict[str, Any], limit: int) -> tuple[list[str], list[str]]:
         """A session's conversation as lines, the end kept up to `limit` characters, and the rest."""
