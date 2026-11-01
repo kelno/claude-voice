@@ -56,6 +56,9 @@ MAX_WAIT_SECONDS = 20.0
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
+# Reading forward, a turn that doesn't fit the budget still shows at least this much of its
+# start, so an unread reply can't be mistaken for no reply.
+READ_START = 300
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
@@ -1011,9 +1014,10 @@ def build_server(
         """The latest turns of a running Claude Code session (name or id from list_active_sessions),
         as many as fit in about 3,000 characters unless `limit` sets a count. Turns are
         numbered: pass next_after back as `after` for the next ones, oldest first, with
-        turns_left saying how many more follow (read on until it is 0); a turn longer than
-        max_chars is cut and says so (cut, length), and `turn` (its index) with `offset`
-        reads it whole, page by page via next_offset."""
+        turns_left saying how many more follow (read on until it is 0); the first turn that
+        doesn't fit is still started. A turn longer than max_chars, or than the room left, is
+        cut and says so (cut, length), and `turn` (its index) with `offset` reads it whole,
+        page by page via next_offset."""
         target = find_live(session)
         turns = numbered_turns(target)
         size = max(max_chars, 20)
@@ -1036,29 +1040,37 @@ def build_server(
                 "length": len(whole["text"]),
             }
 
-        def fitting(candidates: list[dict[str, Any]]) -> int:
-            """How many of `candidates`, in order, a read takes: `limit`, or what fits the budget."""
+        def taken(candidates: list[dict[str, Any]], forward: bool) -> list[tuple[dict[str, Any], int]]:
+            """The turns a read takes from `candidates`, in order, each with the size it is cut to:
+            `limit` of them, or what fits the budget. Reading forward, the first turn that doesn't
+            fit is still started, cut to the room left, so what follows is never hidden entirely."""
             if limit is not None:
-                return min(max(limit, 1), 30)
-            used, count = 0, 0
+                return [(t, size) for t in candidates[: min(max(limit, 1), 30)]]
+            picked: list[tuple[dict[str, Any], int]] = []
+            used = 0
             for t in candidates[:30]:
-                used += min(len(t["text"]), size)
-                if count and used > READ_BUDGET:
+                need = min(len(t["text"]), size)
+                if picked and used + need > READ_BUDGET:
+                    if forward:
+                        picked.append((t, max(READ_BUDGET - used, READ_START)))
                     break
-                count += 1
-            return count
+                picked.append((t, size))
+                used += need
+            return picked
 
         left: dict[str, int] = {}
         if after is None:
-            turns = turns[len(turns) - fitting(turns[::-1]) :]
+            picked = taken(turns[::-1], forward=False)[::-1]
         else:
             newer = [t for t in turns if t["index"] > after]
-            turns = newer[: fitting(newer)]
-            left = {"turns_left": len(newer) - len(turns)}
-        for t in turns:
+            picked = taken(newer, forward=True)
+            left = {"turns_left": len(newer) - len(picked)}
+        turns = []
+        for t, room in picked:
             t["length"] = len(t["text"])
-            t["cut"] = t["length"] > size
-            t["text"] = transcripts.clip(t["text"], size)
+            t["cut"] = t["length"] > room
+            t["text"] = transcripts.clip(t["text"], room)
+            turns.append(t)
         next_after = turns[-1]["index"] if turns else (after if after is not None else -1)
         return {
             "session": target["name"],

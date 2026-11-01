@@ -246,6 +246,23 @@ def turns_of(sizes):
     ]
 
 
+async def test_a_turn_that_does_not_fit_the_budget_is_still_started(tmp_path, root, live):
+    # Seen live: a short turn followed by a 4,200-character reply gave only the short turn
+    # and turns_left 2, and the reader took the reply for not there yet.
+    turns = turns_of([200, 4200, 100])
+    async with Client(server_for(tmp_path, root, live, read=lambda sid, directory: turns)[1]) as c:
+        out = await call(c, "read_session_output", session="billing-ab", after=-1, max_chars=5000)
+    assert [t["index"] for t in out["turns"]] == [0, 1] and out["turns_left"] == 1
+    started = out["turns"][1]
+    assert started["cut"] is True and started["length"] == 4200 and started["text"].startswith("01")
+    assert 300 <= len(started["text"]) <= 2800  # the room the budget left
+    # With almost no room left, its start still shows.
+    turns = turns_of([2900, 4200])
+    async with Client(server_for(tmp_path, root, live, read=lambda sid, directory: turns)[1]) as c:
+        out = await call(c, "read_session_output", session="billing-ab", after=-1, max_chars=5000)
+    assert [t["index"] for t in out["turns"]] == [0, 1] and len(out["turns"][1]["text"]) == 300
+
+
 async def test_without_a_limit_a_read_fills_a_budget_of_text_rather_than_a_count(tmp_path, root, live):
     short = turns_of([20] * 25)  # many short progress turns fit
     long = turns_of([600] * 10)  # a few long reports don't flood the read
@@ -257,5 +274,7 @@ async def test_without_a_limit_a_read_fills_a_budget_of_text_rather_than_a_count
         counted = await call(c, "read_session_output", session="billing-ab", limit=2)
     assert len(many["turns"]) == 25
     assert [t["index"] for t in few["turns"]] == [5, 6, 7, 8, 9]  # the newest that fit
-    assert [t["index"] for t in on["turns"]] == [0, 1, 2, 3, 4] and on["turns_left"] == 5
+    # Reading forward, the first turn past the budget is started, not left out.
+    assert [t["index"] for t in on["turns"]] == [0, 1, 2, 3, 4, 5] and on["turns_left"] == 4
+    assert on["turns"][5]["cut"] is True and on["turns"][4]["cut"] is False
     assert [t["index"] for t in counted["turns"]] == [8, 9]
