@@ -824,6 +824,71 @@ def build_server(
         msgs = read_transcript(target["sessionId"], target.get("cwd"))
         return [{"index": i, **turn} for i, turn in enumerate(transcripts.recent_turns(msgs, None))]
 
+    def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
+        """Why a session can take nothing in right now: an open question, or other input."""
+        if d.get("status") != "waiting":
+            return None
+        question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
+        if question:
+            return {"status": "needs_choice", "question": question}
+        prompt = permission_prompt(d)
+        return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
+
+    @mcp.tool(title="Wait for a session's turn to end", annotations=READ_ONLY)
+    async def wait_for_session(
+        session: str, wait_seconds: float = 20, after: int | None = None, max_chars: int = 600
+    ) -> dict[str, Any]:
+        """Wait up to 20 s until a session's turn ends or needs input; then its reply.
+        Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
+        that turn, so a session that hasn't picked the message up yet is still waited for; without
+        it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
+        words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
+        user; prompt or question says what for), "still_working" (the wait ran out; call again),
+        "session_ended" or "moved" (the conversation now lives in moved_to)."""
+        target = find_live(session)
+        moved = moved_to(target)
+        if moved:
+            return {"session": target["name"], "status": "moved", "moved_to": moved, "session_ended": False}
+
+        def said(d: dict[str, Any]) -> list[dict[str, Any]]:
+            """What the session has written, past `after` when one is given."""
+            return [t for t in numbered_turns(d) if t["role"] == "assistant" and (after is None or t["index"] > after)]
+
+        pid = target.get("pid")
+        deadline = asyncio.get_running_loop().time() + capped(wait_seconds)
+        status = "still_working"
+        blocked = None
+        while True:
+            now = next((d for d in live_sessions() if d.get("pid") == pid), None)
+            if now is None:
+                status = "session_ended"
+                break
+            target = now
+            blocked = waiting(now)
+            if blocked:
+                status = blocked["status"]
+                break
+            if now.get("status") == "idle" and (after is None or said(now)):
+                status = "idle"
+                break
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await asyncio.sleep(poll_seconds)
+        written = [] if status == "session_ended" else said(target)
+        new = written if after is not None else written[-1:]
+        for turn in new:
+            turn["text"] = transcripts.clip(turn["text"], max(max_chars, 20))
+        return {
+            "session": target["name"],
+            "status": status,
+            "session_ended": status == "session_ended",
+            "reply": new[-1]["text"] if new else "",
+            "reply_final": bool(new) and status in ("idle", "needs_input", "needs_choice"),
+            "turns": new,
+            "next_after": new[-1]["index"] if new else (after if after is not None else -1),
+            **({k: v for k, v in blocked.items() if k != "status"} if blocked else {}),
+        }
+
     @mcp.tool(
         title="Ask an open session and wait", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True)
     )
@@ -852,16 +917,6 @@ def build_server(
                 "turns": [],
                 "next_after": -1,
             }
-
-        def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
-            """Why a session can take nothing in right now: an open question, or other input."""
-            if d.get("status") != "waiting":
-                return None
-            question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
-            if question:
-                return {"status": "needs_choice", "question": question}
-            prompt = permission_prompt(d)
-            return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
 
         blocked = waiting(target)
         if blocked:

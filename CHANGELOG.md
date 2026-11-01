@@ -19,6 +19,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   background sessions the owner can open on the phone and at the PC, and
   answers permission prompts there.
 - A background session waiting on a permission prompt shows what it asks.
+- `wait_for_session` waits, sending nothing, until a session's turn ends or it
+  needs input, so a voice assistant can wait for a reply without asking again.
 - `attach_conversation` resumes an earlier conversation as a background session,
   on Remote Control and in its own permission mode and folders.
 - `start_active_session` can choose the model and effort of the session it

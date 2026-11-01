@@ -88,6 +88,7 @@ then give it a public address.
 | `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
 | `message_active_session` | send a message into a session that is open in a terminal, and return once delivered |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
+| `wait_for_session` | wait, sending nothing, until a session's turn ends or it needs input, then read its reply; call again while it is still working |
 | `ask_forked_session`, `message_forked_session`, `read_forked_session` | ask the side session, a read-only fork of a busy session's whole conversation that can read the code: ask and wait (at most 20 s), send and return, or read its answer later |
 | `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
