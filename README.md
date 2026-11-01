@@ -183,6 +183,7 @@ also the default.
 | `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Roy via stemmen` |
 | `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
+| `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` | `3600` | how long a sign-in's access token lasts before the app must refresh it; set it to a week (`604800`) on a computer that sleeps, since the Claude app gives a connector up after about an hour of failed refreshes |
 
 ### Signing in
 

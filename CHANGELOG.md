@@ -26,6 +26,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `start_active_session` can choose the model and effort of the session it
   starts; a model Claude Code doesn't know is reported in the first reply.
 - `whats_new`, a cheap delta of what happened since the last poll.
+- `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` sets how long an access token lasts, for a
+  bridge on a computer that sleeps: the Claude app gives a connector up after about
+  an hour of failed token refreshes.
 - The log is kept in `bridge.log` next to the database as well as on the console,
   with the outcome of every token refresh, so a connector that dropped while
   nobody watched can be diagnosed afterwards.

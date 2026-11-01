@@ -27,7 +27,7 @@ from starlette.types import ASGIApp
 
 from . import access, events, fork, metrics, permissions, transcripts
 from .metrics import METRICS
-from .oauth import SCOPE, OAuthProvider, PublicClientMetadata
+from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionManager
 from .store import Store
 from .tree import PROJECTS_DIR, SessionTree, session_kind
@@ -151,6 +151,7 @@ class Config:
     public_url: str = ""
     courier_name: str = transcripts.COURIER_NAME
     new_session_mode: str = "default"
+    access_ttl: int = ACCESS_TTL
 
 
 MAKE_TOKEN = (
@@ -187,6 +188,15 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
             f"CLAUDE_VOICE_PERMISSION_MODE is {cfg.new_session_mode!r}; "
             f"use one of {', '.join(sorted(permissions.MODES))}."
         )
+    ttl = env.get("CLAUDE_VOICE_ACCESS_TOKEN_SECONDS", "").strip()
+    if ttl:
+        # RULE: an access-token lifetime that is not a whole number of at least a minute stops the bridge
+        if not ttl.isdigit() or int(ttl) < MIN_ACCESS_TTL:
+            raise ConfigError(
+                f"CLAUDE_VOICE_ACCESS_TOKEN_SECONDS is {ttl!r}; use a whole number of seconds, "
+                f"at least {MIN_ACCESS_TTL} (an hour is 3600, a week 604800)."
+            )
+        cfg.access_ttl = int(ttl)
     cfg.public_url = env.get("CLAUDE_VOICE_PUBLIC_URL", "").rstrip("/") or (
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
     )
@@ -879,7 +889,7 @@ def build_server(
             "status": status,
             "session_ended": status == "session_ended",
             "reply": new[-1]["text"] if new else "",
-            "reply_final": bool(new) and status in ("idle", "needs_input", "needs_choice"),
+            "reply_final": bool(new) and status != "still_working",  # same rule as ask_active_session
             "turns": new,
             "next_after": new[-1]["index"] if new else (after if after is not None else -1),
             **({k: v for k, v in blocked.items() if k != "status"} if blocked else {}),
@@ -1302,7 +1312,9 @@ def serve_forever(cfg: Config) -> None:
     token = cfg.token or ""
     # The token doubles as the login secret on the OAuth consent page and as a
     # static bearer token for local MCP clients.
-    oauth = OAuthProvider(store, login_secret=token, public_url=cfg.public_url, static_token=token)
+    oauth = OAuthProvider(
+        store, login_secret=token, public_url=cfg.public_url, static_token=token, access_ttl=cfg.access_ttl
+    )
     restart = metrics.restart_info("~/.local/state/claude-voice/restarts")
     app = build_app(build_server(manager, oauth=oauth, watch_interval=5.0, restart=restart), cfg.public_hosts)
     configure_logging(cfg.db.parent / LOG_FILE)
