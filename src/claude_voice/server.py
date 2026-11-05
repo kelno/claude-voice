@@ -54,6 +54,9 @@ SIDE_CHAT_PREFIX = "btw:"
 # The Claude app drops a tool call that runs for about 30 seconds: no call waits longer than
 # this, and past it the call says the work is still going and how to read on.
 MAX_WAIT_SECONDS = 20.0
+# A wait asked without a length: Claude's voice mode moves a call still running after about
+# 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
+WAIT_SECONDS = 8.0
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -842,9 +845,9 @@ def build_server(
 
     @mcp.tool(title="Wait for a session's turn to end", annotations=READ_ONLY)
     async def wait_for_session(
-        session: str, wait_seconds: float = 20, after: int | None = None, max_chars: int = 600
+        session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Wait up to 20 s until a session's turn ends or needs input; then its reply.
+        """Wait 8 s, up to 20, for a session's turn to end or need input; then its reply.
         Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
         that turn, so a session that hasn't picked the message up yet is still waited for; without
         it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
@@ -899,9 +902,9 @@ def build_server(
         title="Ask an open session and wait", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
     )
     async def ask_active_session(
-        session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
+        session: str, message: str, wait_seconds: float = WAIT_SECONDS, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Ask a session and wait (20 s at most) for its answer; only when needed now.
+        """Ask a session and wait (8 s, up to 20) for its answer; only when needed now.
         The conversation waits too, so prefer message_active_session when the next step doesn't
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
         word; while false, reply is its latest message so far, whole and maybe already the
@@ -1154,8 +1157,8 @@ def build_server(
         return {**head, **task.result()}
 
     @mcp.tool(title="Ask the side session and wait", annotations=READ_ONLY)
-    async def ask_forked_session(session: str, question: str, wait_seconds: float = 20) -> dict[str, Any]:
-        """Ask the side session, a read-only fork that reads code; waits 20 s at most.
+    async def ask_forked_session(session: str, question: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+        """Ask the side session, a read-only fork that reads code; waits 8 s, up to 20.
         The side session is a new read-only fork of a running session's whole conversation that
         can read the project's files, while the session itself keeps working, untouched; each
         question forks anew, from the latest state. status "answered" (report it as the side
@@ -1173,8 +1176,8 @@ def build_server(
         return {"fork_id": fork_id, "session": forks[fork_id]["session"], "status": "started"}
 
     @mcp.tool(title="Read the side session's answer", annotations=READ_ONLY)
-    async def read_forked_session(fork_id: str, wait_seconds: float = 20) -> dict[str, Any]:
-        """The side session's answer, waiting 20 s at most; call again on still_working.
+    async def read_forked_session(fork_id: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+        """The side session's answer, waiting 8 s, up to 20; call again on still_working.
         status "answered", "still_working" (call again), "timed_out" (it worked five minutes and
         was stopped) or "error" with `detail`; answers are kept for an hour, and forgotten when
         the bridge restarts."""

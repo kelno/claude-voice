@@ -135,3 +135,13 @@ async def test_a_call_the_client_drops_is_logged_with_how_long_it_ran(caplog):
     with caplog.at_level(logging.INFO, logger="claude_voice"), pytest.raises(asyncio.CancelledError):
         await log_requests(Ctx(), dropped)
     assert any("ask_active_session" in r.message and "cancelled" in r.message for r in caplog.records)
+
+
+async def test_a_wait_asked_without_a_length_ends_before_voice_mode_backgrounds_it(tmp_path, root, live):
+    # Claude's voice mode moves a call still running after about 10 s to the background and
+    # asks the assistant to speak; a default wait comes back before that, so waits chain silently.
+    _, server = bridge(tmp_path, root, live, FakeClaude())
+    async with Client(server) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+    for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
+        assert tools[name].input_schema["properties"]["wait_seconds"]["default"] < 10, name
