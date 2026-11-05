@@ -82,7 +82,7 @@ then give it a public address.
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
-| `request_access`, `revoke_access` | open a listed session's folder to the bridge for good, with your approval in the app; close it again |
+| `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, with your approval in the app; close it again |
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
 | `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
@@ -123,7 +123,7 @@ then give it a public address.
     its name, folder and status, marked `access: "folder_not_open"`: it cannot be
     read or messaged.
   - `request_access` opens that session's folder and everything under it, for
-    good. It is marked destructive, so the Claude app asks you before every
+    good; given a full path instead, it opens a folder no session runs in yet. It is marked destructive, so the Claude app asks you before every
     grant, and only you can answer.
   - Some folders are never opened, inside the root or not: `.ssh`, `.gnupg`,
     `.claude`, `.config/claude-voice` and `AppData` in your home folder, and the
