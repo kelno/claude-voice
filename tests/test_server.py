@@ -135,8 +135,19 @@ async def test_a_connection_that_skipped_the_guide_gets_it_with_its_first_result
         first = await call(c, "list_projects", query="ap")
         second = await call(c, "list_projects", query="ap")
     assert first["guide"] == INSTRUCTIONS
+    # Said before the text, so an agent doesn't call guide for the same text again.
+    assert list(first)[:2] == ["guide_note", "guide"]
+    assert "no need to call guide" in first["guide_note"]
     assert [p["name"] for p in first["projects"]] == ["app"]
     assert "guide" not in second
+
+
+async def test_the_guide_tool_says_to_skip_it_when_a_result_already_carried_the_guide(tmp_path, root):
+    _, server = make(tmp_path, root, FakeClaude())
+    async with Client(server) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+    assert "already carried the guide" in tools["guide"].description
+    assert "skip the call" in tools["guide"].description
 
 
 async def test_a_connection_that_read_the_guide_does_not_get_it_again(http_server):

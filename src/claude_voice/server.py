@@ -75,6 +75,7 @@ PENDING_NOTE = "A wait on this session is still running; its result arrives by i
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
+GUIDE_NOTE = "This is the bridge's guide in full, the same text the guide tool returns: no need to call guide."
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -333,6 +334,7 @@ def result_notes() -> Any:
         manual = {}
         if unguided:
             # Handed over first in the result, so it is read before the rest.
+            manual["guide_note"] = GUIDE_NOTE
             manual["guide"] = INSTRUCTIONS
             guided[str(connection)] = None
             while len(guided) > GUIDED_KEPT:
@@ -517,8 +519,8 @@ def build_server(
     @mcp.tool(title="Read the bridge's manual", annotations=READ_ONLY)
     def guide() -> dict[str, Any]:
         """Read this first, before any other call: the rules every agent here follows.
-        The same text as the server's instructions; read it again when unsure how a role or a
-        rule works."""
+        If a result already carried the guide, this is the same text: skip the call. The same
+        text as the server's instructions; read it again when unsure how a role or a rule works."""
         return {"guide": INSTRUCTIONS}
 
     @mcp.tool(title="List recent project folders", annotations=READ_ONLY)
