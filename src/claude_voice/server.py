@@ -57,6 +57,9 @@ MAX_WAIT_SECONDS = 20.0
 # A wait asked without a length: Claude's voice mode moves a call still running after about
 # 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
 WAIT_SECONDS = 8.0
+# The model a session starts on when none is asked for. Claude Code's own default follows the
+# account, which can be a model the owner doesn't want for everyday work.
+DEFAULT_MODEL = "opus"
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
 # in, and later delivers its result inside a call the assistant seems to have written itself,
 # carrying a field only the app may write; assistants copy it to fetch results, and are
@@ -535,7 +538,7 @@ def build_server(
         its task with message_active_session or ask_active_session. Optional: `model`, any name
         Claude Code accepts (for example opus, sonnet, claude-opus-5-5, ...; not a complete list;
         a wrong one shows only in the first reply), and `effort`, one of low, medium, high,
-        xhigh, max; left out, Claude Code's defaults apply; for deep work (restructuring,
+        xhigh, max; left out, the model is opus and the effort Claude Code's default; for deep work (restructuring,
         careful reviews) pick a bigger model and a higher effort, and say which when proposing
         it."""
         # RULE: only a well-formed model name and a known effort reach Claude Code
@@ -547,7 +550,7 @@ def build_server(
             path = manager.resolve_project(project)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
-        out = await launch(path, name, model=model, effort=effort)
+        out = await launch(path, name, model=model or DEFAULT_MODEL, effort=effort)
         return {**out, **({"note": MODEL_CHECKED_LATER} if model else {})}
 
     async def launch(path: Path, name: str | None, **options: Any) -> dict[str, Any]:

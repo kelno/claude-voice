@@ -93,7 +93,15 @@ async def test_a_session_can_be_started_on_a_chosen_model_and_effort(tmp_path, w
             "start_active_session", {"project": "billing", "name": "deep", "model": "opus", "effort": "max"}
         )
         await c.call_tool("start_active_session", {"project": "billing", "name": "plain"})
-    assert [(o["model"], o["effort"]) for o in starter.options] == [("opus", "max"), (None, None)]
+    assert [(o["model"], o["effort"]) for o in starter.options] == [("opus", "max"), ("opus", None)]
+
+
+async def test_a_session_started_without_a_model_runs_on_opus(tmp_path, world):
+    # Claude Code's own default on the owner's account is Fable; the owner wants Opus.
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        await c.call_tool("start_active_session", {"project": "billing", "name": "plain"})
+    assert starter.options[0]["model"] == "opus"
 
 
 @pytest.mark.parametrize("model", ["--dangerously-skip-permissions", "opus; rm", "", "o" * 200])
