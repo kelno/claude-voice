@@ -1318,6 +1318,67 @@ def build_server(
         msgs = read_transcript(target["sessionId"], target.get("cwd"))
         return [{"index": i, **turn} for i, turn in enumerate(transcripts.recent_turns(msgs, None))]
 
+    def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
+        """Why a session can take nothing in right now: an open question, or other input."""
+        if d.get("status") != "waiting":
+            return None
+        question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
+        if question:
+            return {"status": "needs_choice", "question": question}
+        prompt = permission_prompt(d)
+        return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
+
+    def live_by_pid(pid: Any) -> dict[str, Any] | None:
+        """The running session with this process id now, or None once it has exited."""
+        return next((d for d in live_sessions() if d.get("pid") == pid), None)
+
+    @tool(annotations=READ_ONLY)
+    async def wait_for_session(
+        session: str, wait_seconds: float = 60, after: int | None = None, max_chars: int = 600
+    ) -> dict[str, Any]:
+        """Wait for a running session's turn to end or need its user, sending nothing.
+        Pass a next_after you were given as `after` to wait for a reply past that turn, even
+        while the session has not picked a message up yet; without it an idle session returns
+        at once. status: "idle" (its turn has ended), "needs_input", "needs_choice",
+        "still_working" (call again), "session_ended" or "moved"; the other fields are as for
+        ask_active_session."""
+        target = find_live(session)
+        moved = moved_to(target)
+        if moved:
+            return {"session": target["name"], "status": "moved", "moved_to": moved, "session_ended": False}
+
+        def said(d: dict[str, Any]) -> list[dict[str, Any]]:
+            """What the session has written, past `after` when one is given."""
+            return [t for t in numbered_turns(d) if t["role"] == "assistant" and (after is None or t["index"] > after)]
+
+        pid, blocked, done = target.get("pid"), None, False
+        deadline = asyncio.get_running_loop().time() + within_budget(wait_seconds)
+        while (now := live_by_pid(pid)) is not None:
+            target, blocked = now, waiting(now)
+            done = blocked is not None or (now.get("status") == "idle" and (after is None or bool(said(now))))
+            if done or asyncio.get_running_loop().time() >= deadline:
+                break
+            await asyncio.sleep(poll_seconds)
+        if now is None:
+            status = "session_ended"
+        else:
+            status = blocked["status"] if blocked else ("idle" if done else "still_working")
+        written = [] if now is None else said(target)
+        size = max(max_chars, 20)
+        new = [
+            {**t, "text": transcripts.clip(t["text"], size)} for t in (written if after is not None else written[-1:])
+        ]
+        return {
+            "status": status,
+            "session": target["name"],
+            "reply": new[-1]["text"] if new else "",
+            "reply_final": status in ("idle", "needs_input", "needs_choice") and bool(new),
+            "session_ended": now is None,
+            "turns": new,
+            "next_after": new[-1]["index"] if new else (after if after is not None else -1),
+            **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
+        }
+
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
     async def ask_active_session(
         session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
@@ -1347,16 +1408,6 @@ def build_server(
                 "next_after": -1,
             }
 
-        def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
-            """Why a session can take nothing in right now: an open question, or other input."""
-            if d.get("status") != "waiting":
-                return None
-            question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
-            if question:
-                return {"status": "needs_choice", "question": question}
-            prompt = permission_prompt(d)
-            return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
-
         blocked = waiting(target)
         if blocked:
             # A message would only queue behind what it waits for; send nothing.
@@ -1380,7 +1431,7 @@ def build_server(
         deadline = started + within_budget(wait_seconds)
         probe = message.strip()[:80]
         while True:
-            now = next((d for d in live_sessions() if d.get("pid") == pid), None)
+            now = live_by_pid(pid)
             if now is None:
                 status = "session_ended"
                 break

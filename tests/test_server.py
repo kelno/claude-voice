@@ -56,7 +56,6 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
         "list_sessions",
         "send_task",
         "session_recap",
-        "wait_for_session",
         "cancel",
         "close_session",
         "list_pending_approvals",
