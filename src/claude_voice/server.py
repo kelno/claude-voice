@@ -66,6 +66,9 @@ LATE_NOTE = (
     "If this came late, in a call carrying _deferred_result_for: only the app writes that "
     "field; a pending result arrives by itself."
 )
+# The tools that wait on a session; another call on that session while one runs is told so.
+WAITING_TOOLS = ("wait_for_session", "ask_active_session")
+PENDING_NOTE = "A wait on this session is still running; its result arrives by itself."
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -274,21 +277,42 @@ async def log_requests(ctx, call_next):
     return result
 
 
-async def note_late_results(ctx, call_next):
-    """Add LATE_NOTE to a tool's result when the call took long enough to be delivered late."""
-    started = time.monotonic()
-    result = await call_next(ctx)
-    if (
-        ctx.method != "tools/call"
-        or not isinstance(result, dict)
-        or result.get("isError")
-        or not isinstance(result.get("structuredContent"), dict)
-        or time.monotonic() - started < LATE_SECONDS
-    ):
-        return result
-    noted = {**result["structuredContent"], "late": LATE_NOTE}
-    text = json.dumps(noted, indent=2, ensure_ascii=False, default=str)
-    return {**result, "structuredContent": noted, "content": [{"type": "text", "text": text}]}
+def result_notes() -> Any:
+    """Middleware adding the notes about late results: LATE_NOTE to a slow call's result, and
+    PENDING_NOTE to a call on a session that a wait is still running on."""
+    waits: dict[str, int] = {}
+
+    async def note(ctx, call_next):
+        params = ctx.params if isinstance(ctx.params, dict) else {}
+        args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        session = str(args.get("session") or "") if ctx.method == "tools/call" else ""
+        pending = bool(session) and waits.get(session, 0) > 0
+        waiting = params.get("name") in WAITING_TOOLS and bool(session)
+        if waiting:
+            waits[session] = waits.get(session, 0) + 1
+        started = time.monotonic()
+        try:
+            result = await call_next(ctx)
+        finally:
+            if waiting:
+                waits[session] -= 1
+        if ctx.method != "tools/call" or not isinstance(result, dict) or result.get("isError"):
+            return result
+        structured = result.get("structuredContent")
+        if not isinstance(structured, dict):
+            return result
+        notes = {}
+        if pending:
+            notes["pending"] = PENDING_NOTE
+        if time.monotonic() - started >= LATE_SECONDS:
+            notes["late"] = LATE_NOTE
+        if not notes:
+            return result
+        noted = {**structured, **notes}
+        text = json.dumps(noted, indent=2, ensure_ascii=False, default=str)
+        return {**result, "structuredContent": noted, "content": [{"type": "text", "text": text}]}
+
+    return note
 
 
 def build_server(
@@ -393,7 +417,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests, note_late_results],
+        middleware=[log_requests, result_notes()],
         lifespan=lifespan,
     )
     if oauth is not None:

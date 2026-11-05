@@ -161,3 +161,18 @@ async def test_a_result_that_took_a_while_says_where_a_late_one_comes_from(tmp_p
     assert "_deferred_result_for" in slow.structured_content["late"]
     assert "_deferred_result_for" in slow.content[0].text
     assert "late" not in quick
+
+
+async def test_a_call_made_while_a_wait_on_its_session_runs_says_the_wait_returns_by_itself(tmp_path, root, live):
+    # A call the owner talked over keeps running; a relay that calls again on the same session
+    # meanwhile is told its pending result arrives by itself.
+    target = Target(live, str(root / "billing"), status="busy")
+    _, srv = bridge(tmp_path, root, live, FakeClaude(), target=target)
+    async with Client(srv) as c:
+        waiting = asyncio.create_task(call(c, "wait_for_session", session="billing-ab", wait_seconds=60))
+        await asyncio.sleep(CAP / 3)
+        during = await call(c, "read_session_output", session="billing-ab")
+        first = await waiting
+        after = await call(c, "read_session_output", session="billing-ab")
+    assert "arrives by itself" in during["pending"]
+    assert "pending" not in first and "pending" not in after
