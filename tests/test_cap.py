@@ -15,6 +15,7 @@ from fakes import FakeClaude, Pause, init, result, say
 from mcp.client import Client
 from test_ask import Target
 
+from claude_voice import server as bridge_server
 from claude_voice.server import build_server, log_requests
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
@@ -145,3 +146,18 @@ async def test_a_wait_asked_without_a_length_ends_before_voice_mode_backgrounds_
         tools = {t.name: t for t in (await client.list_tools()).tools}
     for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
         assert tools[name].input_schema["properties"]["wait_seconds"]["default"] < 10, name
+
+
+async def test_a_result_that_took_a_while_says_where_a_late_one_comes_from(tmp_path, root, live, monkeypatch):
+    # Voice mode moves a call to the background when the owner talks over it, and delivers the
+    # result later inside a call the assistant seems to have written, with a field only the app
+    # may write; assistants copy it. A slow result carries a reminder, a quick one doesn't.
+    monkeypatch.setattr(bridge_server, "LATE_SECONDS", 0.1)
+    target = Target(live, str(root / "billing"), status="busy")
+    _, srv = bridge(tmp_path, root, live, FakeClaude(), target=target)
+    async with Client(srv) as c:
+        slow = await c.call_tool("wait_for_session", {"session": "billing-ab", "wait_seconds": 60})
+        quick = await call(c, "list_active_sessions")
+    assert "_deferred_result_for" in slow.structured_content["late"]
+    assert "_deferred_result_for" in slow.content[0].text
+    assert "late" not in quick

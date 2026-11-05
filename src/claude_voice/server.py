@@ -57,6 +57,15 @@ MAX_WAIT_SECONDS = 20.0
 # A wait asked without a length: Claude's voice mode moves a call still running after about
 # 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
 WAIT_SECONDS = 8.0
+# Voice mode also moves a call to the background when the owner talks over it, a few seconds
+# in, and later delivers its result inside a call the assistant seems to have written itself,
+# carrying a field only the app may write; assistants copy it to fetch results, and are
+# refused. A result that took this long carries a reminder, where the copied example is.
+LATE_SECONDS = 1.0
+LATE_NOTE = (
+    "If this came late, in a call carrying _deferred_result_for: only the app writes that "
+    "field; a pending result arrives by itself."
+)
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -265,6 +274,23 @@ async def log_requests(ctx, call_next):
     return result
 
 
+async def note_late_results(ctx, call_next):
+    """Add LATE_NOTE to a tool's result when the call took long enough to be delivered late."""
+    started = time.monotonic()
+    result = await call_next(ctx)
+    if (
+        ctx.method != "tools/call"
+        or not isinstance(result, dict)
+        or result.get("isError")
+        or not isinstance(result.get("structuredContent"), dict)
+        or time.monotonic() - started < LATE_SECONDS
+    ):
+        return result
+    noted = {**result["structuredContent"], "late": LATE_NOTE}
+    text = json.dumps(noted, indent=2, ensure_ascii=False, default=str)
+    return {**result, "structuredContent": noted, "content": [{"type": "text", "text": text}]}
+
+
 def build_server(
     manager: SessionManager,
     oauth: OAuthProvider | None = None,
@@ -367,7 +393,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests],
+        middleware=[log_requests, note_late_results],
         lifespan=lifespan,
     )
     if oauth is not None:
