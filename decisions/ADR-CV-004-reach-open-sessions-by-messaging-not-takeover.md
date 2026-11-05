@@ -37,7 +37,7 @@ The owner wanted to speak to sessions already open in a terminal.
   colleague's request, within its own permissions.
 - Each delivery takes ten to twenty seconds and a little subscription use.
 - Worse: replies are read rather than received, so the owner hears an answer
-  only by asking for it, or through `whats_new`.
+  only by asking for it, or through the `news` line on results (later; `whats_new` before it).
 
 ## Related
 

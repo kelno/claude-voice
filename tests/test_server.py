@@ -61,6 +61,8 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
         "list_pending_approvals",
         "approve",
         "deny",
+        # The news line on every result replaced it.
+        "whats_new",
     }
     assert not retired & names
 
@@ -253,7 +255,6 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "list_active_sessions",
         "read_session_output",
         "search_session_history",
-        "whats_new",
         "session_tree",
         "health",
         "digest_session",

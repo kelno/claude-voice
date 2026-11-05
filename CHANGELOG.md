@@ -25,7 +25,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   on Remote Control and in its own permission mode and folders.
 - `start_active_session` can choose the model and effort of the session it
   starts; a model Claude Code doesn't know is reported in the first reply.
-- `whats_new`, a cheap delta of what happened since the last poll.
+- Every result can start with a one-line `news` field: the sessions this conversation follows
+  that have turns it hasn't read, and any session waiting on a permission prompt.
 - `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` sets how long an access token lasts, for a
   bridge on a computer that sleeps: the Claude app gives a connector up after about
   an hour of failed token refreshes.

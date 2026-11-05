@@ -250,14 +250,6 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
 log = logging.getLogger("claude_voice")
 
 
-def _parse_cursor(cursor: str | None) -> int | None:
-    """The feed position a cursor names; None, so the caller starts over, for any other text."""
-    try:
-        return int(cursor or "")
-    except ValueError:
-        return None
-
-
 async def log_requests(ctx, call_next):
     """Log and count each MCP call: method, tool, outcome, time and the caller's trace id.
 
@@ -1496,26 +1488,12 @@ def build_server(
             match["text"] = transcripts.clip(match["text"], size)
         return {"session": target["name"], "total_turns": len(turns), "matches": matches}
 
-    @mcp.tool(title="Check for news since last time", annotations=READ_ONLY)
-    def whats_new(cursor: str | None = None) -> dict[str, Any]:
-        """News since you last asked: a session finished, needs input, started or ended.
-        Returns only new events and a cursor to pass next time; call without a cursor first,
-        cheap enough to poll."""
-        check()
-        after = _parse_cursor(cursor)
-        items = watcher.feed_after(after) if after is not None else []
-        latest = max(after or 0, watcher.last_seq())
-        return {
-            "cursor": str(latest),
-            "events": [{k: v for k, v in e.items() if k not in ("seq",)} for e in items],
-        }
-
     @mcp.tool(title="Show the tree of sessions", annotations=READ_ONLY)
     def session_tree() -> dict[str, Any]:
         """The sessions as a tree, with which ones have messaged each other lately.
         The bridge, the Claude Code sessions running on this machine, helper agents, and for
         each which others it has sent messages to in the last day (talks_to); `version` changes
-        when the shape changes, and whats_new reports that as kind "tree_changed"."""
+        when the shape changes."""
         return tree.build()
 
     @mcp.tool(title="Check the bridge's health", annotations=READ_ONLY)

@@ -77,7 +77,6 @@ then give it a public address.
 | --- | --- |
 | `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
-| `whats_new` | only what happened since you last asked: finished, waiting for you, started, ended |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
