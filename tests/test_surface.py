@@ -128,3 +128,15 @@ async def test_every_tool_says_what_it_is_for_in_its_first_line_within_the_cut(w
         first = (t.description or "").split("\n")[0]
         assert first.endswith("."), f"{t.name}: the first line is not a whole sentence: {first!r}"
         assert len(first) <= FIRST_LINE_CHARS, f"{t.name}: {len(first)} characters: {first!r}"
+
+
+async def test_the_sessions_the_bridge_starts_are_never_presented_as_background(world):
+    # Agents repeated "in the background" to the owner, while these sessions are on Remote
+    # Control and in the desktop sidebar, visible on the phone and at the PC.
+    _, _, srv = world
+    async with Client(srv) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+    for name in ("start_active_session", "attach_conversation", "stop_active_session"):
+        tool = tools[name]
+        assert "background" not in f"{tool.title} {tool.description}".lower(), name
+        assert "remote control" in tool.description.lower() or name == "stop_active_session", name

@@ -493,7 +493,8 @@ def build_server(
     def fleet_recap() -> dict[str, Any]:
         """Every running session with its status and one line on what it is doing.
         Answers "what are my sessions up to?" without reading each one; kind is "desktop" (open
-        in the desktop app), "terminal" or "background", and side_chat marks a quick aside the
+        in the desktop app), "terminal" or "background" (no terminal window; the bridge's own
+        are on Remote Control and in the desktop sidebar), and side_chat marks a quick aside the
         owner opened from another session in the desktop app (named "btw: ..."), which gets no
         work unless asked."""
         sessions = []
@@ -526,13 +527,14 @@ def build_server(
         return {"sessions": sessions}
 
     @mcp.tool(
-        title="Start a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
+        title="Start a session on Remote Control",
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def start_active_session(
         project: str, name: str | None = None, model: str | None = None, effort: str | None = None
     ) -> dict[str, Any]:
-        """Start new work: a background session in a project, on the phone and at the PC.
-        A new Claude Code session in the background in a project (from list_projects), named
+        """Start new work: a session in a project, on Remote Control on phone and PC.
+        A new Claude Code session in a project (from list_projects), with no terminal window, named
         `name` or after the project, on Remote Control and in the desktop app's Code sidebar from
         the start, so the owner can open it anywhere, see what happened and take over; give it
         its task with message_active_session or ask_active_session. Optional: `model`, any name
@@ -591,10 +593,11 @@ def build_server(
         raise ToolError(f"{wanted or name} was started but did not appear among the running sessions")
 
     @mcp.tool(
-        title="Stop a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
+        title="Stop a session the bridge started",
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def stop_active_session(name: str) -> dict[str, Any]:
-        """Stop a background session the bridge started; any other session is refused.
+        """Stop a session the bridge started; any other session is refused.
         One start_active_session started; another, such as one open in a terminal, gets status
         not_started_here."""
         target = next((d for d in live_sessions() if name in (d.get("name"), d.get("sessionId"))), None)
@@ -673,12 +676,13 @@ def build_server(
     def list_active_sessions() -> dict[str, Any]:
         """Every session running now, with status; a waiting one carries its prompt.
         Claude Code sessions on this machine, busy, idle or waiting; kind "interactive" is one
-        the user types in, "bg" a background one; side_chat marks a desktop side chat ("btw:
+        the user types in, "bg" one with no terminal window (the bridge's own are on Remote
+        Control); side_chat marks a desktop side chat ("btw:
         ..."), which gets no work unless asked. A session outside the open folders has access
         "folder_not_open" (open it with request_access, which the owner approves in their app) or
         "folder_closed" (never opened; a refusal names the closed folder), and only its name,
         folder and status; access is absent when the session is open to the bridge, and a
-        background session waiting on a permission prompt carries it as prompt, which the owner
+        session waiting on a permission prompt carries it as prompt, which the owner
         answers on the phone or in the desktop app."""
         return {"sessions": running()}
 
@@ -783,7 +787,7 @@ def build_server(
     async def attach_conversation(
         claude_session_id: str, project: str | None = None, label: str | None = None
     ) -> dict[str, Any]:
-        """Resume an earlier conversation as a background session; then talk to it.
+        """Resume an earlier conversation on Remote Control; then talk to it.
         Continues an existing Claude Code conversation (from list_claude_conversations) like
         start_active_session: on Remote Control under `label` or its title, in its own permission
         mode and folders, so the owner can open it on the phone or at the PC. If Claude Code

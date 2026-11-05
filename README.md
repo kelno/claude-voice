@@ -83,7 +83,7 @@ then give it a public address.
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a listed session's folder to the bridge for good, with your approval in the app; close it again |
-| `start_active_session` | start a new Claude Code session in the background, ready to talk to at once, optionally on a chosen model and effort |
+| `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
 | `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
 | `message_active_session` | send a message into a session that is open in a terminal, and return once delivered |
@@ -93,7 +93,7 @@ then give it a public address.
 | `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `read_session_output`, `search_session_history` | read what such a session said lately, or search everything it said |
-| `list_claude_conversations`, `attach_conversation` | continue an earlier conversation as a background session, in its own permission mode |
+| `list_claude_conversations`, `attach_conversation` | continue an earlier conversation on Remote Control, in its own permission mode |
 
 ## How it behaves
 
