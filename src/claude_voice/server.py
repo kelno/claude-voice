@@ -392,6 +392,7 @@ def build_server(
     start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
     background_sessions: Callable[[], Awaitable[set[str]]] = transcripts.background_sessions,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] = transcripts.background_jobs,
+    claude_config: Path = access.CLAUDE_CONFIG,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     open_in_desktop: Callable[[str, str, str], Awaitable[None]] = transcripts.open_in_desktop,
     start_seconds: float = 20.0,
@@ -942,8 +943,10 @@ def build_server(
     def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
         """Open a folder to the bridge for good, a session's or by path; owner approves.
         Give one of: `session`, a listed session, to open its folder; or `folder`, a full path,
-        to open a folder no session runs in yet, so start_active_session can work there. The
-        folder and everything under it can then be read, messaged and worked in. The app asks
+        to open a folder no session runs in yet, so start_active_session can work there; a folder
+        given by path is also marked trusted in Claude Code (trusted names the folder; at a git
+        repository's root when inside one), since Claude Code won't start a session in a folder it
+        never trusted. The folder and everything under it can then be read, messaged and worked in. The app asks
         the owner before every call, with no "Always allow"."""
         if (session is None) == (folder is None):
             raise ToolError("Give one of session or folder.")
@@ -958,7 +961,19 @@ def build_server(
             opened = manager.access.grant(target)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
-        return {**({"session": d.get("name")} if d else {}), "folder": str(opened), "granted": True}
+        out: dict[str, Any] = {**({"session": d.get("name")} if d else {}), "folder": str(opened), "granted": True}
+        if folder is not None:
+            # A session already runs in a session's folder, so Claude Code trusts it; a folder by
+            # path may never have been, and the owner's approval of this call covers its trust too.
+            root = access.trust_root(opened)
+            if manager.access.state(root) == "closed":
+                out["trust_not_set"] = f"Claude Code's trust is kept on {root}: {manager.access.explain(root)}"
+                return out
+            try:
+                out["trusted"] = access.trust_in_claude_code(opened, claude_config)
+            except (OSError, ValueError) as exc:
+                out["trust_not_set"] = f"Claude Code's workspace trust could not be saved: {exc}"
+        return out
 
     @mcp.tool(
         title="Close an opened folder again", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
