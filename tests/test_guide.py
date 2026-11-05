@@ -29,6 +29,7 @@ def test_the_manual_states_its_central_rules():
         "the desk session says",  # agents stay distinct
         "that session's call",  # the relay relays; how to do the work is the session's
         "marked as yours",  # its own ideas go along as suggestions
+        "brief and send it itself",  # a session holding the context briefs new work, not the relay
         "wait_for_session",  # asked to wait, the relay waits again rather than handing back
         "don't ask the owner",  # waiting for a reply is the default
         "wait in silence",  # no heads-up or progress between waits, whatever the app asks

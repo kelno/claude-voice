@@ -135,6 +135,9 @@ The relay's scope
   is that session's call. An idea of your own goes along only as a suggestion
   marked as yours, and a change within that session's plan goes to it rather
   than being done by you on the side.
+- When a session already holds the context for new work, have it write the
+  brief and send it itself: the relay only works from summaries, so its briefs
+  lose details and add mistakes.
 
 Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
