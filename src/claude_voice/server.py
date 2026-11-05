@@ -535,7 +535,7 @@ def build_server(
         raise ToolError(f"{wanted or name} was started but did not appear among the running sessions")
 
     @mcp.tool(
-        title="Stop a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True)
+        title="Stop a background session", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
     )
     async def stop_active_session(name: str) -> dict[str, Any]:
         """Stop a background session the bridge started; any other session is refused.
