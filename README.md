@@ -85,6 +85,7 @@ then give it a public address.
 | `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, with your approval in the app; close it again |
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
+| `rename_session` | rename such a session once its turn has ended: the name goes into its conversation, where Claude Code takes it up the next time the session reads it |
 | `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
 | `message_active_session` | send a message into a session that is open in a terminal, and return once delivered |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
