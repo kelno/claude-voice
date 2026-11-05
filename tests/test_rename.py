@@ -73,6 +73,17 @@ async def test_a_session_the_bridge_started_gets_its_new_name_in_its_transcript(
     assert Store(world.db).started_session("Switchboard: bridge fixes")["claude_session_id"] == SID
 
 
+async def test_the_name_lines_are_written_byte_for_byte_as_claude_code_writes_them(world):
+    # Claude Code may find a name by matching its own compact form in the file, not by parsing it.
+    world.started()
+    await rename(world, "Old name", "Été")
+    raw = world.transcript.read_text(encoding="utf-8").splitlines()[-2:]
+    assert raw == [
+        f'{{"type":"custom-title","customTitle":"Été","sessionId":"{SID}"}}',
+        f'{{"type":"agent-name","agentName":"Été","sessionId":"{SID}"}}',
+    ]
+
+
 async def test_only_a_session_the_bridge_started_is_ever_renamed(world):
     world.running()
     res = await rename(world, "Old name", "Mine now")
