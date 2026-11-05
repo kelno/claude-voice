@@ -46,8 +46,12 @@ MODEL_NOT_FOUND_NOTE = (
 )
 
 
-def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[str, Any]]:
-    """What a person would read: prompts and Claude's text, with tool names folded in."""
+def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool = False) -> list[dict[str, Any]]:
+    """What a person would read: prompts and Claude's text, with tool names folded in.
+
+    With `origins`, a user turn also says where it came from: "peer" for a message from another
+    session (the relay's own among them), "human" or None for one typed into the session.
+    """
     turns: list[dict[str, Any]] = []
     pending_tools: list[str] = []
     for m in messages:
@@ -60,7 +64,9 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[s
             )
             text = "\n".join(t for t in texts if t.strip())
             if text:
-                turns.append({"role": "user", "text": text})
+                turns.append(
+                    {"role": "user", "text": text, **({"origin": getattr(m, "origin", None)} if origins else {})}
+                )
         elif m.type == "assistant" and isinstance(content, list):
             for b in content:
                 if b.get("type") == "tool_use":
@@ -336,7 +342,14 @@ def read_raw_transcript(session_id: str, cwd: str, projects_dir: Path = PROJECTS
             continue
         if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") != "peer":
             continue
-        out.append(SimpleNamespace(type=entry["type"], message=entry.get("message") or {}, error=entry.get("error")))
+        out.append(
+            SimpleNamespace(
+                type=entry["type"],
+                message=entry.get("message") or {},
+                error=entry.get("error"),
+                origin=(entry.get("origin") or {}).get("kind"),
+            )
+        )
     return out
 
 

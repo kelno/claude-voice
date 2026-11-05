@@ -75,6 +75,10 @@ PENDING_NOTE = "A wait on this session is still running; its result arrives by i
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
+# Tools after which a conversation follows a session: by its `session` argument and the turn its
+# result reached (`next_after`), or by the `claude_session_id` it started or resumed.
+READ_MARKING_TOOLS = ("message_active_session", "read_session_output", "wait_for_session", "ask_active_session")
+FOLLOWING_TOOLS = ("start_active_session", "attach_conversation")
 GUIDE_NOTE = "This is the bridge's guide in full, the same text the guide tool returns: no need to call guide."
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
@@ -140,6 +144,10 @@ Waiting
   the app asks you to say it is taking a while. Speak once, with the reply.
 - When the owner speaks during a wait, answer them. The call they talked over
   keeps running and its result arrives by itself; then wait again.
+- A result may start with news: the sessions you started, resumed, messaged
+  or read that have turns you haven't read (the owner may have written to them
+  directly), and any session waiting on a permission prompt. Read a session
+  before telling the owner what it said.
 - A session's reply is final only when its turn has ended (reply_final true,
   or status "idle" with turns_left 0). Before that it is its latest message so
   far: don't report it as finished, or as cut off.
@@ -300,10 +308,10 @@ def mcp_session(ctx: Any) -> str | None:
     return headers.get(MCP_SESSION_HEADER) if headers is not None else None
 
 
-def result_notes() -> Any:
+def result_notes(news: Callable[[str, str, dict[str, Any], dict[str, Any]], str | None] | None = None) -> Any:
     """Middleware adding notes to results: the manual to the first result of an MCP session that
-    hasn't called guide, LATE_NOTE to a slow call's result, and PENDING_NOTE to a call on a
-    session that a wait is still running on."""
+    hasn't called guide, the `news` line for that MCP session, LATE_NOTE to a slow call's result,
+    and PENDING_NOTE to a call on a session that a wait is still running on."""
     waits: dict[str, int] = {}
     # MCP sessions that read the manual or were handed it; the newest kept, oldest dropped.
     guided: dict[str, None] = {}
@@ -339,6 +347,10 @@ def result_notes() -> Any:
             guided[str(connection)] = None
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
+        if news is not None and connection:
+            line = news(str(connection), str(params.get("name") or ""), args, structured)
+            if line:
+                manual["news"] = line
         if pending:
             notes["pending"] = PENDING_NOTE
         if time.monotonic() - started >= LATE_SECONDS:
@@ -485,6 +497,94 @@ def build_server(
             if task:
                 task.cancel()
 
+    # Read markers, per MCP session (one per conversation in the Claude app), per Claude session:
+    # the last turn that conversation has seen, with where to find the session once it has ended.
+    followed: dict[str, dict[str, dict[str, Any]]] = {}
+    # Turns per session, kept while its conversation file is unchanged.
+    turns_seen: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
+
+    def all_turns(sid: str, cwd: str) -> list[dict[str, Any]]:
+        path = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
+        try:
+            st = path.stat()
+            stamp: tuple[int, int] | None = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            stamp = None
+        if stamp is not None and sid in turns_seen and turns_seen[sid][0] == stamp:
+            return turns_seen[sid][1]
+        turns = transcripts.recent_turns(read_transcript(sid, cwd), None, origins=True)
+        if stamp is not None:
+            turns_seen[sid] = (stamp, turns)
+        return turns
+
+    def follow(conversation: str, d: dict[str, Any], seen: int, advance: bool) -> None:
+        """Remember that a conversation follows a session, and the last turn it has seen."""
+        marks = followed.setdefault(conversation, {})
+        while len(followed) > GUIDED_KEPT:
+            del followed[next(iter(followed))]
+        sid = str(d.get("sessionId"))
+        mark = marks.setdefault(sid, {"seen": seen, "cwd": str(d.get("cwd")), "name": d.get("name")})
+        if advance:
+            mark["seen"] = max(mark["seen"], seen)
+        mark["name"] = d.get("name") or mark["name"]
+
+    def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> str | None:
+        """What this conversation hasn't read yet, in one line; None when nothing is new.
+
+        The sessions it started, resumed, messaged or read, with turns past its marker (the relay's
+        own messages left out), and any session waiting on a permission prompt.
+        """
+        live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
+        target = None
+        if tool in READ_MARKING_TOOLS and args.get("session"):
+            target = next((d for d in live.values() if args["session"] in (d.get("name"), d.get("sessionId"))), None)
+        elif tool in FOLLOWING_TOOLS and structured.get("claude_session_id"):
+            target = live.get(str(structured["claude_session_id"]))
+        if target is not None:
+            if tool in READ_MARKING_TOOLS:
+                seen = structured.get("next_after")
+                if isinstance(seen, int):
+                    # A message only starts following; reading moves the marker on.
+                    follow(conversation, target, seen, advance=tool != "message_active_session")
+            else:
+                # A session started or resumed: its history so far isn't news.
+                follow(conversation, target, len(all_turns(str(target["sessionId"]), str(target.get("cwd")))) - 1, True)
+        items, listed = [], set()
+        marks = followed.get(conversation, {})
+        for sid, mark in list(marks.items()):
+            d = live.get(sid)
+            name = (d or {}).get("name") or mark["name"] or sid
+            unread = [
+                t
+                for i, t in enumerate(all_turns(sid, str((d or {}).get("cwd") or mark["cwd"])))
+                if i > mark["seen"] and (t["role"] == "assistant" or t.get("origin") != "peer")
+            ]
+            if d is None:
+                del marks[sid]  # ended: said once, then forgotten, since it can't be read any more
+            if not unread:
+                continue
+            owner = sum(1 for t in unread if t["role"] == "user")
+            item = f"{name}: {len(unread)} unread turn{'s' if len(unread) > 1 else ''}"
+            if owner:
+                item += f", {owner} from the owner"
+            items.append(f"{item}, {session_state(d)}")
+            listed.add(sid)
+        for sid, d in live.items():
+            if sid not in listed and d.get("status") == "waiting" and d.get("waitingFor") == "permission prompt":
+                items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
+        return f"news: {'; '.join(items)}" if items else None
+
+    def session_state(d: dict[str, Any] | None) -> str:
+        if d is None:
+            return "ended"
+        if d.get("status") == "waiting":
+            return (
+                "waiting on a permission prompt"
+                if d.get("waitingFor") == "permission prompt"
+                else "waiting for an answer"
+            )
+        return "finished" if d.get("status") == "idle" else "still working"
+
     mcp = MCPServer(
         "claude-voice",
         title="Claude voice bridge",
@@ -492,7 +592,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests, result_notes()],
+        middleware=[log_requests, result_notes(news_line)],
         lifespan=lifespan,
     )
     if oauth is not None:
