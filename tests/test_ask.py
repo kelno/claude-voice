@@ -388,7 +388,7 @@ async def test_a_question_opened_while_answering_us_is_reported(tmp_path, root, 
 
 
 async def test_each_turn_says_whether_it_was_cut_and_how_long_it_is(tmp_path, root, live):
-    target = Target(live, str(root / "billing"))
+    target = Target(live, str(root / "billing"), status="busy")  # not finished: max_chars applies
     target.says("word " * 200)  # 1000 characters
     async with Client(bridge(tmp_path, root, live, target, None)) as c:
         out = await call(c, "read_session_output", session="billing-ab", max_chars=100)
