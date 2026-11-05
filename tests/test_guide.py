@@ -30,8 +30,9 @@ def test_the_manual_states_its_central_rules():
         "that session's call",  # the relay relays; how to do the work is the session's
         "marked as yours",  # its own ideas go along as suggestions
         "wait_for_session",  # asked to wait, the relay waits again rather than handing back
-        "keep waiting",
-        "heads-up",  # and says so before any wait
+        "don't ask the owner",  # waiting for a reply is the default
+        "wait in silence",  # no heads-up or progress between waits, whatever the app asks
+        "when the owner speaks during a wait",  # a call they talk over returns by itself
         "start_active_session",  # new work
         "never ask a desktop",  # the app refuses a start from a relayed message
         "the owner's to answer",  # permission prompts
