@@ -135,6 +135,22 @@ async def test_a_turn_the_owner_typed_to_the_session_is_news_and_says_so(served)
     assert out["news"] == "billing-ab (busy): 2 unread messages, 1 typed by the owner, read with after=2"
 
 
+async def test_only_what_the_owner_typed_counts_as_theirs(served):
+    # Seen live: a background task's completion note arrives as a user turn too, and was
+    # counted as typed by the owner. Only a turn Claude Code marks "human" is the owner's.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Go.")
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        desk.transcript.append(turn("user", "<task-notification> done </task-notification>", "task-notification"))
+        desk.transcript.append(turn("user", "From another session.", "peer"))
+        desk.transcript.append(turn("user", "no origin recorded", None))
+        desk.transcript.append(turn("assistant", "Noted."))
+        out = await call(c, "list_projects")
+    assert out["news"] == "billing-ab (idle): 1 unread message, read with after=2"
+
+
 async def test_another_conversation_does_not_get_this_ones_news(served):
     url, desk = served
     http, client = conversation(url)
