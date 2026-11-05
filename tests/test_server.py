@@ -227,8 +227,20 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
     for name in set(tools) - read_only:
         ann = tools[name].annotations
         assert ann is None or not ann.read_only_hint, name
-    assert tools["stop_active_session"].annotations.destructive_hint is True
-    assert tools["revoke_access"].annotations.destructive_hint is False
+
+
+async def test_only_tools_the_owner_approves_each_time_are_marked_destructive(tmp_path, root):
+    # The Claude app asks before every call to a destructive tool, whatever the owner set,
+    # and MCP counts a tool that says nothing as destructive, so the rest say False.
+    _, server = make(tmp_path, root, FakeClaude())
+    async with Client(server) as client:
+        tools = {t.name: t for t in (await client.list_tools()).tools}
+    destructive = {"request_access", "stop_active_session"}
+    for name, tool in tools.items():
+        ann = tool.annotations
+        if ann is not None and ann.read_only_hint:
+            continue
+        assert ann is not None and ann.destructive_hint is (name in destructive), name
 
 
 class FakeConversations:

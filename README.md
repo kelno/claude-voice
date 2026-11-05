@@ -123,8 +123,8 @@ then give it a public address.
     its name, folder and status, marked `access: "folder_not_open"`: it cannot be
     read or messaged.
   - `request_access` opens that session's folder and everything under it, for
-    good. In the Claude app, set that tool to *ask each time*: the app then asks
-    you before every grant, and only you can answer.
+    good. It is marked destructive, so the Claude app asks you before every
+    grant, and only you can answer.
   - Some folders are never opened, inside the root or not: `.ssh`, `.gnupg`,
     `.claude`, `.config/claude-voice` and `AppData` in your home folder, and the
     system's own folders. A session there, or in a folder holding one, is listed
@@ -227,6 +227,8 @@ claude.ai could not reach the bridge on port 10000.
 
 In the Claude app, add a custom connector with that address and connect. Then
 set the tools to *always allow*, so the app does not ask before each one.
+It still asks before every call to the tools marked destructive,
+`request_access` and `stop_active_session`, whatever you set.
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
 the time of writing.
 

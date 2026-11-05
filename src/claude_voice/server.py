@@ -808,7 +808,7 @@ def build_server(
 
     @mcp.tool(
         title="Send a message to an open session",
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def message_active_session(session: str, message: str) -> dict[str, Any]:
         """Send to a session and return at once; wait_for_session then gets the reply.
@@ -896,7 +896,7 @@ def build_server(
         }
 
     @mcp.tool(
-        title="Ask an open session and wait", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True)
+        title="Ask an open session and wait", annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False)
     )
     async def ask_active_session(
         session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
