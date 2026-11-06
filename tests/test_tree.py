@@ -46,14 +46,24 @@ class World:
         self.subagents = {}
         self.next_pid = PID
 
-    def session(self, name, project="app", kind="interactive", status="idle", pid=None):
+    def session(self, name, project="app", kind="interactive", status="idle", pid=None, entrypoint="cli"):
         cwd = self.root / project
         cwd.mkdir(exist_ok=True)
         pid = pid or self.next_pid
         self.next_pid += 1_000_000  # only the first is a live pid; the others are faked alive below
         sid = f"sid-{name}"
         (self.live / f"{name}.json").write_text(
-            json.dumps({"pid": pid, "sessionId": sid, "cwd": str(cwd), "name": name, "kind": kind, "status": status})
+            json.dumps(
+                {
+                    "pid": pid,
+                    "sessionId": sid,
+                    "cwd": str(cwd),
+                    "name": name,
+                    "kind": kind,
+                    "status": status,
+                    "entrypoint": entrypoint,
+                }
+            )
         )
         return sid, cwd
 
@@ -97,6 +107,15 @@ def test_running_sessions_become_nodes_and_couriers_do_not(world):
     assert nodes["sid-app-1"]["project"] == "app"
     assert all(not n["name"].startswith("claude-voice-msg-") for n in nodes.values())
     assert nodes[BRIDGE_NODE]["kind"] == "bridge"
+
+
+def test_a_session_open_in_the_desktop_app_is_a_desktop_session(world):
+    # The desktop app registers its sessions as interactive too; only the entrypoint tells them apart.
+    world.session("app-1", kind="interactive", entrypoint="claude-desktop")
+    world.session("app-2", kind="interactive", entrypoint="cli")
+    nodes = by_id(world.tree().build())
+    assert nodes["sid-app-1"]["kind"] == "desktop"
+    assert nodes["sid-app-2"]["kind"] == "terminal"
 
 
 def test_sessions_outside_the_root_are_left_out(world, tmp_path):

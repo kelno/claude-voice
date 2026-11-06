@@ -24,7 +24,7 @@ def world(tmp_path):
     return tmp_path
 
 
-def running(world, name, project, sid, status="busy", kind="interactive", pid=PID):
+def running(world, name, project, sid, status="busy", kind="interactive", pid=PID, entrypoint="cli"):
     (world / "live" / f"{name}.json").write_text(
         json.dumps(
             {
@@ -34,6 +34,7 @@ def running(world, name, project, sid, status="busy", kind="interactive", pid=PI
                 "name": name,
                 "status": status,
                 "kind": kind,
+                "entrypoint": entrypoint,
                 "waitingFor": "input needed" if status == "waiting" else None,
             }
         )
@@ -80,6 +81,19 @@ def test_doing_is_kept_to_one_short_line(world):
 def test_doing_names_an_open_question(world):
     transcript(world, "billing", "s1", [says("Tests pass."), asks("Merge it now?", "Ja", "Nei")])
     assert doing_line("s1", str(world / "home" / "billing"), world / "projects") == "waiting on a choice: Merge it now?"
+
+
+async def test_fleet_recap_names_a_desktop_app_session_desktop(world):
+    running(world, "billing-1", "billing", "s1", entrypoint="claude-desktop")
+    srv = build_server(
+        SessionManager(Store(world / "b.db"), project_root=world / "home", client_factory=FakeClaude()),
+        conversations=lambda **k: [],
+        live_dir=world / "live",
+        projects_dir=world / "projects",
+    )
+    async with Client(srv) as c:
+        fleet = (await c.call_tool("fleet_recap", {})).structured_content
+    assert {r["name"]: r["kind"] for r in fleet["sessions"]} == {"billing-1": "desktop"}
 
 
 async def test_one_call_covers_running_and_bridge_sessions(world):
