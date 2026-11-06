@@ -70,6 +70,9 @@ RELAYED_MESSAGE_NOTE = (
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
+# A wait asked without a length: Claude's voice mode moves a call still running after about
+# 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
+WAIT_SECONDS = 8.0
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -1323,14 +1326,15 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
-        session: str, wait_seconds: float = 60, after: int | None = None, max_chars: int = 600
+        session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Wait for a running session's turn to end or need its user, sending nothing.
-        Pass a next_after you were given as `after` to wait for a reply past that turn, even
-        while the session has not picked a message up yet; without it an idle session returns
-        at once. status: "idle" (its turn has ended), "needs_input", "needs_choice",
-        "still_working" (call again), "session_ended" or "moved"; the other fields are as for
-        ask_active_session."""
+        """Wait 8 s, up to 20, for a session's turn to end or need input; then its reply.
+        Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
+        that turn, so a session that hasn't picked the message up yet is still waited for; without
+        it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
+        words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
+        user; prompt or question says what for), "still_working" (the wait ran out; call again),
+        "session_ended" or "moved" (the conversation now lives in moved_to)."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -1370,11 +1374,10 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def ask_active_session(
-        session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
+        session: str, message: str, wait_seconds: float = WAIT_SECONDS, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Ask a session and wait for its answer, up to the caller's time budget.
-        The budget is 20 s for the Claude app, and the conversation waits too, so prefer
-        message_active_session when the next step doesn't
+        """Ask a session and wait (8 s, up to 20) for its answer; only when needed now.
+        The conversation waits too, so prefer message_active_session when the next step doesn't
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
         word; while false, reply is its latest message so far, whole and maybe already the
         answer, but more may follow. status: "answered", "needs_input" (it waits for its user;
@@ -1638,8 +1641,8 @@ def build_server(
         return {**head, **task.result()}
 
     @tool(annotations=READ_ONLY)
-    async def ask_forked_session(session: str, question: str, wait_seconds: float = 20) -> dict[str, Any]:
-        """Ask the side session, a read-only fork that reads code, and wait for it.
+    async def ask_forked_session(session: str, question: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+        """Ask the side session, a read-only fork that reads code; waits 8 s, up to 20.
         The side session is a new read-only fork of a running session's whole conversation that
         can read the project's files, while the session itself keeps working, untouched; each
         question forks anew, from the latest state. It waits up to the caller's time budget (20 s
@@ -1658,10 +1661,9 @@ def build_server(
         return {"fork_id": fork_id, "session": forks[fork_id]["session"], "status": "started"}
 
     @tool(annotations=READ_ONLY)
-    async def read_forked_session(fork_id: str, wait_seconds: float = 20) -> dict[str, Any]:
-        """The side session's answer, within the caller's time budget; or still_working.
-        It waits up to the budget (20 s for the Claude app): status "answered", "still_working"
-        (call again), "timed_out" (it worked five minutes and
+    async def read_forked_session(fork_id: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+        """The side session's answer, waiting 8 s, up to 20; call again on still_working.
+        status "answered", "still_working" (call again), "timed_out" (it worked five minutes and
         was stopped) or "error" with `detail`; answers are kept for an hour, and forgotten when
         the bridge restarts."""
         return await collect_fork(fork_id, wait_seconds)
