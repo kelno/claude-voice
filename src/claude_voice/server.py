@@ -685,8 +685,9 @@ def build_server(
     # The sessions the relay watches, by Claude session id: the last turn it has read (`seen`),
     # the turn its last message went in after while no reply to it has been read (`sent`), and
     # whether that reply's turn was seen to end (`replied`). One set for the relay, whichever
-    # conversation it calls from, kept in the database: a voice call cut by a bridge restart
-    # still needs the reply to the message it sent.
+    # conversation it calls from, kept in the database: a bridge restart doesn't end the voice
+    # call, which runs in the Claude app's cloud, and the relay, in that call or a new one, still
+    # needs the reply to the message it sent.
     watched = load_watched(manager.store)
     # Turns per session, kept while its conversation file is unchanged.
     turns_seen: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}

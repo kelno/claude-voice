@@ -258,8 +258,8 @@ async def test_watch_session_watches_a_session_without_messaging_it(served):
 
 
 async def test_a_new_conversation_and_a_restarted_bridge_watch_the_same_sessions(tmp_path, world):
-    # The relay is one role across calls: a voice call cut by a restart, then a new one, still
-    # needs the reply to the message the last call sent.
+    # The relay is one role across calls: after a bridge restart, which leaves the voice call
+    # running, or in a new call, it still needs the reply to the message sent before.
     root, live = world
     desk = Desk(live, str(root / "billing"))
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
