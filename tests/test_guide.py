@@ -36,5 +36,8 @@ def test_the_manual_states_its_central_rules():
         "keep waiting",  # asked to wait, the relay reads again rather than handing back
         "heads-up",  # and says so before any wait
         "hand_to_desktop",
+        "only through you",  # a bridge-run session's prompts reach the owner nowhere else
+        "say which tool",  # the voice approval card shows no tool details
+        "settings → connectors",  # where a missing new tool gets refreshed
     ):
         assert words in manual, words

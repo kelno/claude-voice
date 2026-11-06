@@ -116,7 +116,8 @@ Sessions
 - To start a session the owner can later find in the desktop app:
   start_active_session, give it its task (message_active_session), let its turn
   end, then hand_to_desktop. It then shows in the desktop sidebar, but waits
-  there until the owner opens it: hand it over when its work is done.
+  there until the owner opens it, and is off the phone until they turn Remote
+  Control on there: hand it over when its work is done.
 - access "folder_not_open": the session can't be read or messaged yet; if the
   owner wants it, call request_access, which they approve in their app.
   access "folder_closed": never opened; the refusal names the closed folder.
@@ -157,6 +158,17 @@ Talking to a session
 Approvals
 - When a recap shows pending_approvals, read the tool and its input to the owner
   and call approve only if they clearly say yes; otherwise call deny.
+- A session the bridge runs (create_session, send_task, a conversation it
+  resumed) asks the bridge, not the desktop app or the phone: its prompts reach
+  the owner only through you, so check for them while it works.
+- In voice, the app's approval card for these tools shows no tool details. Before
+  a call the owner may have to approve, say which tool you are calling and why,
+  so they know what they are tapping.
+
+Missing tools
+- The app caches this connector's tool list. If a tool this guide names isn't
+  in yours, search for it by its exact name; if it still isn't there, tell the
+  owner the tool list needs a refresh in claude.ai Settings → Connectors.
 """
 
 
