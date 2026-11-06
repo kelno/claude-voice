@@ -148,6 +148,7 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 ### 4. Waiting for a session — fork "Wait for a session to finish or need an approval"
 
 - Offered 2026-11-06 as [#109](https://github.com/roykollensvendsen/claude-voice/pull/109), rebuilt as fork "Let a caller wait for a session's turn to end without sending" on upstream's time budgets (branch `pr/wait-for-session-2`).
+- Reviewed by the author 2026-11-06, four requests, all done, pushed, and the reply posted: turns capped at 30 with `turns_left` and `latest`; one helper for the final-reply rule (`reply_is_final`, also taken into the fork as "Keep a session's words when it ends during a wait"); a session that ends during the wait keeps its words (also in the fork); main's `test_seconds`. Waiting for the author.
 
 - What: tool `wait_for_session(session_id, wait_seconds=60)`, up to 300 s, returning the recap with `waited` = finished, needs_approval, still_running, not_running. The instructions to the assistant use it after `send_task`.
 - Why: a voice client can't be notified, so it polled `session_recap` and the person had to remind it to look; in a real voice test the assistant asked for exactly this.
@@ -228,6 +229,7 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 ### 6h. Each tool says what it is for in its first line — fork "Say what each tool is for in the first line of its description"
 
 - Offered 2026-11-06 as [#108](https://github.com/roykollensvendsen/claude-voice/pull/108), on upstream's own descriptions (branch `pr/tool-first-lines-2`).
+- Reviewed by the author 2026-11-06: first lines checked and right; asked only to keep main's `test_seconds`. Done and pushed, reply posted; waiting for the merge.
 
 - What: every tool description opens with one whole sentence of at most 78 characters, the detail on the following lines; `tests/test_surface.py` keeps it so.
 - Why: the Claude app shows an assistant each connector tool by the first line of its description, cut at about 79 characters, until the assistant loads the tool. Measured 2026-11-01 in the app's voice mode. Most first lines broke mid-sentence; the manual's never got to say "read this first".
