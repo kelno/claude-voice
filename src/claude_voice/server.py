@@ -1139,6 +1139,31 @@ def build_server(
         return {"name": name, "status": "stopped"}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def rename_session(session: str, name: str) -> dict[str, Any]:
+        """Rename a session the bridge started, once its turn has ended.
+        The name goes into its conversation, where Claude Code takes it up the next time the
+        session reads it. status: "renamed", "busy" (mid-turn; nothing done) or
+        "not_started_here"."""
+        new = transcripts.clean_name(name)
+        if not new:
+            raise ToolError("A name needs at least one visible character.")
+        live = next((d for d in live_sessions() if session in (d.get("name"), d.get("sessionId"))), None)
+        own = store.started_session(str(live.get("sessionId")) if live else session)
+        # RULE: only a session the bridge started is ever renamed
+        if own is None:
+            return {"session": session, "status": "not_started_here"}
+        sid, cwd = own["claude_session_id"], own["cwd"]
+        # Claude Code writes its transcript during a turn; a line added then could land inside one of its own.
+        if live and live.get("status") != "idle":
+            return {"session": own["name"], "claude_session_id": sid, "status": "busy"}
+        try:
+            transcripts.write_name(sid, cwd, new, projects_dir)
+        except OSError as exc:
+            raise ToolError(f"Could not rename {own['name']}: {exc}") from None
+        store.record_started(sid, new, cwd)
+        return {"session": own["name"], "name": new, "claude_session_id": sid, "status": "renamed"}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def hand_to_desktop(name: str) -> dict[str, Any]:
         """Only when the owner asks: move a started session into the desktop sidebar.
         A session start_active_session started, once its turn has ended, goes into its project's

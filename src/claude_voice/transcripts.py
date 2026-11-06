@@ -314,6 +314,30 @@ def doing_line(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> 
     return ""
 
 
+def clean_name(name: str, limit: int = 60) -> str:
+    """A session name on one line: control characters become spaces, runs of spaces one."""
+    return " ".join("".join(" " if not ch.isprintable() else ch for ch in name).split())[:limit].strip()
+
+
+def write_name(session_id: str, cwd: str, name: str, projects_dir: Path = PROJECTS_DIR) -> None:
+    """Give a session a new name the way Claude Code reads one another process gave it.
+
+    Claude Code keeps a session's name in its transcript, as a custom-title and an agent-name
+    line, and a running session takes up a name written there by another process the next time
+    it reads the end of its transcript.
+    """
+    path = projects_dir / project_key_for_directory(cwd) / f"{session_id}.jsonl"
+    if not path.is_file():
+        raise FileNotFoundError(f"no transcript for {session_id}")
+    lines = [
+        {"type": "custom-title", "customTitle": name, "sessionId": session_id},
+        {"type": "agent-name", "agentName": name, "sessionId": session_id},
+    ]
+    text = "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines)
+    with path.open("a", encoding="utf-8", newline="") as f:
+        f.write(text)
+
+
 def read_raw_transcript(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> list[Any]:
     """A session's turns, read from Claude Code's transcript file itself.
 
