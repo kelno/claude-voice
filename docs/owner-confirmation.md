@@ -15,7 +15,7 @@ The parties: the **session** that wants approval (a Claude Code session on the P
 1. The session writes what it wants approved and calls the bridge tool `confirm_ask` with it. The summary is exact, not a paraphrase: the text to add, the permission string, the command, the branch. The bridge records the request: a short code, the summary, which session asked, the time. A request expires after 15 minutes and is used once.
 2. The session gives the relay the code and the summary, in its reply.
 3. The relay calls the bridge tool `confirm_with_owner` with the code and the summary copied exactly. The tool is marked destructive, so the Claude app shows the owner an approval card before the call goes through. The card shows the call's arguments, not the tool's name, so the argument is named `owner_approves`: the owner reads "owner_approves: <the summary>". The owner taps to allow, or declines.
-4. When the call arrives, the bridge checks that it comes from a claude.ai chat (see "Who called"), and that the summary is exactly the session's, character for character, except for spaces and line breaks at the ends or repeated. Punctuation and capitals count: `Bash(git push:*)` and `Bash(git push*)` are different approvals. On a match it marks the request confirmed; otherwise it refuses, says why, and the relay calls again (a new card, a new tap).
+4. When the call arrives, the bridge checks that it comes from a claude.ai voice chat (see "Who called"), and that the summary is exactly the session's, character for character, except for spaces and line breaks at the ends or repeated. Punctuation and capitals count: `Bash(git push:*)` and `Bash(git push*)` are different approvals. On a match it marks the request confirmed; otherwise it refuses, says why, and the relay calls again (a new card, a new tap).
 5. The bridge tells the session, by message, that its request is confirmed. That message is only a nudge: the session then calls `confirm_check` with the code, and acts only if the result says confirmed and shows its summary.
 
 `confirm_check` returns one of: confirmed (with the summary, as stored, and the time); pending (no confirmation recorded, which covers a call the bridge refused, a card the owner declined or never saw, and a call never made: the bridge can't tell these apart, since a declined card never reaches it); expired; used (already confirmed and checked once before, by this session); unknown code.
@@ -45,12 +45,12 @@ What the others observe:
 The bridge accepts each step only from the caller it belongs to:
 
 - `confirm_ask` and `confirm_check`: only from a Claude Code session, identified by its tool call id found in its transcript. The session that checks must be the one that asked, so no other session can see or use the request.
-- `confirm_with_owner`: only from a claude.ai chat, voice or text (labels `ClaudeAI` and `Cowork`), never from a Claude Code session (label `ClaudeCode`). The owner's choice (2026-11-06) over a tighter rule that would accept only the voice chat a request was handed to, matched by its connection id: no chat carries an id the bridge can count on (see above), so the tighter rule can't be built. With any chat accepted, a request survives a bridge restart and a reconnected call.
+- `confirm_with_owner`: only from a claude.ai voice chat (label `ClaudeAI`), arriving from Anthropic's published outbound addresses (`160.79.104.0/21`, `153.61.208.0/20`); never from a text chat (`Cowork`) or a Claude Code session (`ClaudeCode`). Why not text chats: a text chat in the Claude app runs as a Claude Code session in Anthropic's cloud, and its tool approvals are answered by Claude Code's auto-mode classifier, not by the owner: in the card test (2026-11-06), a text chat's call to the destructive `request_access` was refused by that classifier and never reached the owner or the bridge. A classifier that can refuse can also allow, so a `Cowork` call doesn't mean the owner tapped. Why the address check: a caller reaching the bridge directly, over the owner's VPN, could send any label; through Anthropic, the label is Anthropic's. Cost: a relay in a text chat can't confirm. The owner had first chosen any claude.ai chat, voice or text, over a tighter rule matching the one voice chat a request was handed to; no chat carries an id the bridge can count on (see above), so the tighter rule can't be built, and the text-chat test then ruled text chats out.
 
 ## Why a session can trust a confirmed result
 
 - The result comes from the bridge as the session's own tool result, not through a message, so neither the relay nor another session can write it.
-- The bridge marks a request confirmed only when `confirm_with_owner` arrives from a claude.ai chat, as Anthropic's servers identify it, not as the caller says: never from a Claude Code session, so no session can confirm a request, its own or another's.
+- The bridge marks a request confirmed only when `confirm_with_owner` arrives from a claude.ai voice chat through Anthropic's servers, as they identify it, not as the caller says: never from a Claude Code session, so no session can confirm a request, its own or another's.
 - That call needs the owner's tap: the tool is destructive, and the Claude app asks the owner before every call to a destructive tool, offering only "Allow once" (seen on this bridge, 2026-11-05; see the checks below).
 - The card shows exactly the summary the session wrote, since the bridge refuses any other text. The relay can't reword what the owner approves.
 - The owner's own rule says a confirmed result counts as the owner's OK, so the session doesn't decide that on the mechanism's word. What it relies on the mechanism for is set out here, with its limits, for it to judge.
@@ -74,7 +74,7 @@ What a dishonest relay could still do:
 - Describe the request misleadingly when asking the owner to tap; the card still shows the session's words.
 - Delay a request, or not pass it on.
 - It can't confirm without the tap, or change the words.
-- Any claude.ai chat of the owner's can confirm any pending request whose code and summary it has, still only with the owner's tap on the card.
+- Any claude.ai voice chat of the owner's can confirm any pending request whose code and summary it has, still only with the owner's tap on the card.
 
 Outside the relay:
 
@@ -86,6 +86,6 @@ Outside the relay:
 Nothing gets built until 1 and 2 hold; if either fails, the fallback is a confirm page behind the bridge's own login, which the owner opens and taps, independent of the app's card and of caller labels.
 
 1. Whether Anthropic sets the caller labels itself, or passes on a value the caller sent. Everything in "Who called" rests on it.
-2. That the card appears on every call to a destructive tool, with no "Always allow" and no setting that skips it, in voice and in text chats.
+2. That the card appears on every call to a destructive tool, with no "Always allow" and no setting that skips it, in voice chats (text chats are ruled out, see "Who called").
 3. Whether the card shows a long summary in full.
 4. Whether the owner can approve a card by voice, without a tap.
