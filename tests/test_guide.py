@@ -1,4 +1,5 @@
-"""The bridge's manual: sent as server instructions, and read again from the guide tool."""
+"""The bridge's manual: sent as server instructions, and read again from the guide tool. It holds
+only what spans tools; what one tool needs is in that tool's description (tests/test_surface.py)."""
 
 from fakes import FakeClaude
 from mcp.client import Client
@@ -19,24 +20,21 @@ async def test_the_guide_tool_returns_the_same_manual_as_the_server_instructions
 def test_the_manual_states_its_central_rules():
     manual = INSTRUCTIONS.lower()
     for words in (
+        "read this first",
         "voice relay",
         "the relay",
         "the desk session",
         "the side session",
         "the owner sees nothing",  # the central principle
         "the desk session says",  # agents stay distinct
-        "message_active_session",  # send when the next step doesn't need the answer
-        "ask_active_session",
-        "list_active_sessions",  # which sessions there are
-        "peek_session",
-        "digest_session",
-        "ask_forked_session",
-        "folder_not_open",
-        "side_chat",
-        "keep waiting",  # asked to wait, the relay reads again rather than handing back
+        "that session's call",  # the relay relays; how to do the work is the session's
+        "marked as yours",  # its own ideas go along as suggestions
+        "wait_for_session",  # asked to wait, the relay waits again rather than handing back
+        "keep waiting",
         "heads-up",  # and says so before any wait
-        "hand_to_desktop",
-        "say which tool",  # the voice approval card shows no tool details
+        "start_active_session",  # new work
+        "never ask a desktop",  # the app refuses a start from a relayed message
+        "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
     ):
         assert words in manual, words

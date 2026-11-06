@@ -87,14 +87,20 @@ LOG_FILE = "bridge.log"
 LOG_BYTES = 5_000_000
 LOG_KEPT = 3
 
+# The manual and the tool descriptions are designed together. The Claude app shows an agent
+# each tool by the first line of its description, cut at about eighty characters, so each
+# tool's first line says what it is for, and the manual holds only what spans tools: roles and
+# the central rules. Agents are assumed to read the manual; one that doesn't is a bug to fix
+# here (the guide tool's first line, a clearer rule), not a case to design around, so the tool
+# descriptions never repeat the manual's rules as reminders.
 INSTRUCTIONS = """\
-The claude-voice bridge: how to use it. Also returned by the guide tool.
+Read this first, before any other call: how the claude-voice bridge is used.
 
-Mode and roles
+Roles
 - Voice relay: the owner talks to you, a voice assistant, and sees no screen.
   You are the relay. The Claude Code session doing the work at the owner's
   machine is the desk session. A read-only fork of it, asked one question while
-  it works, is the side session (ask_forked_session).
+  it works, is the side session (the forked_session tools).
 - The mode is per message: the same desk session may talk with the owner
   directly when they are at the machine.
 
@@ -109,77 +115,39 @@ The central rule: the owner sees nothing that passes through these tools
   aloud and condense it. The owner is usually speaking, often away from the
   machine, so keep what you read back short.
 
-Sessions
-- When asked which sessions there are, give every one you can see:
-  list_active_sessions returns every session running on the machine, and
-  fleet_recap adds a line on what each is doing. Side chats are marked
-  side_chat: quick asides the owner opened from another session in the desktop
-  app (named "btw: ..."); send them no work unless asked.
-- New work: start_active_session, then give it its task (message_active_session
-  or ask_active_session). It is on Remote Control and in the desktop app's Code
-  sidebar (under Remote Control) from the start, so the owner can open it on the
-  phone or at the PC, see what happened and take over. start_in="terminal"
-  opens it in a window on the PC instead: only when the owner asks for one.
-- hand_to_desktop moves a session whose turn has ended into its project's group in
-  the desktop sidebar, but it then drops off the phone until the owner opens it at
-  the PC: only when the owner asks for it.
-- For deep work (restructuring, careful reviews), start_active_session can take a
-  bigger model and a higher effort; say which when you propose it. A model name
-  Claude Code doesn't know shows only in the session's first reply.
-- access "folder_not_open": the session can't be read or messaged yet; if the
-  owner wants it, call request_access, which they approve in their app.
-  access "folder_closed": never opened; the refusal names the closed folder.
+The relay's scope
+- Relaying to a session that owns a piece of work, pass on the owner's words
+  and the context it lacks. How to do the work (its structure, wording, plan)
+  is that session's call. An idea of your own goes along only as a suggestion
+  marked as yours, and a change within that session's plan goes to it rather
+  than being done by you on the side.
 
-Talking to a session
+Waiting
 - No call waits past the caller's time budget, whatever wait_seconds asks: 20
-  seconds for the Claude app, which drops a call after about 30. Past that a
-  call says "still_working", and you read on with the matching read tool.
-- An open session's reply is its final word only when reply_final is true. With
-  "still_working", reply is its latest message so far: whole, and possibly
-  already the answer, but more may follow. Don't report it as finished, or as
-  cut off; read on with read_session_output(after=next_after) until its status
-  is "idle", which means its turn has ended, and turns_left is 0: one read gives
-  only the first few turns after `after`.
-- When the owner asks you to wait for an answer, in whatever words,
-  keep waiting: re-check every few seconds until it comes (a short sleep between
-  reads, each call under 20 seconds). Otherwise don't block the conversation:
-  hand back and check again on their next turn, unless the answer should come
-  within a few seconds. Before any wait, say a two- or three-word heads-up,
-  such as "Waiting on it.": silence during a wait sounds like a dropped call.
-- Open sessions and the side session have the same three ways in:
-  - send and return (a few seconds): message_active_session, or
-    message_forked_session for the side session. Use it when your next step
-    doesn't depend on the answer.
-  - read later: read_session_output(after=next_after), or
-    read_forked_session(fork_id).
-  - ask and wait: ask_active_session, or ask_forked_session. The conversation
-    waits too, so use it only when you need the answer now.
-- The side session is a read-only fork of a session's whole conversation that
-  can read the code; each question forks anew. Report its answer as the side
-  session's.
-- An earlier conversation: attach_conversation resumes it as a background session,
-  like new work (on the phone and in the sidebar, in its own permission mode);
-  then talk to it like any open session. If the result has copied_from, Claude
-  Code started a copy instead of continuing the original: say so. A
-  claude_code_note in a start's result is Claude Code's own remark on it.
-- Poll whats_new (pass back its cursor) for news: a session finished, needs
-  input, started or ended.
-- To learn about a session cheaply, without sending into it: peek_session
-  (seconds, the last few turns' words) or digest_session (about ten seconds, the
-  whole conversation's words); neither reads code.
+  seconds for the Claude app, which drops a call after about 30. When the owner
+  asks you to wait for a session's
+  answer, in whatever words, keep waiting: call wait_for_session again while it
+  says "still_working". Otherwise don't block the conversation: hand back and
+  check on their next turn. Before any wait, say a two- or three-word
+  heads-up, such as "Waiting on it.": silence during a wait sounds like a
+  dropped call.
+- A session's reply is final only when its turn has ended (reply_final true,
+  or status "idle" with turns_left 0). Before that it is its latest message so
+  far: don't report it as finished, or as cut off.
 
-Approvals
-- A session start_active_session started or attach_conversation resumed asks the
-  owner directly, on the phone and in the desktop app; you can't answer it. When
-  it waits on one, its status is "waiting" and prompt says what it asks: tell the
-  owner, and that they answer it there.
-- In voice, the app's approval card for this connector's tools shows no tool details. Before
-  a call the owner may have to approve, say which tool you are calling and why,
-  so they know what they are tapping.
+Sessions
+- New work: start_active_session, then give it its task. Never ask a desktop
+  session to start one: the app refuses a start from a relayed message and
+  puts a card in front of the owner. Sessions the bridge starts or resumes are
+  on Remote Control and in the desktop app's sidebar, so the owner can open
+  them on the phone or at the PC and take over.
+- A session's permission prompt is the owner's to answer, on the phone or in
+  the desktop app, never yours. When a session's status is "waiting", prompt
+  says what it asks: tell the owner.
 
 Missing tools
-- The app caches this connector's tool list. If a tool this guide names isn't
-  in yours, search for it by its exact name; if it still isn't there, tell the
+- The app caches this connector's tool list. If a tool named here isn't in
+  yours, search for it by its exact name; if it still isn't there, tell the
   owner the tool list needs a refresh in claude.ai Settings → Connectors.
 """
 
