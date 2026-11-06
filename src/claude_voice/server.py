@@ -79,25 +79,56 @@ LOG_BYTES = 5_000_000
 LOG_KEPT = 3
 
 INSTRUCTIONS = """\
-Controls Claude Code sessions running on the user's own machine. The user is
-usually speaking, often while driving, so keep what you read back short.
-Poll whats_new (pass back its cursor) for news; it is cheap.
-Typical flow: list_projects -> create_session -> send_task -> poll
-session_recap until status is no longer "running" -> tell the user the result.
-send_task returns immediately; Claude may work for minutes.
-To see what is running on the machine (including terminal sessions), call
-list_active_sessions; to continue one, attach_conversation with its id.
-When the user asks which sessions there are, give every one you can see, from
-every source: list_sessions returns both the bridge's own sessions and the running
-ones, those whose folder isn't open included. Leave none out, side chats only marked.
-A session listed with access "folder_not_open" can't be read or messaged yet: if
-the user wants it, call request_access; they approve it in their app. One listed
-as "folder_closed" can never be opened; the refusal names the closed folder.
-A session marked side_chat is a quick aside the user opened from another session
-in the desktop app (its name starts with "btw:"), not where a project's work
-happens: do not send tasks or questions there unless the user names it.
-When a recap shows pending_approvals, read the tool and its input to the user
-and call approve only if they clearly say yes; otherwise call deny.
+The claude-voice bridge: how to use it. Also returned by the guide tool.
+
+Mode and roles
+- Voice relay: the owner talks to you, a voice assistant, and sees no screen.
+  You are the relay. The Claude Code session doing the work at the owner's
+  machine is the desk session. A read-only fork of it, asked one question while
+  it works, is the side session (ask_forked_session).
+- The mode is per message: the same desk session may talk with the owner
+  directly when they are at the machine.
+
+The central rule: the owner sees nothing that passes through these tools
+- Not what you send, not what a session answers, not what agents say to each
+  other. Everything that matters must be said in your conversation with the
+  owner: say briefly what you sent and what came back.
+- Keep agents distinct: "the desk session says X", "the side session says X",
+  "I think Y". Never present another agent's words as your own, or blend them.
+- Sessions you write to are told this too: they answer you, the relay, in their
+  reply text, written for an agent and self-contained; you choose what to say
+  aloud and condense it. The owner is usually speaking, often away from the
+  machine, so keep what you read back short.
+
+Sessions
+- When asked which sessions there are, give every one you can see: list_sessions
+  returns the bridge's own sessions (idle ones included; their Claude Code
+  process only runs during a task) and every session running on the machine.
+  Side chats are marked side_chat: quick asides the owner opened from another
+  session in the desktop app (named "btw: ..."); send them no work unless asked.
+- Prefer a session open in the desktop app: the owner can open it, see what
+  happened and take over. A session you start (create_session, send_task) never
+  shows in the desktop app; say so when you start one.
+- access "folder_not_open": the session can't be read or messaged yet; if the
+  owner wants it, call request_access, which they approve in their app.
+  access "folder_closed": never opened; the refusal names the closed folder.
+
+Talking to a session
+- message_active_session returns as soon as the message is delivered (a few
+  seconds): use it when your next step doesn't depend on the answer, and read
+  the answer later with read_session_output. ask_active_session waits for the
+  answer, so the conversation waits too: use it only when you need the answer.
+- For a session you started: send_task returns at once; then wait_for_session,
+  again while it says "still_running", then tell the owner the result. Poll
+  whats_new (pass back its cursor) for other news.
+- To learn about a session without sending into it: peek_session (seconds, the
+  last few turns' words), digest_session (about ten seconds, the whole
+  conversation's words), ask_forked_session (the side session: it can read the
+  code too; slower; report its answer as the side session's).
+
+Approvals
+- When a recap shows pending_approvals, read the tool and its input to the owner
+  and call approve only if they clearly say yes; otherwise call deny.
 """
 
 
@@ -479,6 +510,12 @@ def build_server(
             except (OSError, ValueError, AttributeError):
                 continue
         return None
+
+    @tool(annotations=READ_ONLY)
+    def guide() -> dict[str, Any]:
+        """How to use this bridge, the same text as the server's instructions: read it first if
+        those didn't reach you, and again when unsure how a tool or a role works."""
+        return {"guide": INSTRUCTIONS}
 
     @tool(annotations=READ_ONLY)
     def list_projects(query: str | None = None) -> dict[str, Any]:

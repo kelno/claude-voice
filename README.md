@@ -90,6 +90,7 @@ the bridge says which are missing, with the exact fix, through its
 
 | Tool | What it is for |
 | --- | --- |
+| `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
