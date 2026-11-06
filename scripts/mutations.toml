@@ -118,6 +118,12 @@ find = 'if not ok or changed:'
 replace = 'if not ok:'
 
 [[rule]]
+name = "an update runs the tests only when asked"
+file = "src/claude_voice/updater.py"
+find = 'if tests else (("install", install),)'
+replace = 'if True else (("install", install),)'
+
+[[rule]]
 name = "an update whose tests fail is rolled back without a restart"
 file = "src/claude_voice/updater.py"
 find = 'if not ok:  # roll back'

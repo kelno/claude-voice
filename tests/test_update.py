@@ -47,13 +47,13 @@ class Service:
         return self.healthy if self.restarts == 1 else self.healthy_after_rollback
 
 
-def run(clone, tmp_path, service, tests_pass=True):
+def run(clone, tmp_path, service, tests_pass=True, tested=True):
     log = tmp_path / "update.json"
     outcome = updater.run(
         clone,
         log,
         install=lambda folder: (True, "installed"),
-        tests=lambda folder: (tests_pass, "12 passed" if tests_pass else "1 failed"),
+        tests=(lambda folder: (tests_pass, "12 passed" if tests_pass else "1 failed")) if tested else None,
         restart=service.restart,
         healthy=service.health,
     )
@@ -111,6 +111,16 @@ def test_an_update_that_does_not_come_back_healthy_is_rolled_back_and_restarted(
     assert service.restarts == 2  # once for the update, once for the version that worked
 
 
+def test_an_update_runs_the_tests_only_when_asked(install, tmp_path):
+    origin, clone = install
+    before = git(clone, "rev-parse", "HEAD")
+    commit(origin, "b")
+    service = Service(healthy=False)
+    outcome, steps = run(clone, tmp_path, service, tests_pass=False, tested=False)
+    assert "test" not in steps and outcome["result"] == "rolled_back"  # failing tests were never run
+    assert git(clone, "rev-parse", "HEAD") == before and service.restarts == 2
+
+
 def test_only_one_update_runs_at_a_time(install, tmp_path):
     _, clone = install
     log = tmp_path / "update.json"
@@ -140,9 +150,11 @@ BEARER = {"Authorization": f"Bearer {SECRET}"}
 class Launcher:
     def __init__(self):
         self.started = []
+        self.tested = []
 
-    def __call__(self, repo, log):
+    def __call__(self, repo, log, tests=False):
         self.started.append((repo, log))
+        self.tested.append(tests)
 
 
 def bridge_with_update(tmp_path, launcher):
@@ -178,6 +190,17 @@ async def test_the_app_and_the_voice_start_an_update_that_runs_outside_the_bridg
     async with Client(server) as mcp:
         out = (await mcp.call_tool("update_bridge", {})).structured_content
     assert out["started"] is True and len(launcher.started) == 2
+
+
+async def test_the_voice_and_the_app_ask_for_the_tests_only_with_run_tests(tmp_path):
+    launcher = Launcher()
+    server, app = bridge_with_update(tmp_path, launcher)
+    async with Client(server) as mcp:
+        await mcp.call_tool("update_bridge", {})
+        await mcp.call_tool("update_bridge", {"run_tests": True})
+    async with client(app) as c:
+        await c.post("/api/v1/update", headers=BEARER)
+    assert launcher.tested == [False, True, False]
 
 
 async def test_a_second_update_is_refused_while_one_runs(tmp_path):
@@ -291,6 +314,8 @@ def test_the_bridge_on_windows_starts_the_updater_detached_so_it_outlives_the_re
         "--port", "8811", "--host", "10.0.0.2",
     ]  # fmt: skip
     assert kwargs["creationflags"] == updater.WINDOWS_DETACHED
+    updater.launch(tmp_path, tmp_path / "update.json", 8811, "10.0.0.2", platform="win32", popen=popen, tests=True)
+    assert started[1][0][-1] == "--tests"
 
 
 def test_the_updater_on_windows_ends_the_bridge_so_its_launcher_starts_it_again():

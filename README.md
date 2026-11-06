@@ -95,7 +95,7 @@ the bridge says which are missing, with the exact fix, through its
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
-| `update_bridge` | update claude-voice: pull, install, test, restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
+| `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |

@@ -102,6 +102,7 @@ Added upstream after the fork split off, and in since the resync (choice 7): `ch
 | First line of each description | Runs past the Claude app's cut | One sentence within 78 characters | The app shows only that line until a tool loads; offered upstream as a pull request | "Say what each tool is for in the first line of its description" |
 | Wording | "background" sessions | "Remote Control" sessions | Agents told the owner sessions were hidden when they were on the phone | "Present the bridge's sessions as on Remote Control, not background" |
 | Updating the bridge (`update_bridge`) | Through `systemd-run` and `systemctl`, so Linux only | Also on Windows: a detached updater, and a restart by exit code 75 that the start script answers | The bridge runs on Windows here (resync choice 7) | "Update the bridge on Windows, where there is no systemd" |
+| Tests before an update restarts (`update_bridge`) | Always run | Run only when asked (`run_tests`, `--tests`); the rollback when the new version doesn't come back healthy stays | Only the owner's own sessions commit to the fork, and they test before pushing, so the run only delayed the restart (owner, 2026-11-06). Ask for it after a resync or changes made elsewhere | "Run an update's tests only when asked" |
 
 ## Most promising for upstream (ideas, 2026-11-06)
 

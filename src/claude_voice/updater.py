@@ -1,4 +1,4 @@
-"""Update claude-voice in place: pull, install, test, restart, and roll back if anything fails.
+"""Update claude-voice in place: pull, install, test if asked, restart, and roll back if anything fails.
 
 It runs as its own process, started by the bridge with `systemd-run --user` (on Windows, as
 a detached process), because it restarts the bridge and must outlive the bridge doing so. Every step is
@@ -9,6 +9,7 @@ The rules, in order:
 - local changes to tracked files stop it before anything is touched;
 - an install already up to date is left alone;
 - only a fast-forward is pulled, never a merge;
+- the tests run only when asked (on this fork, whose own sessions test before they push);
 - if installing or the tests fail, the folder goes back to the version that ran,
   and the service is not restarted;
 - if the new version does not come back healthy, the old one is put back,
@@ -17,7 +18,7 @@ The rules, in order:
 On Windows there is no service manager: the updater ends the bridge with RESTART_EXIT, and
 the script that runs the bridge starts it again when it ends with that code.
 
-Run: python -m claude_voice.updater --repo <clone> --log <file> [--port 8811] [--host 127.0.0.1]
+Run: python -m claude_voice.updater --repo <clone> --log <file> [--port 8811] [--host 127.0.0.1] [--tests]
 """
 
 from __future__ import annotations
@@ -104,7 +105,7 @@ def run(
     repo: Path,
     log_path: Path,
     install: Callable[[Path], tuple[bool, str]],
-    tests: Callable[[Path], tuple[bool, str]],
+    tests: Callable[[Path], tuple[bool, str]] | None,
     restart: Callable[[], None],
     healthy: Callable[[], bool],
 ) -> dict[str, Any]:
@@ -147,7 +148,9 @@ def run(
             log.step("rollback", ok, f"back on {before[:7]}")
         return log.finish("rolled_back", reason)
 
-    for step, action in (("install", install), ("test", tests)):
+    # RULE: an update runs the tests only when asked
+    steps = (("install", install), ("test", tests)) if tests else (("install", install),)
+    for step, action in steps:
         ok, out = action(repo)
         log.step(step, ok, out)
         # RULE: an update whose tests fail is rolled back without a restart
@@ -200,9 +203,12 @@ def launch(
     host: str,
     platform: str = sys.platform,
     popen: Callable[..., Any] = subprocess.Popen,
+    tests: bool = False,
 ) -> None:
     """Start the updater outside the bridge, so it survives the restart it causes."""
     args = ["-m", "claude_voice.updater", "--repo", str(folder), "--log", str(log), "--port", str(port), "--host", host]
+    if tests:
+        args.append("--tests")
     if platform == "win32":
         quiet = subprocess.DEVNULL
         popen([sys.executable, *args], creationflags=WINDOWS_DETACHED, stdin=quiet, stdout=quiet, stderr=quiet)
@@ -259,12 +265,13 @@ def main() -> int:
     parser.add_argument("--log", default=str(LOG))
     parser.add_argument("--port", type=int, default=8811)
     parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--tests", action="store_true", help="run the test suite before restarting")
     args = parser.parse_args()
     outcome = run(
         args.repo,
         Path(args.log).expanduser(),
         install=lambda repo: _uv(repo, "sync", "--locked", "--all-extras"),
-        tests=lambda repo: _uv(repo, "run", "pytest", "-q", "-p", "no:cacheprovider"),
+        tests=(lambda repo: _uv(repo, "run", "pytest", "-q", "-p", "no:cacheprovider")) if args.tests else None,
         restart=(lambda: restart_on_windows(args.port)) if sys.platform == "win32" else _restart,
         healthy=_healthy(args.port, health_host(args.host)),
     )
