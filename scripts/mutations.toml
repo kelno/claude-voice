@@ -48,8 +48,8 @@ replace = 'if False:'
 [[rule]]
 name = "a reply is final only once the turn has ended"
 file = "src/claude_voice/server.py"
-find = 'final = bool\(new\) and status in \("answered", "needs_input", "needs_choice"\)'
-replace = 'final = bool(new)'
+find = 'return bool\(new\) and status in'
+replace = 'return True or status in'
 
 [[rule]]
 name = "guessing the secret on the page stops after five wrong tries"

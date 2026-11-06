@@ -18,7 +18,7 @@
     "claude_voice/plugins.py": 9,
     "claude_voice/procs.py": 2,
     "claude_voice/roles.py": 12,
-    "claude_voice/server.py": 48,
+    "claude_voice/server.py": 47,
     "claude_voice/sessions.py": 4,
     "claude_voice/software.py": 11,
     "claude_voice/store.py": 13,
@@ -28,7 +28,7 @@
     "claude_voice/updater.py": 12,
     "claude_voice/usage.py": 11
   },
-  "coverage": 92.62,
+  "coverage": 92.63,
   "cycles": 0,
   "duplication": 1.81,
   "layer_violations": 0,
@@ -41,7 +41,7 @@
     "seconds": 180,
     "tolerance": 0.25
   },
-  "test_seconds": 107.8,
-  "tests": 602,
+  "test_seconds": 108.1,
+  "tests": 603,
   "type_errors": 0
 }

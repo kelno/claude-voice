@@ -136,3 +136,19 @@ async def test_a_wait_for_a_session_stays_within_the_callers_time_budget(tmp_pat
         started = time.monotonic()
         out = await call(c, "wait_for_session", session="billing-ab", wait_seconds=60)
     assert out["status"] == "still_working" and time.monotonic() - started < 5
+
+
+async def test_a_session_that_ends_during_the_wait_keeps_the_words_it_wrote(tmp_path, root, live):
+    # Reviewed upstream (#109): the words already written were lost when the session ended.
+    target = Target(live, str(root / "billing"), status="busy")
+
+    async def work():
+        await asyncio.sleep(0.05)
+        target.says("Halfway through the export.")
+        target.file.unlink()
+
+    async with Client(bridge(tmp_path, root, live, target, None)) as c:
+        asyncio.get_running_loop().create_task(work())
+        out = await call(c, "wait_for_session", session="billing-ab", after=1, wait_seconds=5)
+    assert out["status"] == "session_ended"
+    assert out["reply"] == "Halfway through the export." and out["reply_final"] is False

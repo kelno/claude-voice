@@ -1706,6 +1706,11 @@ def build_server(
         prompt = permission_prompt(d)
         return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
 
+    def reply_is_final(status: str, new: list[dict[str, Any]]) -> bool:
+        """Whether a reply is the session's last word on it."""
+        # RULE: a reply is final only once the turn has ended
+        return bool(new) and status in ("answered", "idle", "needs_input", "needs_choice")
+
     def live_by_pid(pid: Any) -> dict[str, Any] | None:
         """The running session with this process id now, or None once it has exited."""
         return next((d for d in live_sessions() if d.get("pid") == pid), None)
@@ -1758,9 +1763,10 @@ def build_server(
             status = "session_ended"
         else:
             status = blocked["status"] if blocked else ("idle" if done else "still_working")
-        written = [] if now is None else said(target)
+        # A session that ended keeps its transcript, so what it wrote before it went is still read.
+        written = said(target)
         new = [dict(t) for t in (written if after is not None else written[-1:])]
-        final = bool(new) and status in ("idle", "needs_input", "needs_choice")
+        final = reply_is_final(status, new)
         reply = reply_of(new, max_chars, final)
         return {
             "status": status,
@@ -1871,8 +1877,7 @@ def build_server(
             new = new[-1:]  # the message is not in view: only the session's final words
         elif anchor is not None and was_busy and new:
             new = new[:1]
-        # RULE: a reply is final only once the turn has ended
-        final = bool(new) and status in ("answered", "needs_input", "needs_choice")
+        final = reply_is_final(status, new)
         reply = reply_of(new, max_chars, final)
         return {
             "session": target["name"],
