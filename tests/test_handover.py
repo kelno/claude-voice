@@ -171,3 +171,8 @@ def test_a_resumed_conversation_is_started_with_its_own_mode_and_folders():
     assert [command[i + 1] for i, a in enumerate(command) if a == "--add-dir"] == ["D:/a", "D:/b"]
     plain = transcripts.background_command("claude", "new")
     assert "--resume" not in plain and "--permission-mode" not in plain and "--add-dir" not in plain
+
+
+def test_waking_a_former_background_session_passes_no_other_flag():
+    command = transcripts.background_command("claude", "", resume="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b", wake=True)
+    assert command == ["claude", "--resume", "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b", "--bg"]

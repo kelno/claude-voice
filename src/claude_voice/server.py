@@ -157,7 +157,8 @@ Talking to a session
 - An earlier conversation: attach_conversation resumes it as a background session,
   like new work (on the phone and in the sidebar, in its own permission mode);
   then talk to it like any open session. If the result has copied_from, Claude
-  Code started a copy because the original is still open elsewhere: say so.
+  Code started a copy instead of continuing the original: say so. A
+  claude_code_note in a start's result is Claude Code's own remark on it.
 - Poll whats_new (pass back its cursor) for news: a session finished, needs
   input, started or ended.
 - To learn about a session cheaply, without sending into it: peek_session
@@ -384,7 +385,8 @@ def build_server(
     read_transcript: Callable[[str, str | None], list[Any]] | None = None,
     watch_interval: float | None = None,
     restart: dict[str, Any] | None = None,
-    start_background: Callable[..., Awaitable[None]] = transcripts.start_background,
+    start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
+    background_sessions: Callable[[], Awaitable[set[str]]] = transcripts.background_sessions,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], None] = transcripts.trust_folder,
@@ -776,34 +778,51 @@ def build_server(
         path: Path, name: str | None, start_in: str | None = None, remote_control: bool | None = None, **options: Any
     ) -> dict[str, Any]:
         """Start a session in `path` under a free name, where the settings say unless this start
-        asks otherwise, and wait until it is listed."""
+        asks otherwise, and wait until it is listed.
+
+        A woken session runs in the background with its own saved options and name, so it is
+        found by its id instead.
+        """
+        wake = options.get("wake")
         taken = {str(d.get("name")) for d in live_sessions()}
-        wanted = (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
+        wanted = "" if wake else (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
         while wanted in taken:
             wanted = f"{wanted}-{secrets.token_hex(2)}"
         if start_in is not None and start_in not in config.LAUNCHES:
             raise ToolError(f"start_in is one of: {', '.join(config.LAUNCHES)}")
-        how, started_in, where_note = how_to_start(str(path), wanted, start_in, remote_control)
+        how: dict[str, Any] = {}
+        started_in, where_note = "background", None
+        if not wake:
+            how, started_in, where_note = how_to_start(str(path), wanted, start_in, remote_control)
         try:
             given = {k: v for k, v in options.items() if v is not None}
-            await start_background(str(path), wanted, **given, **how)
+            printed = await start_background(str(path), wanted, **given, **how) or ""
         except Exception as exc:
             raise ToolError(f"Claude Code could not start a session: {exc}") from None
+        notes = [line.strip() for line in printed.splitlines() if line.strip().startswith("note:")]
+
+        def listed(d: dict[str, Any]) -> bool:
+            if d.get("cwd") != str(path):
+                return False
+            return d.get("sessionId") == options.get("resume") if wake else d.get("name") == wanted
+
         deadline = time.monotonic() + start_seconds
         while time.monotonic() < deadline:
-            found = next((d for d in live_sessions() if d.get("name") == wanted and d.get("cwd") == str(path)), None)
+            found = next((d for d in live_sessions() if listed(d)), None)
             if found:
-                store.record_started(str(found.get("sessionId")), wanted, str(path))
+                started_as = str(found.get("name") or wanted)
+                store.record_started(str(found.get("sessionId")), started_as, str(path))
                 return {
-                    "name": wanted,
+                    "name": started_as,
                     "claude_session_id": found.get("sessionId"),
                     "project": under_root(str(path)),
                     "status": found.get("status") or "idle",
                     "started_in": started_in,
                     **({"note": where_note} if where_note else {}),
+                    **({"claude_code_note": " ".join(notes)} if notes else {}),
                 }
             await asyncio.sleep(0.2)
-        raise ToolError(f"{wanted} was started but did not appear among the running sessions")
+        raise ToolError(f"{wanted or name} was started but did not appear among the running sessions")
 
     def unused_name(wanted: str) -> str:
         taken = {str(d.get("name")) for d in live_sessions()}
@@ -1197,8 +1216,14 @@ def build_server(
             raise ToolError(str(exc)) from None
         if not transcripts.SESSION_ID.fullmatch(claude_session_id):
             raise ToolError(f"Not a Claude Code session id: {claude_session_id!r}")
-        grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
-        out = await start_listed(path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs)
+        if claude_session_id in await background_sessions():
+            # It keeps its own saved name, Remote Control, settings and mode; any flag would copy it.
+            out = await start_listed(path, label, resume=claude_session_id, wake=True)
+        else:
+            grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
+            out = await start_listed(
+                path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs
+            )
         if out["claude_session_id"] != claude_session_id:
             out["copied_from"] = claude_session_id
         return out

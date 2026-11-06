@@ -786,12 +786,19 @@ def background_command(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
+    wake: bool = False,
 ) -> list[str]:
     """The command that starts a named session, on a model and effort if given, with extra
     settings (such as a hook), Remote Control and a first message if given. In the
     background, or inside `terminal`, the command that opens a terminal window; there it
     runs through `shell` as a login shell, so it gets the owner's PATH and settings. With
-    `resume`, it continues that conversation, in its permission mode and with its folders."""
+    `resume`, it continues that conversation, in its permission mode and with its folders.
+
+    A conversation that has been a background session before keeps its saved options, and
+    Claude Code starts a copy of it when given any other flag; `wake` continues it in place.
+    """
+    if wake and resume:
+        return [cli, "--resume", resume, "--bg"]
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
     return [
@@ -825,12 +832,13 @@ async def start_background(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
-) -> None:
+    wake: bool = False,
+) -> str:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal,
     or inside a terminal window when `terminal` is given.
 
     It runs under the owner's own Claude Code and settings, and appears in the running
-    sessions like any other session.
+    sessions like any other session. Returns what Claude Code printed in the background.
     """
 
     import claude_agent_sdk
@@ -839,7 +847,19 @@ async def start_background(
     cli = procs.find("claude") or str(bundled)
     shell = login_shell() if terminal else None
     command = background_command(
-        cli, name, model, effort, prompt, settings, remote_control, terminal, shell, resume, permission_mode, add_dirs
+        cli,
+        name,
+        model,
+        effort,
+        prompt,
+        settings,
+        remote_control,
+        terminal,
+        shell,
+        resume,
+        permission_mode,
+        add_dirs,
+        wake,
     )
     if terminal:
         opener = procs.find(terminal[0]) or terminal[0]
@@ -856,12 +876,12 @@ async def start_background(
         try:  # most terminals hand the window over and exit; one that fails says so at once
             _, err = await asyncio.wait_for(window.communicate(), 5)
         except TimeoutError:
-            return  # still running: it is the window itself, and the session is in it
+            return ""  # still running: it is the window itself, and the session is in it
         if window.returncode:
             raise RuntimeError(
                 err.decode(errors="replace").strip()[-300:] or f"{terminal[0]} exited {window.returncode}"
             )
-        return
+        return ""
     proc = await asyncio.create_subprocess_exec(
         *command,
         cwd=cwd,
@@ -873,6 +893,24 @@ async def start_background(
     out, _ = await asyncio.wait_for(proc.communicate(), 60)
     if proc.returncode:
         raise RuntimeError(out.decode(errors="replace").strip()[-300:] or f"claude --bg exited {proc.returncode}")
+    return out.decode(errors="replace")
+
+
+async def background_sessions() -> set[str]:
+    """The ids of every conversation Claude Code has run as a background session, finished ones too."""
+    import claude_agent_sdk
+
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    cli = procs.find("claude") or str(bundled)
+    listing = await asyncio.create_subprocess_exec(
+        cli, "agents", "--json", "--all", stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE
+    )
+    raw, _ = await asyncio.wait_for(listing.communicate(), 60)
+    try:
+        jobs = json.loads(raw.decode(errors="replace") or "[]")
+    except ValueError:
+        return set()
+    return {str(j["sessionId"]) for j in jobs if isinstance(j, dict) and j.get("sessionId")}
 
 
 LOGIN_SHELLS = ("bash", "zsh", "sh", "ksh")  # shells that take -l -i -c and "$@"

@@ -17,10 +17,11 @@ PID = os.getpid()
 class Starter:
     """Stands in for `claude --bg`: records the call and registers the session like Claude Code does."""
 
-    def __init__(self, live, register=True, copies=False):
+    def __init__(self, live, register=True, copies=False, note=None):
         self.live = live
         self.register = register
         self.copies = copies  # Claude Code couldn't continue the conversation in place
+        self.note = note  # what Claude Code prints, e.g. a "note:" line
         self.calls = []
         self.options = []
 
@@ -28,10 +29,13 @@ class Starter:
         self.calls.append((cwd, name))
         self.options.append(how)
         sid = how.get("resume") if how.get("resume") and not self.copies else f"sid-{name}"
+        if how.get("wake"):
+            name = "Prompt test"  # a woken session keeps the name it was saved with
         if self.register:
             (self.live / f"{name}.json").write_text(
                 json.dumps({"pid": PID, "sessionId": sid, "cwd": cwd, "name": name, "kind": "bg", "status": "idle"})
             )
+        return self.note
 
 
 @pytest.fixture
@@ -104,7 +108,11 @@ async def test_a_chosen_model_comes_with_a_note_that_it_is_only_checked_at_the_f
 OLD = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
 
 
-def resuming(tmp_path, world, starter, grant=None):
+async def no_background_sessions():
+    return set()
+
+
+def resuming(tmp_path, world, starter, grant=None, background_sessions=no_background_sessions):
     from test_server import FakeConversations, conversation
 
     from claude_voice.permissions import Grant
@@ -117,7 +125,37 @@ def resuming(tmp_path, world, starter, grant=None):
         grant_for=lambda sid, cwd, new_mode: grant or Grant(new_mode),
     )
     convs = FakeConversations([conversation(OLD, str(root / "billing"), "Invoice export")])
-    return build_server(m, conversations=convs, live_dir=live, start_background=starter, start_seconds=1.0)
+    return build_server(
+        m,
+        conversations=convs,
+        live_dir=live,
+        start_background=starter,
+        start_seconds=1.0,
+        background_sessions=background_sessions,
+    )
+
+
+async def test_a_former_background_session_is_woken_in_place_with_its_saved_options(tmp_path, world):
+    # Given any other flag, Claude Code would start a copy of it rather than continue it.
+    async def known():
+        return {OLD}
+
+    starter = Starter(world[1], note="note: woke session 0f1e2d3c with its saved options (--name).")
+    async with Client(resuming(tmp_path, world, starter, background_sessions=known)) as c:
+        out = (await c.call_tool("attach_conversation", {"claude_session_id": OLD})).structured_content
+    assert starter.options == [{"resume": OLD, "wake": True}]
+    assert out["name"] == "Prompt test" and out["claude_session_id"] == OLD and "copied_from" not in out
+    assert out["claude_code_note"].startswith("note: woke session")
+
+
+async def test_what_claude_code_notes_at_the_start_comes_back(tmp_path, world):
+    starter = Starter(world[1], note="Some banner\nnote: something to know\nbackgrounded")
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        out = (await c.call_tool("start_active_session", {"project": "billing", "name": "noted"})).structured_content
+    async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
+        plain = (await c.call_tool("start_active_session", {"project": "billing", "name": "quiet"})).structured_content
+    assert out["claude_code_note"] == "note: something to know"
+    assert "claude_code_note" not in plain
 
 
 async def test_an_old_conversation_resumes_as_a_background_session_with_its_own_permissions(tmp_path, world):
