@@ -25,7 +25,8 @@ The full ratchet switches every rule off in turn (about ten minutes, 44 test run
 
 1. The tests the change touches, `ruff check`, `ruff format --check` and `mypy src`; each new test seen failing at the `test:` commit.
 2. `uv run python scripts/ratchet.py update --skip-mutation`, with `quality.json` committed in the `feat:` or `fix:` commit (it runs the whole suite once, about 90 s).
-3. Push the branch to the fork (`origin`, push URL `github-agents:`), never to `upstream`; the owner opens the pull request. If CI then reports a mutation that survived, fix it and push again.
+3. Push the branch to the fork (`origin`, push URL `github-agents:`), never to `upstream`. The session opens the pull request itself, as a draft (`gh pr create --draft --repo roykollensvendsen/claude-voice`), and the owner reviews it, edits it and marks it ready. Its text opens with a disclaimer saying an AI wrote it on kelno's behalf, and doesn't speak as the owner. If CI then reports a mutation that survived, fix it and push again.
+4. From the resync on, this is done in upstream's contribute session (`start_role`), set up as in resync decision 7 (owner, 2026-11-06). Opening the draft needs the GitHub command-line tool (`gh`) installed and signed in with the agents' GitHub account; until then, the session pushes the branch and the owner opens the pull request.
 
 ## Resync decisions (2026-11-06)
 
@@ -41,7 +42,7 @@ The owner's general rule: align with upstream, refactoring the fork to match it,
 6. Message tools marked destructive: settled by the rule, the fork's choice is a feature. Messages stay unmarked, so the Claude app doesn't ask for a tap on each one.
 7. Upstream-only features (owner, 2026-11-06): all the code comes in; what's switched on:
    - Self-update (`update_changes`, `update_bridge`): on. It pulls the branch the bridge's clone follows, which for the fork is the fork's `main` on GitHub, never upstream, and only as a fast-forward; it refuses to start with local changes, runs the tests, and rolls back on failure, so it can't overwrite fork changes. It doesn't bring upstream's changes: those still come by a resync. What an update brings is read from the commit messages, grouped by kind, not from release notes. Needs a Windows version: it restarts the bridge through `systemd-run`, which this PC doesn't have, and its full test run is heavy here.
-   - Contribute role (`start_role`): likely on. Needs the role set up for this PC in `~/.config/claude-voice/roles.toml`: its folder on a separate worktree, not the clone the bridge runs from; its first message following "How we check a pull request here" above (no full mutation sweep, push through `github-agents:`, the owner opens the pull request), since upstream's asks it to run the whole mutation script and open pull requests with `gh`, which isn't installed here.
+   - Contribute role (`start_role`): likely on. Needs the role set up for this PC in `~/.config/claude-voice/roles.toml`: its folder on a separate worktree, not the clone the bridge runs from; its first message following "How we check a pull request here" above (no full mutation sweep, push through `github-agents:`, open the pull request as a draft with `gh` for the owner to review and mark ready), since upstream's asks it to run the whole mutation script and open ready pull requests. Needs `gh` installed and signed in with the agents' account.
    - Chosen session (`get_active_session`, `set_active_session`): off.
    - Companion app: off.
    - Plugins: code in, off; no other MCP servers on this PC for now.
