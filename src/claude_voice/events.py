@@ -71,6 +71,10 @@ class LiveWatcher:
             return None
         return str(path.relative_to(self.root)) or "."
 
+    def last_seen_live(self) -> set[str]:
+        """The ids of the sessions running at the last look, kept across restarts."""
+        return {str(r[0]) for r in self.db.execute("SELECT session_id FROM live_snapshot") if r[0]}
+
     def check(self) -> list[dict[str, Any]]:
         """Diff the running sessions against the last look; record and return the changes."""
         now = {}

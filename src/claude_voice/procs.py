@@ -28,8 +28,3 @@ def find(name: str) -> str | None:
     """Where tool `name` is: on the search path, or in one of the user's own tool folders."""
     extra = os.pathsep.join(str(Path(p).expanduser()) for p in USER_BINS)
     return shutil.which(name, path=os.pathsep.join(filter(None, [os.environ.get("PATH", ""), extra])))
-
-
-def boot_time() -> float:
-    """When the machine last started, in seconds since the epoch."""
-    return psutil.boot_time()

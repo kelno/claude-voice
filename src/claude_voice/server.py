@@ -91,8 +91,6 @@ PENDING_NOTE = "A wait on this session is still running; its result arrives by i
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
-# Claude Code shows a background session a shutdown stopped as failed for this long, then as stopped.
-WAKE_WITHIN_SECONDS = 48 * 3600
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -439,29 +437,21 @@ def result_notes() -> Any:
 async def wake_interrupted(
     store: Store,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]],
-    boot_time: Callable[[], float],
-    projects_dir: Path,
+    was_live: set[str],
     start_background: Callable[..., Awaitable[str | None]],
 ) -> list[str]:
     """Wake the sessions the bridge started or resumed that the last shutdown interrupted.
 
-    A shutdown stops every background session, and Claude Code shows each as failed for 48
-    hours, then as stopped; nothing restarts them. One counts as interrupted when it is failed
-    and its conversation last changed before this boot, within those 48 hours. Each is woken in
-    place with its saved options, Remote Control included, and logged. Returns their names.
+    A shutdown stops every background session, and Claude Code shows each as failed; nothing
+    restarts them. The bridge stops with them, so one counts as interrupted when it was running
+    at the bridge's last look (`was_live`) and is now failed. Windows' boot time can't tell: with
+    Fast Startup a shutdown resumes the old kernel. Each is woken in place with its saved
+    options, Remote Control included, and logged. Returns their names.
     """
-    boot = boot_time()
     woken = []
     for job in await background_jobs():
         sid, cwd = str(job.get("sessionId")), str(job.get("cwd") or "")
-        if job.get("state") != "failed" or not cwd or not store.was_started(sid):
-            continue
-        conversation = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
-        try:
-            last = conversation.stat().st_mtime
-        except OSError:
-            continue
-        if not boot - WAKE_WITHIN_SECONDS < last < boot:
+        if job.get("state") != "failed" or not cwd or sid not in was_live or not store.was_started(sid):
             continue
         name = str(job.get("name") or sid)
         try:
@@ -486,7 +476,6 @@ def build_server(
     start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
     background_sessions: Callable[[], Awaitable[set[str]]] = transcripts.background_sessions,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] = transcripts.background_jobs,
-    boot_time: Callable[[], float] = procs.boot_time,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], None] = transcripts.trust_folder,
@@ -612,14 +601,14 @@ def build_server(
                         check()
                     await asyncio.sleep(watch_interval)
 
+            # What ran at the last look, read before the watcher's first look replaces it.
+            was_live = watcher.last_seen_live()
             task = asyncio.create_task(watch())
             # The service keeps the side-question reader ready, so the first answer is quick too.
             warming = asyncio.create_task(transcripts.shared_reader().warm())
             warming.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             # The served bridge starts at logon: bring back what the last shutdown stopped.
-            waking = asyncio.create_task(
-                wake_interrupted(manager.store, background_jobs, boot_time, projects_dir, start_background)
-            )
+            waking = asyncio.create_task(wake_interrupted(manager.store, background_jobs, was_live, start_background))
             waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         try:
             yield {}
