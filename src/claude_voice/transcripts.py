@@ -991,7 +991,8 @@ def trust_folder(folder: Path, config: Path = CLAUDE_CONFIG) -> None:
         body = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return  # no Claude Code settings to add to: it will ask in the window
-    body.setdefault("projects", {}).setdefault(str(folder), {})["hasTrustDialogAccepted"] = True
+    # Keyed as Claude Code keys it: with forward slashes on Windows too.
+    body.setdefault("projects", {}).setdefault(folder.as_posix(), {})["hasTrustDialogAccepted"] = True
     spare = path.with_name(path.name + ".claude-voice.tmp")
     spare.write_text(json.dumps(body, indent=2), encoding="utf-8")
     os.chmod(spare, path.stat().st_mode & 0o777)

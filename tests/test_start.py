@@ -417,7 +417,19 @@ def test_trusting_a_folder_marks_only_that_folder_and_keeps_every_other_setting(
     transcripts.trust_folder(tmp_path / "new", config)
     after = json.loads(config.read_text())
     assert after["theme"] == "dark" and after["projects"]["/old"] == {"hasTrustDialogAccepted": False, "x": 1}
-    assert after["projects"][str(tmp_path / "new")]["hasTrustDialogAccepted"] is True
+    assert after["projects"][(tmp_path / "new").as_posix()]["hasTrustDialogAccepted"] is True
+
+
+def test_a_folder_is_trusted_under_the_name_claude_code_looks_it_up_by(tmp_path):
+    """Claude Code keys a Windows folder with forward slashes; a backslashed key goes unread."""
+    from pathlib import PureWindowsPath
+
+    from claude_voice import transcripts
+
+    config = tmp_path / ".claude.json"
+    config.write_text(json.dumps({"projects": {}}))
+    transcripts.trust_folder(PureWindowsPath(r"D:\work\new"), config)  # type: ignore[arg-type]
+    assert list(json.loads(config.read_text())["projects"]) == ["D:/work/new"]
 
 
 async def test_only_a_folder_the_bridge_just_made_is_trusted_for_claude_code(tmp_path, world):

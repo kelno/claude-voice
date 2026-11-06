@@ -335,6 +335,11 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - Why: upstream's update relies on `systemd-run` and `systemctl`, so on Windows (and macOS) it fails at the start.
 - Expect pushback: the restart needs the launcher's cooperation (a loop on exit code 75), which upstream doesn't ship for Windows; it comes with 8 (Windows in the README and CI). Tests: `tests/test_update.py`, the three Windows tests.
 
+### 6z. Trusting a new folder on Windows — fork "Trust a new folder under the name Claude Code looks it up by"
+
+- What: `trust_folder`, which marks a folder `start_active_session` has just made as trusted in Claude Code's config, writes its key with forward slashes (`folder.as_posix()`), as Claude Code keys a Windows folder; with the backslashed `str(folder)`, Claude Code never read it and refused the start ("Workspace not trusted"). Found in the resync's trial run.
+- Why: a small bug fix on Windows; no change on Linux or macOS, where both forms are the same. Offer with 8, or alone. Test first: `tests/test_start.py`, with a Windows path, so it fails on Linux CI too.
+
 ### 6g. Handing a session to the desktop app — fork "Hand a session the bridge started to the desktop app"
 
 - What: `hand_to_desktop(name)` stops a session `start_active_session` started and opens a named Windows Terminal tab running `claude --desktop --resume '<id>'`, which brings it into the Claude desktop app's sidebar. Refuses sessions the bridge didn't start, mid-turn ones and ones with no conversation yet. A Remote Control hook (`REMOTE_CONTROL_AT_START`, off) for `claude --bg --remote-control`.
