@@ -90,7 +90,7 @@ the bridge says which are missing, with the exact fix, through its
 
 | Tool | What it is for |
 | --- | --- |
-| `list_projects` | the folders Claude was used in lately, or any folder found by a word from its name |
+| `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
 | `whats_new` | only what happened since you last asked: finished, failed, waiting for you |

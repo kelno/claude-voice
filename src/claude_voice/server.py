@@ -463,33 +463,59 @@ def build_server(
             )
         raise ToolError(f"No session with id {session_id}")
 
+    def history_folder(conversations_dir: Path, by_key: dict[str, Path]) -> Path | None:
+        """The real folder of one of Claude Code's history folders, which are named by a lossy
+        key: a folder under the root by its key, otherwise the working folder a conversation records."""
+        if conversations_dir.name in by_key:
+            return by_key[conversations_dir.name]
+        for f in sorted(conversations_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)[:3]:
+            try:
+                with f.open(encoding="utf-8") as lines:
+                    for _, line in zip(range(20), lines, strict=False):
+                        cwd = json.loads(line).get("cwd")
+                        if cwd:
+                            return Path(cwd)
+            except (OSError, ValueError, AttributeError):
+                continue
+        return None
+
     @tool(annotations=READ_ONLY)
     def list_projects(query: str | None = None) -> dict[str, Any]:
-        """Folders Claude can be started in: those used in the last 30 days, newest first.
-        A word from a name (`query`) searches every folder. At most 20."""
+        """Folders Claude Code was used in during the last 30 days, anywhere on this machine,
+        newest first, read from Claude Code's own history (the folders desktop and terminal
+        sessions ran in); a word (`query`) also finds folders under the root never used. Each
+        has access like list_active_sessions (absent when open; name is relative to the root
+        when under it, else the full path), at most 20."""
+        children = [p for p in manager.root.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        by_key = {project_key_for_directory(str(p)): p for p in children}
+        found: dict[Path, tuple[float, int]] = {p.resolve(): (0.0, 0) for p in children}
+        for d in projects_dir.iterdir() if projects_dir.is_dir() else []:
+            used = [f.stat().st_mtime for f in d.glob("*.jsonl")] if d.is_dir() else []
+            path = history_folder(d, by_key) if used else None
+            if path is None or Path(path).name.startswith(COURIER_PREFIX):
+                continue
+            key = Path(path).resolve()
+            newest, count = found.get(key, (0.0, 0))
+            found[key] = (max(newest, *used), count + len(used))
         rows = []
-        for p in manager.root.iterdir():
-            if not p.is_dir() or p.name.startswith("."):
+        for path, (newest, count) in found.items():
+            if not path.is_dir():
+                continue  # deleted since; its history outlives it
+            if query and query.lower() not in path.name.lower():
                 continue
-            if query and query.lower() not in p.name.lower():
+            if not query and newest < time.time() - 30 * 24 * 3600:
                 continue
-            used = [f.stat().st_mtime for f in (projects_dir / project_key_for_directory(str(p))).glob("*.jsonl")]
-            newest = max(used, default=None)
-            if not query and (newest is None or newest < time.time() - 30 * 24 * 3600):
-                continue
-            rows.append((newest or 0.0, p.name, len(used)))
-        rows.sort(key=lambda r: (-r[0], r[1]))
-        return {
-            "root": str(manager.root),
-            "projects": [
-                {
-                    "name": name,
-                    "last_used": datetime.fromtimestamp(when, UTC).isoformat(timespec="minutes") if when else None,
-                    "sessions": count,
-                }
-                for when, name, count in rows[:20]
-            ],
-        }
+            name = under_root(str(path))
+            row: dict[str, Any] = {
+                "name": name if name is not None else str(path),
+                "last_used": datetime.fromtimestamp(newest, UTC).isoformat(timespec="minutes") if newest else None,
+                "sessions": count,
+            }
+            if name is None:
+                row["access"] = f"folder_{manager.access.state(path)}"
+            rows.append((newest, row))
+        rows.sort(key=lambda r: (-r[0], r[1]["name"]))
+        return {"root": str(manager.root), "projects": [row for _, row in rows[:20]]}
 
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),

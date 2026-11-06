@@ -115,7 +115,8 @@ async def http_server(tmp_path, root):
     store = Store(tmp_path / "bridge.db")
     oauth = OAuthProvider(store, TOKEN, f"http://127.0.0.1:{port}", static_token=TOKEN)
     m = SessionManager(store, project_root=root, client_factory=FakeClaude())
-    server = build_server(m, oauth=oauth)
+    # An empty history of its own: the machine's real one would list the machine's folders.
+    server = build_server(m, oauth=oauth, projects_dir=tmp_path / "projects")
     config = uvicorn.Config(build_app(server), port=port, log_level="warning")
     uv = uvicorn.Server(config)
     task = asyncio.create_task(uv.serve())
