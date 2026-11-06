@@ -283,7 +283,7 @@ async def test_only_tools_the_owner_approves_each_time_are_marked_destructive(tm
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    destructive = {"request_access", "update_bridge"}
+    destructive = {"request_access", "update_bridge", "confirm_with_owner"}
     for name, tool in tools.items():
         ann = tool.annotations
         if ann is not None and ann.read_only_hint:

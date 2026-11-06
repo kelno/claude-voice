@@ -101,6 +101,7 @@ the bridge says which are missing, with the exact fix, through its
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, with your approval in the app; close it again |
+| `confirm_ask`, `confirm_with_owner`, `confirm_check` | the owner's own OK for a session, given from a voice chat: the session asks with its exact summary, the owner taps the app's card for `confirm_with_owner`, and the session checks the result itself; how and why: [docs/owner-confirmation.md](docs/owner-confirmation.md) |
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new project folder by a plain name under the root, only when asked |
 | `start_role` | start a session for a role, such as `contribute`: say what to change in claude-voice and get a pull request |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
@@ -296,8 +297,8 @@ claude.ai could not reach the bridge on port 10000.
 
 In the Claude app, add a custom connector with that address and connect. Then
 set the tools to *always allow*, so the app does not ask before each one.
-It still asks before every call to the tools marked destructive, `request_access`
-and `update_bridge`, whatever you set.
+It still asks before every call to the tools marked destructive, `request_access`,
+`update_bridge` and `confirm_with_owner`, whatever you set.
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
 the time of writing.
 

@@ -26,6 +26,8 @@ def test_the_note_says_who_sees_what_and_where_to_answer():
     assert "owner" in note and "see" in note
     assert "self-contained" in note
     assert "SendMessage" in RELAYED_MESSAGE_NOTE and "inbox" in RELAYED_MESSAGE_NOTE
+    # A relayed approval isn't the owner's; the note says where to get the owner's own.
+    assert "confirm_ask" in RELAYED_MESSAGE_NOTE
 
 
 async def test_a_relayed_message_carries_the_note_after_its_own_words(tmp_path, root, live):

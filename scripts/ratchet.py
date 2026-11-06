@@ -62,6 +62,7 @@ LAYERS = {
             "detail",
             "oauth",
             "fork",
+            "confirm",
         ),
         1,
     ),  # parts, each about one thing

@@ -138,6 +138,30 @@ PROJECTS_DIR = Path("~/.claude/projects").expanduser()
 JOBS_DIR = Path("~/.claude/jobs").expanduser()
 
 
+TOOL_USE_TAIL = 1_048_576  # a call being made is near the end of its session's transcript
+
+
+def session_of_tool_use(
+    tool_use_id: str, sessions: Iterable[Mapping[str, Any]], projects_dir: Path = PROJECTS_DIR
+) -> str | None:
+    """The running session whose transcript records this tool call: the session that made it."""
+    needle = json.dumps(tool_use_id).encode()
+    for d in sessions:
+        sid, cwd = str(d.get("sessionId")), str(d.get("cwd"))
+        path = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
+        try:
+            with path.open("rb") as f:
+                f.seek(0, 2)
+                f.seek(max(f.tell() - TOOL_USE_TAIL, 0))
+                tail = f.read()
+        except OSError:
+            continue
+        # RULE: a request belongs to the session whose transcript holds the call
+        if needle in tail:
+            return sid
+    return None
+
+
 def continued_in(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> str | None:
     """The session a conversation was continued in, if that is the last thing it did.
 

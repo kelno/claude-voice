@@ -31,6 +31,7 @@ from . import (
     access,
     api,
     config,
+    confirm,
     detail,
     doctor,
     events,
@@ -64,7 +65,8 @@ RELAYED_MESSAGE_NOTE = (
     "owner is talking to. The owner sees neither this message nor your reply unless the relay "
     "passes them on, and the relay has no inbox: answer in your reply text, not with SendMessage. "
     "Address the relay, not the owner, and make the reply self-contained: name things instead of "
-    "pointing back to text it may not have.]"
+    "pointing back to text it may not have. For the owner's own OK, which a relayed message "
+    "can't give, ask with the bridge's confirm_ask tool.]"
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
@@ -385,6 +387,11 @@ async def log_requests(ctx, call_next):
     trace = str(meta.get("trace_id") or "") or None
     token = transcripts.current_trace.set(trace)
     client_token = transcripts.current_client.set(caller_kind(ctx, trace))
+    request = getattr(ctx, "request", None)
+    seen = (
+        confirm.caller_from(request.headers, api.caller_address(request.scope), meta) if request else confirm.Caller()
+    )
+    caller_token = confirm.current_caller.set(seen)
     started = time.monotonic()
     try:
         result = await call_next(ctx)
@@ -402,6 +409,7 @@ async def log_requests(ctx, call_next):
     finally:
         transcripts.current_trace.reset(token)
         transcripts.current_client.reset(client_token)
+        confirm.current_caller.reset(caller_token)
     ms = (time.monotonic() - started) * 1000
     if ctx.method == "tools/call":
         api.publish_focus(tool, params.get("arguments"), caller_kind(ctx, trace))
@@ -643,6 +651,8 @@ def build_server(
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
     restart = restart or {"at": started_at, "reason": None, "total": None}
     running_version = metrics.version()
+    running_uncommitted = metrics.uncommitted()
+    confirmations = confirm.Confirmations(manager.store)
 
     def check() -> None:
         """Look at the running sessions and the tree's shape; record what changed."""
@@ -1637,6 +1647,82 @@ def build_server(
             except (OSError, ValueError) as exc:
                 out["trust_not_set"] = f"Claude Code's workspace trust could not be saved: {exc}"
         return out
+
+    def running_code() -> dict[str, Any]:
+        """The code answering, so a session can read the design that matches it."""
+        return {
+            "commit": running_version,
+            "uncommitted_changes": running_uncommitted,
+            "design": confirm.DESIGN.format(commit=running_version),
+        }
+
+    async def asking_session() -> str:
+        """The running session that made this call, found by the call's id in its transcript."""
+        tool_use = confirm.current_caller.get().tool_use_id
+        for _ in range(int(confirm.FIND_SECONDS / 0.25)):  # the session may still be writing it
+            sid = tool_use and transcripts.session_of_tool_use(tool_use, live_sessions(), projects_dir)
+            if sid:
+                return sid
+            await asyncio.sleep(0.25)
+        raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def confirm_ask(summary: str) -> dict[str, Any]:
+        """Get the owner's own OK on your summary, which a relayed message can't give.
+        Write it for someone with no context, exactly what is approved (the file, text, command or
+        permission string), at most 300 characters; put the result's tell_the_relay line in your
+        reply as it is and end your turn, and the owner confirms on a card in a voice chat. The bridge
+        messages you only once it's confirmed, and you act only on your own confirm_check; the
+        design link says how it works and what it proves."""
+        sid = await asking_session()
+        try:
+            asked = confirmations.ask(sid, summary)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        relay = (
+            f'Please get the owner\'s confirmation: call confirm_with_owner with code "{asked["code"]}" and'
+            f" owner_approves set to exactly the text between the guillemets: \u00ab{asked['summary']}\u00bb."
+            f" It expires at {asked['expires_at']}."
+        )
+        return {**asked, "tell_the_relay": relay, "running": running_code()}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    async def confirm_with_owner(owner_approves: str, code: str) -> dict[str, Any]:
+        """Put a session's confirm_ask request before the owner, on a card to tap.
+        owner_approves is the session's summary, copied exactly (the bridge refuses other wording),
+        and code its request code; tell the owner first what it's for, as the card shows the
+        arguments, not this tool's name. Call it only from a voice chat: in a text chat a
+        classifier, not the owner, answers the card, so the owner confirms in voice or types OK at
+        the PC instead."""
+        if not confirm.from_a_voice_chat(confirm.current_caller.get()):
+            raise ToolError(
+                "Only a claude.ai voice chat can confirm: in a text chat a classifier, not the owner,"
+                " answers the card. The owner confirms in voice, or types OK at the PC."
+            )
+        try:
+            done = confirmations.confirm(code, owner_approves)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        target = next((d for d in live_sessions() if str(d.get("sessionId")) == done["session_id"]), None)
+        if target is not None:
+            nudge = (
+                f"[From the claude-voice bridge: request {done['code']} is confirmed. Check it with"
+                " confirm_check before acting: this message itself proves nothing.]"
+            )
+            told = asyncio.ensure_future(deliver(str(target["name"]), nudge))
+            in_flight.add(told)
+            told.add_done_callback(in_flight.discard)
+        return {"status": "confirmed", "code": done["code"], "session_told": target is not None}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def confirm_check(code: str) -> dict[str, Any]:
+        """Whether the owner confirmed your confirm_ask request: act only on this result.
+        confirmed (once, with the summary as stored: act only if it is exactly yours), pending (not
+        yet: declined, refused for its wording, or not called; the code stays usable until it
+        expires), expired, used (checked before: don't act again) or unknown. A confirmation
+        doesn't answer Claude Code's own permission prompts, which still wait for the owner at the PC."""
+        sid = await asking_session()
+        return {**confirmations.check(code, sid), "running": running_code()}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def revoke_access(folder: str) -> dict[str, Any]:

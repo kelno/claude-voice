@@ -96,6 +96,25 @@ def version() -> str:
         return "unknown"
 
 
+def uncommitted() -> bool | None:
+    """Whether the checkout this bridge runs from has changes not committed; None when unknown."""
+    import subprocess
+    from pathlib import Path
+
+    try:
+        out = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        return bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def restart_info(state_file: str, unit: str = "claude-voice") -> dict:
     """Whether systemd restarted this unit on its own since the last start we saw.
 

@@ -38,6 +38,7 @@ decision nobody writes down.
 | [ADR-CV-007](ADR-CV-007-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-008](ADR-CV-008-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-009 |
 | [ADR-CV-009](ADR-CV-009-the-side-session-works-on-past-the-callers-time-budget.md) | The side session works on past the caller's time budget | Accepted |
+| [ADR-CV-010](ADR-CV-010-the-owner-confirms-on-the-apps-card-in-voice.md) | The owner confirms a session's request on the app's card, in a voice chat | Accepted |
 
 What is deliberately left undone, and what would make each worth doing, is
 [`deferred.md`](deferred.md). A thing left undone with no trigger is a thing
