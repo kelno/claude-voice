@@ -2084,23 +2084,6 @@ def build_server(
         api.HUB.publish("active", None)
         log.info("active -> none by page")
 
-    @tool(annotations=READ_ONLY)
-    def get_active_session() -> dict[str, Any]:
-        """The session the owner chose to talk to: send there by default.
-        Chosen on the companion page or by voice.
-        Null fields when none is chosen."""
-        return store.get_setting("active_session") or {"id": None, "name": None, "set_by": None, "set_at": None}
-
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def set_active_session(session: str) -> dict[str, Any]:
-        """Make `session` the one the owner talks to, shown on the companion page.
-        `session` is a name or id from fleet_recap.
-        Call it when the owner switches session by voice."""
-        try:
-            return set_active(session, "voice")
-        except LookupError as exc:
-            raise ToolError(str(exc)) from None
-
     pr_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     async def prs_for(folder: str) -> list[dict[str, Any]]:

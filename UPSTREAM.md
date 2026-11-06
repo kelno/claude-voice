@@ -73,6 +73,7 @@ Every way the fork differs from upstream's `main`, by what an agent calling the 
 | Tools | Why | Fork commits |
 | --- | --- | --- |
 | `send_task`, `session_recap`, `cancel`, `close_session`, `list_sessions`, `create_session`, `approve`, `deny`, `list_pending_approvals` | They served sessions run inside the bridge, which the owner couldn't open on the phone or at the PC and whose prompts came only through the relay; all work now runs as ordinary sessions on Remote Control | `4e09bfe`, `54250cc`, `0f78906` |
+| `get_active_session`, `set_active_session` | The chosen session marks which session the owner talks to, for the companion page; the owner switched it off (resync choice 7), and tools the relay sees but never uses are noise in its list. The companion API's `/api/v1/active` routes stay | this commit |
 | `whats_new` | No relay thought to call it; every result now carries a line on what the relay hasn't read | `68b1a07`, `5ae1dd2` |
 
 ### Upstream tools the fork doesn't have yet

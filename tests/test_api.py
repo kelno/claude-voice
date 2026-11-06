@@ -97,7 +97,7 @@ async def test_guessing_the_secret_on_the_page_stops_after_five_wrong_tries(brid
     assert codes[:5] == [401] * 5 and codes[5] == 429 and after.status_code == 429
 
 
-async def test_the_session_chosen_in_the_app_is_the_one_the_voice_talks_to(bridge):
+async def test_the_session_chosen_in_the_app_is_kept_and_shown_back(bridge):
     server, app, _, _ = bridge
     async with client(app) as c:
         put = await c.put("/api/v1/active", json={"session": "billing-ab"}, headers=BEARER)
@@ -105,12 +105,9 @@ async def test_the_session_chosen_in_the_app_is_the_one_the_voice_talks_to(bridg
         active = (await c.get("/api/v1/active", headers=BEARER)).json()
     assert put.status_code == 200 and unknown.status_code == 404
     assert active["name"] == "billing-ab" and active["set_by"] == "page"
-    async with Client(server) as mcp:
-        seen = (await mcp.call_tool("get_active_session", {})).structured_content
-        await mcp.call_tool("set_active_session", {"session": "billing-ab"})
-    assert seen["name"] == "billing-ab"
-    async with client(app) as c:
-        assert (await c.get("/api/v1/active", headers=BEARER)).json()["set_by"] == "voice"
+    async with Client(server) as mcp:  # the fork has no tool for it: the relay never sees it
+        names = {t.name for t in (await mcp.list_tools()).tools}
+    assert not {"get_active_session", "set_active_session"} & names
 
 
 async def test_a_change_sent_from_another_site_is_refused(bridge):
@@ -153,7 +150,7 @@ async def test_the_event_stream_says_which_session_is_being_talked_to(bridge):
         await asyncio.sleep(0.3)
         async with Client(server) as mcp:
             await mcp.call_tool("message_active_session", {"session": "billing-ab", "message": "hi"})
-            await mcp.call_tool("set_active_session", {"session": "billing-ab"})
+        await c.put("/api/v1/active", json={"session": "billing-ab"}, headers=BEARER)
         events = sse((await asyncio.wait_for(stream, 10)).text)
     assert events[0][0] == "focus" and events[0][1]["session"] == "billing-ab"
     assert events[0][1]["tool"] == "message_active_session"
@@ -268,9 +265,6 @@ async def test_the_choice_can_be_cleared_so_the_voice_decides_again(bridge):
     assert cleared.status_code == 204 and after is None
     assert events == [("active", None)]
     assert foreign.status_code == 403
-    async with Client(server) as mcp:
-        seen = (await mcp.call_tool("get_active_session", {})).structured_content
-    assert seen["name"] is None
 
 
 async def test_every_change_of_the_chosen_session_is_logged_with_who_made_it(bridge, caplog):
@@ -281,7 +275,6 @@ async def test_every_change_of_the_chosen_session_is_logged_with_who_made_it(bri
         async with client(app) as c:
             await c.put("/api/v1/active", json={"session": "billing-ab"}, headers=BEARER)
             await c.delete("/api/v1/active", headers=BEARER)
-        async with Client(server) as mcp:
-            await mcp.call_tool("set_active_session", {"session": "billing-ab"})
+            await c.put("/api/v1/active", json={"session": "billing-ab"}, headers=BEARER)
     lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice" and r.getMessage().startswith("active")]
-    assert lines == ["active -> billing-ab by page", "active -> none by page", "active -> billing-ab by voice"]
+    assert lines == ["active -> billing-ab by page", "active -> none by page", "active -> billing-ab by page"]

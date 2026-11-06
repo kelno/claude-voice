@@ -187,13 +187,14 @@ async def test_an_unknown_session_has_no_page(world):  # noqa: F811
     assert missing.status_code == 404
 
 
-async def test_the_voice_can_refresh_the_summary_of_the_chosen_session(world):  # noqa: F811
+async def test_the_voice_can_refresh_the_summary_of_a_session(world):  # noqa: F811
     summarizer = Summarizer()
     summarizer.release.set()
     server = bridge(world, summarizer)
     async with Client(server) as c:
-        await c.call_tool("set_active_session", {"session": "billing-ab"})
-        out = (await c.call_tool("refresh_session_summary", {"language": "norsk"})).structured_content
+        out = (
+            await c.call_tool("refresh_session_summary", {"session": "billing-ab", "language": "norsk"})
+        ).structured_content
     assert out["session"] == "billing-ab" and out["summary"].startswith("It made the export faster")
     assert summarizer.calls[0][1] == "norsk"
 

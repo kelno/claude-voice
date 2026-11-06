@@ -94,7 +94,5 @@ async def test_a_session_can_be_named_by_its_number_wherever_a_tool_takes_a_sess
     async with Client(server) as c:
         rows = (await c.call_tool("fleet_recap", {})).structured_content["sessions"]
         wanted = next(r for r in rows if r["number"] == 2)
-        active = (await c.call_tool("set_active_session", {"session": spoken})).structured_content
         read = (await c.call_tool("read_session_output", {"session": spoken})).structured_content
-    assert active["id"] == wanted["id"] and active["number"] == 2
     assert read["session"] == wanted["name"]
