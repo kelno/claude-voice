@@ -160,12 +160,12 @@ async def test_the_event_stream_says_which_session_is_being_talked_to(bridge):
     assert events[1][0] == "active" and events[1][1]["name"] == "billing-ab"
 
 
-@pytest.mark.parametrize("tool", ["read_session_output", "side_question", "digest_session", "search_session_history"])
+@pytest.mark.parametrize("tool", ["read_session_output", "peek_session", "digest_session", "search_session_history"])
 async def test_only_talking_to_a_session_puts_it_in_focus_and_a_look_at_it_does_not(bridge, tool):
     server, app, _, _ = bridge
     args = {"session": "billing-ab"}
-    if tool in ("side_question", "search_session_history"):
-        args["question" if tool == "side_question" else "query"] = "tests"
+    if tool in ("peek_session", "search_session_history"):
+        args["question" if tool == "peek_session" else "query"] = "tests"
     with api.HUB.subscribe() as events:
         async with Client(server) as mcp:
             await mcp.call_tool(tool, args)

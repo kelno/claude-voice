@@ -1,4 +1,4 @@
-"""side_question: a quick answer about a busy session, read from what it wrote, never sent into it."""
+"""peek_session: a quick look at a busy session, read from what it wrote lately, never sent into it."""
 
 import json
 import os
@@ -63,12 +63,12 @@ def bridge(tmp_path, turns, side, deliver, side_chars=40_000):
     )
 
 
-async def test_a_side_question_is_answered_from_the_transcript_and_never_sent_into_the_session(setup):
+async def test_a_peek_is_answered_from_the_transcript_and_never_sent_into_the_session(setup):
     side, deliver = Answerer(), Recorder()
     async with Client(bridge(setup, TURNS, side, deliver)) as c:
         out = (
             await c.call_tool(
-                "side_question", {"session": "billing-ab", "question": "Gikk testene bra?", "language": "norsk"}
+                "peek_session", {"session": "billing-ab", "question": "Gikk testene bra?", "language": "norsk"}
             )
         ).structured_content
     assert out == {"answer": side.answer, "considered_turns": 2, "cut": False}
@@ -80,7 +80,7 @@ async def test_a_side_question_is_answered_from_the_transcript_and_never_sent_in
 async def test_a_side_answer_is_short_enough_to_say_and_ends_on_a_whole_sentence(setup):
     long = " ".join(f"Setning nummer {i} sier noe nyttig." for i in range(30))
     async with Client(bridge(setup, TURNS, Answerer(long), Recorder())) as c:
-        out = (await c.call_tool("side_question", {"session": "billing-ab", "question": "?"})).structured_content
+        out = (await c.call_tool("peek_session", {"session": "billing-ab", "question": "?"})).structured_content
     assert len(out["answer"]) <= 300 and out["answer"].endswith("sier noe nyttig.")
 
 
@@ -88,7 +88,7 @@ async def test_only_the_recent_end_is_read_and_the_answer_says_so(setup):
     turns = [msg("user", f"old {i} " + "x" * 200) for i in range(40)] + TURNS
     side = Answerer()
     async with Client(bridge(setup, turns, side, Recorder(), side_chars=600)) as c:
-        out = (await c.call_tool("side_question", {"session": "billing-ab", "question": "?"})).structured_content
+        out = (await c.call_tool("peek_session", {"session": "billing-ab", "question": "?"})).structured_content
     assert out["cut"] is True and out["considered_turns"] < len(turns)
     assert "test_export_totals" in side.calls[0][0] and "old 0 " not in side.calls[0][0]
 
