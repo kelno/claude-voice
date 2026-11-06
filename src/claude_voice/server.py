@@ -1095,9 +1095,10 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_role(role: str, task: str | None = None) -> dict[str, Any]:
-        """Start a background session for a role, such as "contribute".
-        A contribute session changes claude-voice and opens a pull request; `task` is what the owner
-        wants. Reach it with ask_active_session."""
+        """Start a session for a role, such as "contribute", on Remote Control.
+        A contribute session changes claude-voice in its own clone and opens a pull request to the
+        project, as its settings say; `task` is what the owner wants. Returns the session's name:
+        reach it like any session started here, with message_active_session, then a wait."""
         try:
             return await launch_role(role, task)
         except LookupError as exc:
@@ -1685,14 +1686,13 @@ def build_server(
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
         word, whole up to 12,000 characters (reply_cut past that; max_chars cuts turns), and
         while false, reply is its latest message so far, maybe already the answer, but more may
-        follow. status: "answered", "needs_input" (it waits for
-        its user; prompt is the permission prompt, if one), "still_working" (the wait ran out
+        follow. status: "answered", "needs_input" (it waits for its user; prompt is the
+        permission prompt, if one), "still_working" (the wait ran out
         before its turn ended; continue with wait_for_session(after=next_after)),
         "session_ended" (it exited meanwhile), "not_received" (the message never reached its
         conversation), "moved" (the conversation now lives in moved_to; nothing sent), or
-        "needs_choice" (it waits for its user to pick one of question.options; answer at the
-        screen) - "needs_input" before
-        sending means nothing was sent."""
+        "needs_choice" (it waits for its user to pick one of question.options; the owner picks,
+        on the phone or at the PC) - "needs_input" before sending means nothing was sent."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
