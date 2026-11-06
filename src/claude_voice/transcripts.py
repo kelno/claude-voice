@@ -52,8 +52,9 @@ MODEL_NOT_FOUND_NOTE = (
 def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool = False) -> list[dict[str, Any]]:
     """What a person would read: prompts and Claude's text, with tool names folded in.
 
-    With `origins`, a user turn also says where it came from: "peer" for a message from another
-    session (the relay's own among them), "human" or None for one typed into the session.
+    With `origins`, a user turn also says where it came from, as Claude Code records it: "human"
+    for one typed into the session, "peer" for a message from another session (the relay's own
+    among them), "task-notification" for a background task's completion note, None if unrecorded.
     """
     turns: list[dict[str, Any]] = []
     pending_tools: list[str] = []

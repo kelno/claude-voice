@@ -172,14 +172,16 @@ Waiting
 News
 - A result may start with news: the sessions you started, resumed, messaged
   or read that have messages you haven't read (the owner may have typed to
-  them directly), with their state and where to read from, and any session
-  waiting on a permission prompt. A message counts as read once
-  read_session_output, wait_for_session or ask_active_session returned it.
+  them directly), with their state and where to read from, and any session on
+  the PC waiting on a permission prompt. A message counts as read once
+  read_session_output, wait_for_session or ask_active_session returned it,
+  even cut.
 - News repeats on each result until you read the session, or until a prompt
   is answered: mention it to the owner once, at your next reply, not during a
   silent wait. Read a session before telling the owner what it said, and
-  before writing to it again. A waiting prompt is the owner's: say what it
-  asks (list_active_sessions shows it).
+  before writing to it again. A waiting prompt is the owner's to answer, on
+  the phone or at the PC: say what it asks (list_active_sessions shows it),
+  before a wait if one is coming.
 
 Sessions
 - New work: start_active_session, or attach_conversation to resume an earlier
@@ -680,8 +682,10 @@ def build_server(
     def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> str | None:
         """What this conversation hasn't read yet, in one line; None when nothing is new.
 
-        The sessions it started, resumed, messaged or read, with turns past its marker (the relay's
-        own messages left out), and any session waiting on a permission prompt.
+        The sessions it started, resumed, messaged or read, with messages past its marker: the
+        session's own, and what the owner typed (Claude Code marks it "human"); not messages from
+        other sessions, the relay's included, nor a background task's completion note. And any
+        session waiting on a permission prompt.
         """
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         target = None
@@ -706,7 +710,7 @@ def build_server(
             unread = [
                 t
                 for i, t in enumerate(all_turns(sid, str((d or {}).get("cwd") or mark["cwd"])))
-                if i > mark["seen"] and (t["role"] == "assistant" or t.get("origin") != "peer")
+                if i > mark["seen"] and (t["role"] == "assistant" or t.get("origin") == "human")
             ]
             if d is None:
                 del marks[sid]  # ended: said once, then forgotten, since it can't be read any more
@@ -1638,9 +1642,9 @@ def build_server(
         it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
         words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
         user; prompt or question says what for), "still_working" (the wait ran out; call again),
-        "session_ended" or "moved" (the conversation now lives in moved_to); with reply_final,
-        reply is whole up to 12,000 characters (reply_cut past that), while max_chars cuts each
-        message in turns."""
+        "session_ended" or "moved" (the conversation now lives in moved_to); when reply_final is
+        true, reply is whole up to 12,000 characters (reply_cut past that), while max_chars cuts
+        each message in turns."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
