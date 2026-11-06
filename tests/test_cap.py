@@ -76,10 +76,12 @@ async def test_every_waiting_call_stops_at_the_callers_time_budget(tmp_path, roo
         started = time.monotonic()
         asked = await call(c, "ask_active_session", session="billing-ab", message="?", wait_seconds=120)
         forked = await call(c, "ask_forked_session", session="billing-ab", question="?", wait_seconds=120)
+        read = await call(c, "read_forked_session", fork_id=forked["fork_id"], wait_seconds=120)
         elapsed = time.monotonic() - started
     assert asked["status"] == "still_working"
     assert forked["status"] == "still_working" and forked["fork_id"]
-    assert elapsed < 2 * CAP + 2  # two calls, each within the budget
+    assert read["status"] == "still_working"
+    assert elapsed < 3 * CAP + 2  # three calls, each within the budget
 
 
 @pytest.mark.parametrize("forwarded", [[], [(b"x-forwarded-for", b"203.0.113.7")]])

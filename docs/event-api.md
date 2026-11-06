@@ -66,7 +66,7 @@ ran in the last day, with the session the owner talks to:
   a session, in this API and in the voice tools, also takes its number as `3`,
   `nr 3`, `nummer 3` or `number 3`. It is on the `active` object and the
   `status` event too.
-- `kind`: `terminal`, `background` or `bridge-session`.
+- `kind`: `desktop`, `terminal` or `background`.
 - `state`: one of `working`, `idle`, `answer` (waiting for an answer to a
   question), `approval` (waiting for permission to use a tool), `input`
   (waiting for something else), `moved` or `stopped`; the same set for
@@ -112,7 +112,7 @@ for a session that is not in the list. `DELETE /api/v1/active` clears the choice
 | Call | Answer |
 | --- | --- |
 | `GET /api/v1/sessions/{id}/output?limit=6&after=N` | its latest turns: `{"status", "turns": [{"index", "role", "text", "cut", "length"}], "next_after", "turns_left"}`. With `after`, only turns past that index; read on while `turns_left` is above 0 |
-| `GET /api/v1/sessions/{id}/pending` | what it waits for: `{"waiting": bool, "question": {...} or null, "approvals": [{"id", "number", "tool", "summary"}]}` |
+| `GET /api/v1/sessions/{id}/pending` | what it waits for: `{"waiting": bool, "question": {...} or null, "approvals": []}` (always empty: a session's permission prompts are answered on the phone or at the PC) |
 | `GET /api/v1/sessions/{id}/prs` | open pull requests of its project: `{"prs": [{"number", "title", "url", "draft"}]}`; empty when the folder is not on GitHub. Cached for a minute |
 
 `{id}` is a session's `id` or `name` from the list. An unknown one answers `404`.

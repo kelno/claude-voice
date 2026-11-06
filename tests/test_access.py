@@ -90,8 +90,7 @@ async def test_granting_opens_a_sessions_folder_and_everything_under_it_for_good
         assert granted["folder"] == str(world["elsewhere"].resolve())
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert "access" not in listed["Notes"] and "access" not in listed["Notes, deeper"]
-        started = m.create(str(world["elsewhere"] / "sub"))
-        assert started["project_path"] == str((world["elsewhere"] / "sub").resolve())
+        assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
 
     _, again = server(world)  # a restarted bridge keeps the grant
     async with Client(again) as c:
@@ -125,7 +124,7 @@ async def test_a_denied_folder_stays_closed_inside_the_root(world):
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Keys"]["access"] == "folder_closed"
     with pytest.raises(ValueError):
-        m.create(".ssh")
+        m.resolve_project(".ssh")
 
 
 async def test_revoking_a_grant_closes_the_folder_again(world):

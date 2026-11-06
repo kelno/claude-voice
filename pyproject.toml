@@ -36,8 +36,6 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = ["e2e: needs a real logged-in Claude Code; never run in CI"]
-addopts = "-m 'not e2e'"
 
 [tool.ruff]
 line-length = 120

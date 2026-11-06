@@ -19,8 +19,6 @@ wants to reach the bridge from a phone.
   account. Ask them to do it; never sign in for them.
 - **Approve a public address.** Exposing the bridge to the internet (for
   example `tailscale funnel`) changes their network. Ask first.
-- **Answer approvals.** A pending approval is the person's yes or no. Never
-  approve one yourself.
 
 ## What never to do
 

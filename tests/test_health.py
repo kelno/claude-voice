@@ -20,7 +20,7 @@ async def test_health_reports_the_bridges_state_and_its_calls(tmp_path):
     srv = server(tmp_path, restart={"at": "2026-10-08T10:00:00+00:00", "reason": "auto-restart", "total": 2})
     async with Client(srv) as c:
         await c.call_tool("whats_new", {})
-        await c.call_tool("session_recap", {"session_id": "nope"}, meta={"trace_id": "t9"})
+        await c.call_tool("read_session_output", {"session": "nope"}, meta={"trace_id": "t9"})
         h = (await c.call_tool("health", {})).structured_content
     now = h["now"]
     assert now["up_since"] and now["version"] and now["memory_rss_mb"] > 0

@@ -66,7 +66,7 @@ worse, so `quality.json` at the root records the levels it has reached:
 
 The layers, from the bottom: foundations (`procs`, `config`, `store`, `metrics`,
 `titles`, `access`); parts, each about one thing; parts built from parts (`events`,
-`tree`, `approvals`, `permissions`); the doors in from outside (`api`,
+`tree`, `permissions`); the doors in from outside (`api`,
 `phone_hook`); `server`, where it is all put together; and `cli`. A new module is
 given its layer in `LAYERS`. When code is needed twice, it goes into a function both
 places call, rather than being copied.

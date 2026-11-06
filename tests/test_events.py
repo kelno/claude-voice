@@ -4,10 +4,9 @@ import json
 import os
 
 import pytest
-from fakes import Call, FakeClaude, init, result, say
+from fakes import FakeClaude
 from mcp.client import Client
 
-from claude_voice.approvals import ApprovalBroker
 from claude_voice.events import LiveWatcher
 from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
@@ -103,10 +102,9 @@ def test_baseline_survives_a_restart(store, live, root, tmp_path):
 # -- the MCP tool ------------------------------------------------------------------
 
 
-def server(store, live, root, *scripts, approvals=True):
-    broker = ApprovalBroker(store) if approvals else None
-    m = SessionManager(store, project_root=root, client_factory=FakeClaude(*scripts), approvals=broker)
-    return m, broker, build_server(m, conversations=lambda **k: [], live_dir=live)
+def server(store, live, root):
+    m = SessionManager(store, project_root=root, client_factory=FakeClaude())
+    return build_server(m, conversations=lambda **k: [], live_dir=live)
 
 
 async def call(client, name, **args):
@@ -117,22 +115,17 @@ async def call(client, name, **args):
 
 async def test_whats_new_returns_only_the_delta_since_the_cursor(store, live, root):
     put(live, "term-1", "busy", str(root / "lib"))
-    m, _, srv = server(store, live, root, [init("c"), say("Working."), result("Done: fixed.", "c")])
+    srv = server(store, live, root)
     async with Client(srv) as c:
         first = await call(c, "whats_new")
         assert first["events"] == []
 
-        s = m.create("app", "bugfix")
-        await call(c, "send_task", session_id=s["id"], prompt="fix it")
-        await m.wait(s["id"])
         put(live, "term-1", "idle", str(root / "lib"))
+        put(live, "app-1", "waiting", str(root / "app"))
 
         second = await call(c, "whats_new", cursor=first["cursor"])
         got = kinds(second["events"])
-        assert ("bugfix", "finished") in got
-        assert ("term-1", "finished") in got
-        finished = next(e for e in second["events"] if e["session"] == "bugfix")
-        assert finished["text"] == "bugfix finished. Done: fixed."
+        assert ("app-1", "started") in got and ("term-1", "finished") in got
         term = next(e for e in second["events"] if e["session"] == "term-1")
         assert term["text"] == "term-1 has finished and is waiting."
 
@@ -140,46 +133,13 @@ async def test_whats_new_returns_only_the_delta_since_the_cursor(store, live, ro
         assert third["events"] == []
 
 
-async def test_whats_new_flags_approvals_and_errors(store, live, root):
-    from claude_agent_sdk import ToolPermissionContext
-
-    async def ask(options):
-        await options.can_use_tool("Bash", {"command": "make"}, ToolPermissionContext())
-
-    m, broker, srv = server(store, live, root, [Call(ask)])
-    async with Client(srv) as c:
-        start = await call(c, "whats_new")
-        s = m.create("app", "build")
-        await call(c, "send_task", session_id=s["id"], prompt="build")
-        for _ in range(200):
-            if broker.pending():
-                break
-            import asyncio
-
-            await asyncio.sleep(0.01)
-        out = await call(c, "whats_new", cursor=start["cursor"])
-        needs = next(e for e in out["events"] if e["kind"] == "needs_approval")
-        assert needs["session"] == "build"
-        assert needs["text"] == "build wants to run Bash: make. Yes or no?"
-        assert needs["approval_id"]
-        assert needs["tool"] == "Bash"
-        assert needs["input"] == {"command": "make"}
-        await call(c, "cancel", session_id=s["id"])
-
-
 async def test_a_bad_cursor_starts_over(store, live, root):
-    _, _, srv = server(store, live, root)
+    put(live, "term-1", "busy", str(root / "lib"))
+    srv = server(store, live, root)
     async with Client(srv) as c:
-        out = await call(c, "whats_new", cursor="garbage")
-    assert "cursor" in out
-
-
-def test_spoken_texts_never_carry_an_approval_number(store, live, root):
-    from claude_voice.events import bridge_events
-
-    s = store.create_session(str(root / "app"), label="build")
-    store.add_event(s["id"], "approval_requested", {"id": "7", "tool": "Bash", "input": {"command": "ls"}})
-    store.add_event(s["id"], "approval_expired", {"id": "7"})
-    texts = [e["text"] for e in bridge_events(store, 0)]
-    assert texts == ["build wants to run Bash: ls. Yes or no?", "An approval for build expired and was refused."]
-    assert not any("7" in text for text in texts)
+        first = await call(c, "whats_new")
+        put(live, "term-1", "idle", str(root / "lib"))
+        for bad in ("garbage", "b3.f5"):  # an older bridge's cursor too
+            out = await call(c, "whats_new", cursor=bad)
+            assert out["events"] == []
+            assert int(out["cursor"]) > int(first["cursor"])

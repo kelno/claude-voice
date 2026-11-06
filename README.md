@@ -24,7 +24,8 @@ voice assistant on the phone (Claude app, voice mode)
 public HTTPS address (e.g. Tailscale Funnel)
    ▼
 claude-voice on your computer
-   ├─ sessions it runs itself ──► Claude Agent SDK ──► Claude Code
+   ├─ sessions it starts ──► Claude Code in the background, on Remote Control
+   ├─ side questions ──► Claude Agent SDK ──► a read-only fork of a session
    └─ sessions open elsewhere ──► Claude Code's own session messaging and transcripts
 ```
 
@@ -92,18 +93,13 @@ the bridge says which are missing, with the exact fix, through its
 | --- | --- |
 | `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
-| `send_task` | give a resumed conversation a task; it answers at once and works in the background |
-| `session_recap` | where one session stands, short enough to read aloud |
-| `whats_new` | only what happened since you last asked: finished, failed, waiting for you |
+| `whats_new` | only what happened since you last asked: finished, waiting for you, started, ended |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `get_active_session`, `set_active_session` | the session the owner talks to, chosen on the companion page or by voice |
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
 | `update_bridge` | update claude-voice: pull, install, test, restart, and roll back if anything fails |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
-| `list_pending_approvals`, `approve`, `deny` | answer Claude's requests to edit files, run commands and so on |
-| `cancel`, `close_session` | stop a turn, retire a session |
-| `list_sessions` | the sessions this bridge started, idle ones included, and every one running on the computer now |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a listed session's folder to the bridge for good, with your approval in the app; close it again |
@@ -156,23 +152,21 @@ and `/api/v1/doctor` say whether such a port is there.
 
 ## How it behaves
 
-- **One bridge session is one Claude conversation.**
-  - Each prompt resumes that conversation, so it survives restarts of the bridge.
-  - A session that was in the middle of a turn when the bridge stopped is
-    marked `interrupted`.
+- **Every session is an ordinary Claude Code session.** New work and resumed
+  conversations run in the background on Remote Control, so you can open them on
+  the phone or at the PC, see what happened and take over. They outlive restarts
+  of the bridge.
 - **Your subscription, not the API.** The bridge refuses to start while
   `ANTHROPIC_API_KEY` is set, because Claude would then be billed per token.
   Set `CLAUDE_VOICE_ALLOW_API_KEY=1` if that is what you want.
 - **Your own Claude Code settings apply**, including your permission rules.
   Nothing is pre-approved beyond them. A conversation the bridge resumes keeps
   its own permission mode, and the folders added to it, as recorded by the
-  desktop app or in its transcript; a new one gets `CLAUDE_VOICE_PERMISSION_MODE`.
-- **Risky actions wait for a yes.**
-  - Anything Claude Code would normally ask you about becomes a pending approval
-    with a short number you can say aloud, such as "approval 3: Bash,
-    `rm -rf build`".
-  - Reading files needs no approval.
-  - A request nobody answers is refused after ten minutes.
+  desktop app or in its transcript; one with no recorded mode gets
+  `CLAUDE_VOICE_PERMISSION_MODE`. A new session starts as Claude Code starts any.
+- **Risky actions wait for your yes.** Anything Claude Code would normally ask
+  you about is asked of you, on the phone or in the desktop app, where you answer
+  it; the assistant can tell you a session is waiting, but cannot answer for you.
 - **A session open in a terminal is never taken over.**
   - Messages are delivered into it, the way one Claude Code session messages
     another.
@@ -197,9 +191,9 @@ and `/api/v1/doctor` say whether such a port is there.
 
 > **Know the trust boundary.** Signing in proves that the caller is *your*
 > assistant. It cannot prove that *you* said yes to a particular action. The
-> assistant is told to approve only on a clear spoken yes, but a misbehaving one
-> could approve on its own. Keep your Claude Code permission rules sensible, and
-> guard the login secret like an SSH key.
+> assistant is told to act only on what you asked for, but a misbehaving one
+> could send a session work on its own. Keep your Claude Code permission rules
+> sensible, and guard the login secret like an SSH key.
 
 ## Settings
 
@@ -385,16 +379,8 @@ the rules it follows, which apply to any change.
 ## Develop
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and how a change is made. In
-short:
-- Tests are written first, and run against a scripted stand-in for Claude, so
-  they need no account.
-- A separate set runs against a real signed-in Claude Code. It uses a little of
-  the subscription and never runs in CI:
-
-<!-- not run: needs a signed-in Claude Code and spends subscription quota -->
-```
-uv run pytest -m e2e
-```
+short, tests are written first, and run against a scripted stand-in for Claude,
+so they need no account.
 
 ## Plugins: other local tools for the voice
 

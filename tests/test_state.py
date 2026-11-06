@@ -55,16 +55,6 @@ async def test_every_running_session_is_in_one_named_state(world, status, entrie
     assert row["status"] == status  # the raw status stays as it was
 
 
-@pytest.mark.parametrize(("stored", "state"), [("running", "working"), ("idle", "idle"), ("error", "stopped")])
-async def test_a_bridge_session_is_named_in_the_same_states(world, stored, state):  # noqa: F811
-    clock = Clock()
-    m, server = bridge(world, clock)
-    s = m.store.create_session(str(world / "home" / "billing"), label="fix")
-    m.store.update_session(s["id"], status=stored)
-    row = (await states(server))["fix"]
-    assert row["state"] == state
-
-
 async def test_the_time_in_a_state_counts_from_its_last_change_and_each_change_is_announced(world):  # noqa: F811
     clock = Clock()
     running(world, "billing-ab", "billing", "s1", status="busy")

@@ -5,7 +5,7 @@ import os
 
 import pytest
 from claude_agent_sdk import project_key_for_directory
-from fakes import FakeClaude, result
+from fakes import FakeClaude
 from mcp.client import Client
 
 from claude_voice.server import build_server
@@ -96,26 +96,21 @@ async def test_fleet_recap_names_a_desktop_app_session_desktop(world):
     assert {r["name"]: r["kind"] for r in fleet["sessions"]} == {"billing-1": "desktop"}
 
 
-async def test_one_call_covers_running_and_bridge_sessions(world):
+async def test_one_call_covers_every_running_session(world):
     running(world, "billing-1", "billing", "s1", status="busy")
     running(world, "export-1", "export", "s2", status="waiting", pid=PID)
     transcript(world, "billing", "s1", [says("Fixing the export totals. More detail.")])
     transcript(world, "export", "s2", [asks("Merge it now?", "Yes", "No")])
-    store = Store(world / "b.db")
-    m = SessionManager(store, project_root=world / "home", client_factory=FakeClaude([result("Report done.", "c")]))
+    m = SessionManager(Store(world / "b.db"), project_root=world / "home", client_factory=FakeClaude())
     srv = build_server(m, conversations=lambda **k: [], live_dir=world / "live", projects_dir=world / "projects")
     async with Client(srv) as c:
-        s = m.create("billing", "report")
-        await c.call_tool("send_task", {"session_id": s["id"], "prompt": "go"})
-        await m.wait(s["id"])
         fleet = (await c.call_tool("fleet_recap", {})).structured_content
     rows = {r["name"]: r for r in fleet["sessions"]}
     assert rows["billing-1"]["doing"] == "Fixing the export totals."
     assert rows["billing-1"]["kind"] == "terminal" and rows["billing-1"]["status"] == "busy"
     assert rows["export-1"]["doing"] == "waiting on a choice: Merge it now?"
     assert rows["export-1"]["question"]["options"] == ["Yes", "No"]
-    assert rows["report"]["kind"] == "bridge-session"
-    assert rows["report"]["doing"] == "Report done."
+    assert set(rows) == {"billing-1", "export-1"}
     assert set(rows["billing-1"]) >= {"id", "name", "kind", "project", "status", "doing", "minutes_since_update"}
 
 

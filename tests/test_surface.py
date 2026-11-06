@@ -108,7 +108,7 @@ async def test_tools_covered_by_others_are_gone_and_the_rest_take_few_parameters
     async with Client(world[2]) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
     assert "recent_activity" not in tools and "get_messages" not in tools
-    assert set(tools["list_sessions"].input_schema.get("properties", {})) == set()
+    assert set(tools["list_active_sessions"].input_schema.get("properties", {})) == set()
     assert set(tools["search_session_history"].input_schema["properties"]) == {"session", "query", "max_chars"}
     assert set(tools["list_projects"].input_schema["properties"]) == {"query"}
     long = [n for n, t in tools.items() if len((t.description or "").split(". ")) > 3]

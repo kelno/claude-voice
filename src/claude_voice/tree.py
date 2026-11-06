@@ -1,9 +1,8 @@
 """The tree of sessions for a voice client to choose from, and who talks to whom.
 
-Nodes are the Claude Code sessions running on the computer, the sessions the
-bridge runs (under the bridge, or under the session they copy), and helper
-agents still at work in the last hour (under their session). Edges, `talks_to`, are the messages one session
-sent another in the last day, read from the transcripts: a SendMessage is an
+Nodes are the bridge, the Claude Code sessions running on the computer, and
+helper agents still at work in the last hour (under their session). Edges,
+`talks_to`, are the messages one session sent another in the last day, read from the transcripts: a SendMessage is an
 edge from its sender, a received cross-session message an edge to its reader.
 Transcripts grow to tens of megabytes, so each is read once and then only from
 where reading stopped.
@@ -23,7 +22,6 @@ from typing import Any
 from claude_agent_sdk import list_subagents, project_key_for_directory
 
 from . import procs
-from .store import Store
 from .transcripts import PROJECTS_DIR
 
 BRIDGE_NODE = "claude-voice"
@@ -107,7 +105,6 @@ class _Transcript:
 class SessionTree:
     def __init__(
         self,
-        store: Store,
         live_dir: Path,
         root: Path,
         projects_dir: Path = PROJECTS_DIR,
@@ -117,7 +114,6 @@ class SessionTree:
         project_of: Callable[[str | None], str | None] | None = None,
     ) -> None:
         self.project_of = project_of  # the bridge's own rule, granted folders included
-        self.store = store
         self.live_dir = live_dir
         self.root = Path(root).resolve()
         self.projects_dir = projects_dir
@@ -221,19 +217,6 @@ class SessionTree:
                 }
 
         cutoff = self.clock() - WINDOW_SECONDS
-        for s in self.store.list_sessions(limit=200):
-            if s["status"] == "closed" or s["updated_at"] < cutoff:
-                continue
-            parent = s["claude_session_id"] if s["claude_session_id"] in nodes else BRIDGE_NODE
-            nodes[s["id"]] = {
-                "id": s["id"],
-                "name": s["label"] or Path(s["project_path"]).name,
-                "kind": "bridge-session",
-                "project": self._project(s["project_path"]),
-                "status": s["status"],
-                "parent_id": parent,
-                "talks_to": set(),
-            }
 
         courier_pids, courier_names = self._couriers
 

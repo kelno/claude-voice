@@ -9,14 +9,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - An MCP server that starts, follows, resumes and stops Claude Code sessions
-  through the Claude Agent SDK, on the owner's subscription.
+  as background sessions on the owner's computer, on the owner's subscription.
 - Sign-in with OAuth for phone apps, and the login secret as a bearer token for
   local tools.
-- Risky actions wait for a spoken approval and are refused after ten minutes.
 - Sessions open elsewhere can be listed, messaged, read and searched.
-- `create_session` is gone: new work starts with `start_active_session`, whose
-  sessions the owner can also open on the phone and at the PC. They start in the
-  background on Remote Control unless one start asks for a terminal window.
+- The tools for sessions run inside the bridge (`create_session`, `send_task`,
+  `session_recap`, `cancel`, `close_session`, `list_sessions` and the approvals)
+  are gone: new and resumed work runs as background sessions the owner can open
+  on the phone and at the PC, and answers permission prompts there. They start
+  in the background on Remote Control unless one start asks for a terminal window.
 - A background session waiting on a permission prompt shows what it asks.
 - `attach_conversation` resumes an earlier conversation as a background session,
   on Remote Control and in its own permission mode and folders.

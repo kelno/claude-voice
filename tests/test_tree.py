@@ -77,7 +77,6 @@ class World:
 
     def tree(self):
         return SessionTree(
-            self.store,
             self.live,
             self.root,
             projects_dir=self.projects,
@@ -123,24 +122,6 @@ def test_sessions_outside_the_root_are_left_out(world, tmp_path):
         json.dumps({"pid": PID, "sessionId": "sid-x", "cwd": str(tmp_path), "name": "x", "kind": "interactive"})
     )
     assert "sid-x" not in by_id(world.tree().build())
-
-
-def test_sessions_the_bridge_runs_hang_under_the_bridge_or_the_session_they_copy(world):
-    sid, cwd = world.session("app-1")
-    own = world.store.create_session(str(cwd), label="fix")
-    copy = world.store.create_session(str(cwd), label="copy")
-    world.store.update_session(copy["id"], claude_session_id=sid)
-    nodes = by_id(world.tree().build())
-    assert nodes[own["id"]]["kind"] == "bridge-session"
-    assert nodes[own["id"]]["parent_id"] == BRIDGE_NODE
-    assert nodes[copy["id"]]["parent_id"] == sid
-
-
-def test_closed_bridge_sessions_are_left_out(world):
-    _, cwd = world.session("app-1")
-    s = world.store.create_session(str(cwd), label="old")
-    world.store.update_session(s["id"], status="closed")
-    assert s["id"] not in by_id(world.tree().build())
 
 
 def test_who_talks_to_whom_comes_from_the_transcripts(world):

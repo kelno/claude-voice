@@ -27,7 +27,7 @@ def test_the_manual_states_its_central_rules():
         "the desk session says",  # agents stay distinct
         "message_active_session",  # send when the next step doesn't need the answer
         "ask_active_session",
-        "wait_for_session",
+        "list_active_sessions",  # which sessions there are
         "peek_session",
         "digest_session",
         "ask_forked_session",
@@ -36,7 +36,6 @@ def test_the_manual_states_its_central_rules():
         "keep waiting",  # asked to wait, the relay reads again rather than handing back
         "heads-up",  # and says so before any wait
         "hand_to_desktop",
-        "only through you",  # a bridge-run session's prompts reach the owner nowhere else
         "say which tool",  # the voice approval card shows no tool details
         "settings → connectors",  # where a missing new tool gets refreshed
     ):
