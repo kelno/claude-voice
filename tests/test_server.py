@@ -489,3 +489,17 @@ def test_the_log_is_kept_in_a_file_next_to_the_database(tmp_path):
         handler.close()
     text = (tmp_path / "state" / "bridge.log").read_text(encoding="utf-8")
     assert "claude_voice.oauth: oauth refresh ok for client abcdef12" in text
+
+
+async def test_a_switched_off_upstream_tool_is_offered_to_no_one_but_keeps_its_place(tmp_path, root):
+    # The fork keeps the code of upstream tools the owner switched off, close to upstream's, so a
+    # resync has less to replay; only their registration is skipped.
+    from claude_voice import titles
+    from claude_voice.server import SWITCHED_OFF
+
+    _, server = make(tmp_path, root, FakeClaude())
+    async with Client(server) as c:
+        names = {t.name for t in (await c.list_tools()).tools}
+    assert SWITCHED_OFF == {"get_active_session", "set_active_session", "refresh_session_summary"}
+    assert not SWITCHED_OFF & names
+    assert all(titles.load().get(name) for name in SWITCHED_OFF)

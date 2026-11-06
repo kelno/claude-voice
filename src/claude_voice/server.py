@@ -86,6 +86,9 @@ LATE_NOTE = (
 # The tools that wait on a session; another call on that session while one runs is told so.
 WAITING_TOOLS = ("wait_for_session", "ask_active_session")
 PENDING_NOTE = "A wait on this session is still running; its result arrives by itself."
+# Upstream tools the owner switched off in the fork: their code stays, as close to upstream's as
+# it can be, but no client is offered them (UPSTREAM.md, resync choice 7).
+SWITCHED_OFF = frozenset({"get_active_session", "set_active_session", "refresh_session_summary"})
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
@@ -532,6 +535,7 @@ def build_server(
     doctor_host: doctor.Host | None = None,
     bridge_port: int = 8811,
     bridge_host: str = "127.0.0.1",
+    switched_off: frozenset[str] = SWITCHED_OFF,
     statusline_dir: Path = usage.STATUSLINE_DIR,
     update_log: Path = updater.LOG,
     launch_update: Callable[[Path, Path], None] | None = None,
@@ -756,7 +760,13 @@ def build_server(
         middleware=[log_requests, result_notes(news_line)],
         lifespan=lifespan,
     )
-    tool = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
+    titled = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
+
+    def tool(**kwargs: Any) -> Callable[[Callable[..., Any]], Any]:
+        """Register a tool, unless the fork switched it off: then its code stays, offered to no one."""
+        register = titled(**kwargs)
+        return lambda fn: fn if fn.__name__ in switched_off else register(fn)
+
     if oauth is not None:
         mcp.custom_route("/oauth/consent", methods=["GET"])(oauth.consent_page)
         mcp.custom_route("/oauth/consent", methods=["POST"])(oauth.consent_submit)
@@ -2091,6 +2101,23 @@ def build_server(
         api.HUB.publish("active", None)
         log.info("active -> none by page")
 
+    @tool(annotations=READ_ONLY)
+    def get_active_session() -> dict[str, Any]:
+        """The session the owner chose to talk to: send there by default.
+        Chosen on the companion page or by voice.
+        Null fields when none is chosen."""
+        return store.get_setting("active_session") or {"id": None, "name": None, "set_by": None, "set_at": None}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def set_active_session(session: str) -> dict[str, Any]:
+        """Make `session` the one the owner talks to, shown on the companion page.
+        `session` is a name or id from fleet_recap.
+        Call it when the owner switches session by voice."""
+        try:
+            return set_active(session, "voice")
+        except LookupError as exc:
+            raise ToolError(str(exc)) from None
+
     pr_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
     async def prs_for(folder: str) -> list[dict[str, Any]]:
@@ -2139,6 +2166,25 @@ def build_server(
     async def request_summary(session: str, language: str | None) -> dict[str, Any]:
         live, _ = summary_task(session, language)
         return {"session": str(live.get("sessionId")), "state": "generating"}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def refresh_session_summary(session: str | None = None, language: str | None = None) -> dict[str, Any]:
+        """Make a fresh summary of a running session, read by a small model.
+        The chosen one if `session` is left out, in `language` if given (e.g. "norsk"); the companion
+        app's session page shows it too. Takes about ten seconds."""
+        if not session:
+            session = str((store.get_setting("active_session") or {}).get("id") or "")
+            if not session:
+                raise ToolError("No session is chosen; name one.")
+        try:
+            live, task = summary_task(session, language)
+        except LookupError as exc:
+            raise ToolError(str(exc)) from None
+        summary = await task
+        sid = str(live.get("sessionId"))
+        if summary is None:
+            raise ToolError(f"The summary failed: {summaries.state(sid)['summary_error']}")
+        return {"session": live.get("name"), "summary": summary, "summary_at": summaries.state(sid)["summary_at"]}
 
     def api_output(session: str, limit: int, after: int | None) -> dict[str, Any]:
         live = lookup(session)

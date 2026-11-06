@@ -116,7 +116,7 @@ class Summarizer:
         return "It made the export faster and opened pull request 12."
 
 
-def bridge(world, summarizer):  # noqa: F811
+def bridge(world, summarizer, **options):  # noqa: F811
     running(world, "billing-ab", "billing", "s1", status="idle")
     transcript(world, "billing", "s1", ENTRIES)
     store = Store(world / "b.db")
@@ -128,6 +128,7 @@ def bridge(world, summarizer):  # noqa: F811
         live_dir=world / "live",
         projects_dir=world / "projects",
         summarize=summarizer,
+        **options,
     )
 
 
@@ -185,6 +186,20 @@ async def test_an_unknown_session_has_no_page(world):  # noqa: F811
     async with client(build_app(bridge(world, Summarizer()))) as c:
         missing = await c.get("/api/v1/sessions/nobody/detail", headers=BEARER)
     assert missing.status_code == 404
+
+
+async def test_switched_back_on_the_voice_chooses_a_session_and_refreshes_its_summary(world):  # noqa: F811
+    # Upstream's chosen session and summary tool, off in the fork, still work when switched on.
+    summarizer = Summarizer()
+    summarizer.release.set()
+    server = bridge(world, summarizer, switched_off=frozenset())
+    async with Client(server) as c:
+        await c.call_tool("set_active_session", {"session": "billing-ab"})
+        chosen = (await c.call_tool("get_active_session", {})).structured_content
+        out = (await c.call_tool("refresh_session_summary", {"language": "norsk"})).structured_content
+    assert chosen["name"] == "billing-ab"
+    assert out["session"] == "billing-ab" and out["summary"].startswith("It made the export faster")
+    assert summarizer.calls[0][1] == "norsk"
 
 
 async def test_the_relay_has_one_tool_to_sum_up_a_session_digest_session(world):  # noqa: F811
