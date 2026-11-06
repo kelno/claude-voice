@@ -56,11 +56,12 @@ class SessionManager:
         clock: Callable[[], float] = time.time,
         approvals: ApprovalBroker | None = None,
         denied: Iterable[Path] = (),
+        exempt: Iterable[Path] = (),
     ) -> None:
         self.store = store
         self.root = Path(project_root).expanduser().resolve()
         # The bridge itself passes access.default_denied(); tests choose their own.
-        self.access = Access(store, self.root, denied)
+        self.access = Access(store, self.root, denied, exempt)
         self.client_factory = client_factory
         self.clock = clock
         self.approvals = approvals
@@ -76,7 +77,7 @@ class SessionManager:
             path = self.root / path
         path = path.resolve()
         # RULE: a project outside the root is refused
-        if self.access.state(path) != "allowed":
+        if self.access.state(path) != "open":
             raise ValueError(f"project must be under {self.root} or a folder opened with request_access")
         if not path.is_dir():
             raise ValueError(f"not a directory: {path}")

@@ -79,10 +79,10 @@ To see what is running on the machine (including terminal sessions), call
 list_active_sessions; to continue one, attach_conversation with its id.
 When the user asks which sessions there are, give every one you can see, from
 every source: list_sessions returns both the bridge's own sessions and the running
-ones, those needing approval included. Leave none out, side chats only marked.
-A session listed with access "needs_approval" can't be read or messaged yet: if
+ones, those whose folder isn't open included. Leave none out, side chats only marked.
+A session listed with access "folder_not_open" can't be read or messaged yet: if
 the user wants it, call request_access; they approve it in their app. One listed
-as "blocked" can never be opened.
+as "folder_closed" can never be opened; the refusal names the closed folder.
 A session marked side_chat is a quick aside the user opened from another session
 in the desktop app (its name starts with "btw:"), not where a project's work
 happens: do not send tasks or questions there unless the user names it.
@@ -1016,9 +1016,11 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     def list_active_sessions() -> dict[str, Any]:
-        """Claude Code sessions running on this machine right now, with whether each is
-        busy or waiting for input. kind: "interactive" is a terminal window the user
-        types in; "bg" is a background or remote-controlled session."""
+        """Claude Code sessions running on this machine now, busy or waiting; kind
+        "interactive" is one the user types in, "bg" a background one. A session outside
+        the open folders has access "folder_not_open" (open it with request_access) or
+        "folder_closed" (never opened), and only its name, folder and status; access is
+        absent when the session is open to the bridge."""
         return {"sessions": running()}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
@@ -1050,7 +1052,7 @@ def build_server(
                         "folder": str(Path(str(d.get("cwd"))).resolve()),
                         "status": d.get("status"),
                         "kind": d.get("kind"),
-                        "access": manager.access.state(str(d.get("cwd"))),
+                        "access": f"folder_{manager.access.state(str(d.get('cwd')))}",
                         "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
                     }
                 )
@@ -1151,9 +1153,13 @@ def build_server(
     def find_live(session: str) -> dict[str, Any]:
         d = find_any_live(session)
         if under_root(d.get("cwd")) is None:
-            if manager.access.state(str(d.get("cwd"))) == "blocked":
-                raise ToolError(f"{session!r} is in a folder the bridge never opens")
-            raise ToolError(f"{session!r} is in a folder not open to the bridge; ask for it with request_access")
+            cwd = str(d.get("cwd"))
+            if manager.access.state(cwd) == "closed":
+                raise ToolError(f"{session!r}: {manager.access.explain(cwd)}")
+            raise ToolError(
+                f"{session!r} is in {Path(cwd).resolve()}, a folder not open to the bridge;"
+                " open it with request_access (the owner approves it in their app)"
+            )
         return d
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
@@ -1793,7 +1799,11 @@ def serve_forever(cfg: Config) -> None:
     transcripts.configure_courier(cfg.courier_name)
     store = Store(cfg.db)
     manager = SessionManager(
-        store, project_root=cfg.root, approvals=ApprovalBroker(store), denied=access.default_denied()
+        store,
+        project_root=cfg.root,
+        approvals=ApprovalBroker(store),
+        denied=access.default_denied(),
+        exempt=access.default_exempt(),
     )
     if cfg.transport == "stdio":
         build_server(manager).run("stdio")
