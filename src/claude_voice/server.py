@@ -88,6 +88,9 @@ LATE_NOTE = (
 # The tools that wait on a session; another call on that session while one runs is told so.
 WAITING_TOOLS = ("wait_for_session", "ask_active_session")
 PENDING_NOTE = "A wait on this session is still running; its result arrives by itself."
+# The header naming a call's MCP session, and how many sessions are remembered as having the manual.
+MCP_SESSION_HEADER = "mcp-session-id"
+GUIDED_KEPT = 1000
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -110,7 +113,9 @@ LOG_KEPT = 3
 # tool's first line says what it is for, and the manual holds only what spans tools: roles and
 # the central rules. Agents are assumed to read the manual; one that doesn't is a bug to fix
 # here (the guide tool's first line, a clearer rule), not a case to design around, so the tool
-# descriptions never repeat the manual's rules as reminders.
+# descriptions never repeat the manual's rules as reminders. The app's agents load tools by search
+# and may never call guide, so the manual also comes with the first result of any MCP session that
+# hasn't read it (result_notes).
 INSTRUCTIONS = """\
 Read this first, before any other call: how the claude-voice bridge is used.
 
@@ -364,14 +369,27 @@ async def log_requests(ctx, call_next):
     return result
 
 
+def mcp_session(ctx: Any) -> str | None:
+    """The MCP session a call belongs to: one per conversation in the Claude app, which opens
+    each with an initialize handshake. None for a client without one, such as a stateless exchange."""
+    headers = getattr(getattr(ctx, "request", None), "headers", None)
+    return headers.get(MCP_SESSION_HEADER) if headers is not None else None
+
+
 def result_notes() -> Any:
-    """Middleware adding the notes about late results: LATE_NOTE to a slow call's result, and
-    PENDING_NOTE to a call on a session that a wait is still running on."""
+    """Middleware adding notes to results: the manual to the first result of an MCP session that
+    hasn't called guide, LATE_NOTE to a slow call's result, and PENDING_NOTE to a call on a
+    session that a wait is still running on."""
     waits: dict[str, int] = {}
+    # MCP sessions that read the manual or were handed it; the newest kept, oldest dropped.
+    guided: dict[str, None] = {}
 
     async def note(ctx, call_next):
         params = ctx.params if isinstance(ctx.params, dict) else {}
         args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+        connection = mcp_session(ctx) if ctx.method == "tools/call" else None
+        # A first call to guide itself gets the same manual under the same key: nothing changes.
+        unguided = bool(connection) and connection not in guided
         session = str(args.get("session") or "") if ctx.method == "tools/call" else ""
         pending = bool(session) and waits.get(session, 0) > 0
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
@@ -389,13 +407,20 @@ def result_notes() -> Any:
         if not isinstance(structured, dict):
             return result
         notes = {}
+        manual = {}
+        if unguided:
+            # Handed over first in the result, so it is read before the rest.
+            manual["guide"] = INSTRUCTIONS
+            guided[str(connection)] = None
+            while len(guided) > GUIDED_KEPT:
+                del guided[next(iter(guided))]
         if pending:
             notes["pending"] = PENDING_NOTE
         if time.monotonic() - started >= LATE_SECONDS:
             notes["late"] = LATE_NOTE
-        if not notes:
+        if not notes and not manual:
             return result
-        noted = {**structured, **notes}
+        noted = {**manual, **structured, **notes}
         text = json.dumps(noted, indent=2, ensure_ascii=False, default=str)
         return {**result, "structuredContent": noted, "content": [{"type": "text", "text": text}]}
 

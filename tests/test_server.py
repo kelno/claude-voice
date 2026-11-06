@@ -124,6 +124,38 @@ async def test_http_serves_mcp_with_the_right_token(http_server):
     assert [p["name"] for p in out["projects"]] == ["app"]
 
 
+async def test_a_connection_that_skipped_the_guide_gets_it_with_its_first_result(http_server):
+    # Voice relays load the tools they need by search and may never call guide; the Claude app
+    # opens one MCP session per conversation (an initialize handshake), so the bridge hands the
+    # manual over itself, once, on the first result of a session that hasn't read it.
+    from claude_voice.server import INSTRUCTIONS
+
+    http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
+    async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http), mode="legacy") as c:
+        first = await call(c, "list_projects", query="ap")
+        second = await call(c, "list_projects", query="ap")
+    assert first["guide"] == INSTRUCTIONS
+    assert [p["name"] for p in first["projects"]] == ["app"]
+    assert "guide" not in second
+
+
+async def test_a_connection_that_read_the_guide_does_not_get_it_again(http_server):
+    http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
+    async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http), mode="legacy") as c:
+        await call(c, "guide")
+        after = await call(c, "list_projects", query="ap")
+    assert "guide" not in after
+
+
+async def test_a_call_with_no_session_to_remember_never_carries_the_guide(tmp_path, root):
+    # A client without an MCP session (a stateless exchange) can't be told apart from the next
+    # one, so it would get the manual on every call: it gets none.
+    _, server = make(tmp_path, root, FakeClaude())
+    async with Client(server) as c:
+        out = await call(c, "list_projects", query="ap")
+    assert "guide" not in out
+
+
 async def test_health_check_needs_no_token(http_server):
     async with httpx.AsyncClient() as h:
         r = await h.get(f"{http_server}/healthz")
