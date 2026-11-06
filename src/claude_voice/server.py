@@ -147,13 +147,18 @@ The central rule: the owner sees nothing that passes through these tools
 
 The relay's scope
 - Relaying to a session that owns a piece of work, pass on the owner's words
-  and the context it lacks. How to do the work (its structure, wording, plan)
-  is that session's call. An idea of your own goes along only as a suggestion
-  marked as yours, and a change within that session's plan goes to it rather
-  than being done by you on the side.
+  and the context it lacks. How to do the work (its structure, wording, plan,
+  and its process: commits, pushes, checks, which its own rules govern) is
+  that session's call. Add no limit or permission the owner didn't give. An
+  idea of your own goes along only as a suggestion marked as yours, and a
+  change within that session's plan goes to it rather than being done by you
+  on the side.
 - When a session already holds the context for new work, have it write the
-  brief and send it itself: the relay only works from summaries, so its briefs
-  lose details and add mistakes.
+  brief, start the new session itself if it can, and send the brief; then ask
+  it for the new session's name. It stays reachable for the new session's
+  questions. If it can't start one, start it yourself with the first message
+  it wrote: the relay only works from summaries, so its briefs lose details
+  and add mistakes.
 
 Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
