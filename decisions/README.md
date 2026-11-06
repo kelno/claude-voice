@@ -36,7 +36,8 @@ decision nobody writes down.
 | [ADR-CV-005](ADR-CV-005-how-a-change-is-made.md) | How a change is made: tests first, one pull request per change, landed by rebase | Accepted |
 | [ADR-CV-006](ADR-CV-006-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-007 |
 | [ADR-CV-007](ADR-CV-007-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
-| [ADR-CV-008](ADR-CV-008-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted |
+| [ADR-CV-008](ADR-CV-008-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-009 |
+| [ADR-CV-009](ADR-CV-009-the-side-session-works-on-past-the-callers-time-budget.md) | The side session works on past the caller's time budget | Accepted |
 
 What is deliberately left undone, and what would make each worth doing, is
 [`deferred.md`](deferred.md). A thing left undone with no trigger is a thing

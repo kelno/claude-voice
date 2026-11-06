@@ -72,13 +72,12 @@ async def test_a_question_goes_to_a_fork_of_the_session_and_its_answer_comes_bac
     assert fork.SIDE_SESSION_NOTE in prompt and "Where is the export?" in prompt
 
 
-async def test_a_side_session_that_takes_too_long_says_so(world):
+async def test_a_side_session_that_works_past_its_lifetime_is_stopped_and_says_so():
+    # The bridge gives a fork FORK_LIFETIME_SECONDS in the background; here a short one.
     claude = FakeClaude([init("fork-1"), Pause()])
-    async with Client(bridge(world, claude)) as c:
-        out = (
-            await c.call_tool("ask_forked_session", {"session": "billing-ab", "question": "?", "wait_seconds": 0.1})
-        ).structured_content
+    out = await fork.ask(claude, "desk-1", "/x", "?", 0.1)
     assert out["status"] == "timed_out"
+    assert claude.clients[0].interrupted.is_set()
 
 
 class TurnByTurn:

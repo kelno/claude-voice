@@ -70,6 +70,9 @@ RELAYED_MESSAGE_NOTE = (
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
+# How long a side session may work in the background, and how long its answer is kept.
+FORK_LIFETIME_SECONDS = 300.0
+FORK_KEPT_SECONDS = 3600.0
 # Claude Code keeps one JSON file per running session here.
 LIVE_DIR = Path("~/.claude/sessions").expanduser()
 # The log is kept in a file next to the database too: the console is gone after a restart,
@@ -114,17 +117,26 @@ Sessions
   access "folder_closed": never opened; the refusal names the closed folder.
 
 Talking to a session
-- message_active_session returns as soon as the message is delivered (a few
-  seconds): use it when your next step doesn't depend on the answer, and read
-  the answer later with read_session_output. ask_active_session waits for the
-  answer, so the conversation waits too: use it only when you need the answer.
+- No call waits past the caller's time budget, whatever wait_seconds asks: 20
+  seconds for the Claude app, which drops a call after about 30. Past that a
+  call says "still_working", and you read on with the matching read tool.
+- Open sessions and the side session have the same three ways in:
+  - send and return (a few seconds): message_active_session, or
+    message_forked_session for the side session. Use it when your next step
+    doesn't depend on the answer.
+  - read later: read_session_output(after=next_after), or
+    read_forked_session(fork_id).
+  - ask and wait: ask_active_session, or ask_forked_session. The conversation
+    waits too, so use it only when you need the answer now.
+- The side session is a read-only fork of a session's whole conversation that
+  can read the code; each question forks anew. Report its answer as the side
+  session's.
 - For a session you started: send_task returns at once; then wait_for_session,
   again while it says "still_running", then tell the owner the result. Poll
   whats_new (pass back its cursor) for other news.
-- To learn about a session without sending into it: peek_session (seconds, the
-  last few turns' words), digest_session (about ten seconds, the whole
-  conversation's words), ask_forked_session (the side session: it can read the
-  code too; slower; report its answer as the side session's).
+- To learn about a session cheaply, without sending into it: peek_session
+  (seconds, the last few turns' words) or digest_session (about ten seconds, the
+  whole conversation's words); neither reads code.
 
 Approvals
 - When a recap shows pending_approvals, read the tool and its input to the owner
@@ -286,6 +298,11 @@ async def log_requests(ctx, call_next):
         if ctx.method == "tools/call":
             METRICS.record(tool, ms, error=f"{type(exc).__name__}: {exc}", kind="exception", trace_id=trace)
         raise
+    except asyncio.CancelledError:
+        # The client gave up on the call (the Claude app drops one after about 30 s).
+        ms = (time.monotonic() - started) * 1000
+        log.info("mcp %s -> cancelled by the client %dms trace=%s", what, ms, trace or "-")
+        raise
     finally:
         transcripts.current_trace.reset(token)
         transcripts.current_client.reset(client_token)
@@ -384,6 +401,14 @@ def build_server(
     side_answer = side_answer or transcripts.shared_reader()
     host: doctor.Host = doctor_host or doctor.RealHost()
     repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
+
+    def within_budget(seconds: float) -> float:
+        """How long a call may wait: what it asked for, never past five minutes or the time
+        budget of the client calling (the Claude app drops a call after about 30 seconds)."""
+        budget = repos.budgets.seconds(transcripts.current_client.get())
+        # RULE: a wait never runs past the callers time budget
+        return max(min(seconds, 300, budget), 0)
+
     start_settings = launch.Settings(manager.store, repos.sessions)
     desktop = os.environ if desktop_env is None else desktop_env
 
@@ -1263,22 +1288,24 @@ def build_server(
     )
     async def message_active_session(session: str, message: str) -> dict[str, Any]:
         """Send a message into a running Claude Code session (name or id from
-        list_active_sessions); read its answer later with read_session_output."""
+        list_active_sessions) and return once it is delivered, a few seconds; read the answer
+        later with read_session_output(after=next_after)."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
             return {"session": target["name"], "delivered": False, "status": "moved", "moved_to": moved}
         sid = str(target["sessionId"])
+        before = len(numbered_turns(target))
         budget = repos.budgets.seconds(transcripts.current_client.get())
         delivery = asyncio.ensure_future(deliver(target["name"], f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
             # RULE: a delivery slower than the clients budget is answered as sending
-            return sending_on(sid, str(target["name"]), message, delivery)
+            return {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1}
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
-        return {"session": target["name"], "status": "delivered", "delivered": True}
+        return {"session": target["name"], "status": "delivered", "delivered": True, "next_after": before - 1}
 
     def sending_on(sid: str, name: str, message: str, delivery: asyncio.Future[Any]) -> dict[str, Any]:
         """Leave a slow delivery running; it shows on the session's card until Claude Code has sent
@@ -1308,9 +1335,10 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
     async def ask_active_session(
-        session: str, message: str, wait_seconds: float = 60, max_chars: int = 600
+        session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Ask a Claude Code session that is open right now, and wait for its answer.
+        """Ask a Claude Code session that is open right now, and wait for its answer,
+        within the caller's time budget (20 s for the Claude app).
         reply_final is true once its turn has ended, so reply is its last word; while false,
         reply is its latest message so far, whole and maybe already the answer, but more may
         follow.
@@ -1361,9 +1389,7 @@ def build_server(
 
         pid, status, seen_busy = target.get("pid"), "still_working", False
         started = asyncio.get_running_loop().time()
-        # RULE: a wait never runs past the callers time budget
-        budget = repos.budgets.seconds(transcripts.current_client.get())
-        deadline = started + max(min(wait_seconds, 300, budget), 0)
+        deadline = started + within_budget(wait_seconds)
         probe = message.strip()[:80]
         while True:
             now = next((d for d in live_sessions() if d.get("pid") == pid), None)
@@ -1518,23 +1544,69 @@ def build_server(
         answer = await side_answer("\n".join(kept), question, language)
         return {"answer": transcripts.whole_sentences(answer, 300), "considered_turns": len(kept), "cut": bool(skipped)}
 
-    @tool(annotations=READ_ONLY)
-    async def ask_forked_session(session: str, question: str, wait_seconds: float = 180) -> dict[str, Any]:
-        """Ask the side session: a new fork of a running session's whole conversation that can
-        read the project's files and answers `question` while the session itself keeps working,
-        untouched (each question forks anew, so it starts from the latest state). It is
-        read-only, since the bridge refuses any tool that could change something; it takes
-        seconds to minutes (wait up to 300 s); status is "answered" (report it as the side
-        session's), "timed_out", or "error" with `detail`, never an empty answer."""
+    # Side sessions at work or done, by fork id; kept in memory only, so a restart forgets them.
+    forks: dict[str, dict[str, Any]] = {}
+
+    def start_fork(session: str, question: str) -> str:
         target = find_live(session)
-        out = await fork.ask(
-            manager.client_factory,
-            str(target["sessionId"]),
-            str(target["cwd"]),
-            question,
-            max(min(wait_seconds, 300), 1),
-        )
-        return {"session": target.get("name"), **out}
+        now = time.monotonic()
+        for old in [k for k, f in forks.items() if f["task"].done() and now - f["started"] > FORK_KEPT_SECONDS]:
+            del forks[old]
+
+        async def run() -> dict[str, Any]:
+            try:
+                return await fork.ask(
+                    manager.client_factory,
+                    str(target["sessionId"]),
+                    str(target["cwd"]),
+                    question,
+                    FORK_LIFETIME_SECONDS,
+                )
+            except Exception as exc:
+                return {"status": "error", "answer": "", "tools_used": {}, "detail": f"{type(exc).__name__}: {exc}"}
+
+        fork_id = secrets.token_hex(4)
+        forks[fork_id] = {"task": asyncio.create_task(run()), "session": target.get("name"), "started": now}
+        return fork_id
+
+    async def collect_fork(fork_id: str, wait_seconds: float) -> dict[str, Any]:
+        entry = forks.get(fork_id)
+        if entry is None:
+            raise ToolError(
+                f"No side session {fork_id!r}: answers are kept for an hour, and forgotten when the bridge restarts"
+            )
+        task = entry["task"]
+        await asyncio.wait({task}, timeout=within_budget(wait_seconds))
+        head = {"fork_id": fork_id, "session": entry["session"]}
+        if not task.done():
+            return {**head, "status": "still_working", "answer": ""}
+        return {**head, **task.result()}
+
+    @tool(annotations=READ_ONLY)
+    async def ask_forked_session(session: str, question: str, wait_seconds: float = 20) -> dict[str, Any]:
+        """Ask the side session: a new read-only fork of a running session's whole conversation
+        that can read the project's files, while the session itself keeps working, untouched;
+        each question forks anew, from the latest state. Waits within the caller's time budget
+        (20 s for the Claude app): status "answered"
+        (report it as the side session's), "still_working" (read it later with
+        read_forked_session(fork_id)), "timed_out", or "error" with `detail`."""
+        return await collect_fork(start_fork(session, question), wait_seconds)
+
+    @tool(annotations=READ_ONLY)
+    async def message_forked_session(session: str, question: str) -> dict[str, Any]:
+        """Send the side session a question and return at once, like message_active_session: a
+        new read-only fork of the session's conversation starts working on it; read its answer
+        later with read_forked_session(fork_id)."""
+        fork_id = start_fork(session, question)
+        return {"fork_id": fork_id, "session": forks[fork_id]["session"], "status": "started"}
+
+    @tool(annotations=READ_ONLY)
+    async def read_forked_session(fork_id: str, wait_seconds: float = 20) -> dict[str, Any]:
+        """The side session's answer, waiting for it within the caller's time budget (20 s for the
+        Claude app): status "answered", "still_working"
+        (call again), "timed_out" (it worked five minutes and was stopped) or "error" with `detail`;
+        answers are kept for an hour, and forgotten when the bridge restarts."""
+        return await collect_fork(fork_id, wait_seconds)
 
     @tool(annotations=READ_ONLY)
     async def digest_session(session: str, question: str | None = None, language: str | None = None) -> dict[str, Any]:
