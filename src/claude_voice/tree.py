@@ -106,7 +106,9 @@ class SessionTree:
         clock: Callable[[], float] = time.time,
         subagents: Callable[[str, str], list[str]] = lambda sid, directory: list_subagents(sid, directory=directory),
         alive: Callable[[int], bool] = _pid_alive,
+        project_of: Callable[[str | None], str | None] | None = None,
     ) -> None:
+        self.project_of = project_of  # the bridge's own rule, granted folders included
         self.store = store
         self.live_dir = live_dir
         self.root = Path(root).resolve()
@@ -118,6 +120,8 @@ class SessionTree:
         self._couriers: tuple[set[int], set[str]] = (set(), set())  # pids, names
 
     def _project(self, cwd: str | None) -> str | None:
+        if self.project_of is not None:
+            return self.project_of(cwd)
         if not cwd:
             return None
         path = Path(cwd).resolve()
