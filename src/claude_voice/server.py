@@ -102,6 +102,8 @@ READ_BUDGET = 3_000
 # Reading forward, a turn that doesn't fit the budget still shows at least this much of its
 # start, so an unread reply can't be mistaken for no reply.
 READ_START = 300
+# A finished turn's last message, a report most often, comes back whole up to this length.
+FINAL_CHARS = 12_000
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
@@ -1601,6 +1603,17 @@ def build_server(
         """The running session with this process id now, or None once it has exited."""
         return next((d for d in live_sessions() if d.get("pid") == pid), None)
 
+    def clip_turns(turns: list[dict[str, Any]], max_chars: int, final: bool) -> dict[str, Any]:
+        """Cut each turn to max_chars, except the last of a finished turn, which comes back whole up
+        to FINAL_CHARS; returns reply_cut and reply_length when even that was cut."""
+        cut: dict[str, Any] = {}
+        for i, turn in enumerate(turns):
+            whole = final and i == len(turns) - 1
+            if whole and len(turn["text"]) > FINAL_CHARS:
+                cut = {"reply_cut": True, "reply_length": len(turn["text"])}
+            turn["text"] = transcripts.clip(turn["text"], FINAL_CHARS if whole else max(max_chars, 20))
+        return cut
+
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
         session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
@@ -1611,7 +1624,8 @@ def build_server(
         it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
         words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
         user; prompt or question says what for), "still_working" (the wait ran out; call again),
-        "session_ended" or "moved" (the conversation now lives in moved_to)."""
+        "session_ended" or "moved" (the conversation now lives in moved_to); with reply_final,
+        reply is whole up to 12,000 characters (reply_cut past that; max_chars cuts the rest)."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -1634,16 +1648,16 @@ def build_server(
         else:
             status = blocked["status"] if blocked else ("idle" if done else "still_working")
         written = [] if now is None else said(target)
-        size = max(max_chars, 20)
-        new = [
-            {**t, "text": transcripts.clip(t["text"], size)} for t in (written if after is not None else written[-1:])
-        ]
+        new = [dict(t) for t in (written if after is not None else written[-1:])]
+        final = bool(new) and status in ("idle", "needs_input", "needs_choice")
+        cut = clip_turns(new, max_chars, final)
         return {
             "status": status,
             "session": target["name"],
             "reply": new[-1]["text"] if new else "",
-            "reply_final": status in ("idle", "needs_input", "needs_choice") and bool(new),
+            "reply_final": final,
             "session_ended": now is None,
+            **cut,
             "turns": new,
             "next_after": new[-1]["index"] if new else (after if after is not None else -1),
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
@@ -1656,13 +1670,15 @@ def build_server(
         """Ask a session and wait (8 s, up to 20) for its answer; only when needed now.
         The conversation waits too, so prefer message_active_session when the next step doesn't
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
-        word; while false, reply is its latest message so far, whole and maybe already the
-        answer, but more may follow. status: "answered", "needs_input" (it waits for its user;
-        prompt is the permission prompt, if one), "still_working" (the wait ran out before its
-        turn ended; continue with wait_for_session(after=next_after)), "session_ended" (it exited
-        meanwhile), "not_received" (the message never reached its conversation), "moved" (the
-        conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
-        user to pick one of question.options; answer at the screen) - "needs_input" before
+        word, whole up to 12,000 characters (reply_cut past that; max_chars cuts the rest), and
+        while false, reply is its latest message so far, maybe already the answer, but more may
+        follow. status: "answered", "needs_input" (it waits for
+        its user; prompt is the permission prompt, if one), "still_working" (the wait ran out
+        before its turn ended; continue with wait_for_session(after=next_after)),
+        "session_ended" (it exited meanwhile), "not_received" (the message never reached its
+        conversation), "moved" (the conversation now lives in moved_to; nothing sent), or
+        "needs_choice" (it waits for its user to pick one of question.options; answer at the
+        screen) - "needs_input" before
         sending means nothing was sent."""
         target = find_live(session)
         moved = moved_to(target)
@@ -1746,15 +1762,16 @@ def build_server(
             new = new[-1:]  # the message is not in view: only the session's final words
         elif anchor is not None and was_busy and new:
             new = new[:1]
-        for turn in new:
-            turn["text"] = transcripts.clip(turn["text"], max(max_chars, 20))
+        # RULE: a reply is final only once the turn has ended
+        final = bool(new) and status in ("answered", "needs_input", "needs_choice")
+        cut = clip_turns(new, max_chars, final)
         return {
             "session": target["name"],
             "status": status,
             "session_ended": status == "session_ended",
             "reply": new[-1]["text"] if new else "",
-            # RULE: a reply is final only once the turn has ended
-            "reply_final": bool(new) and status in ("answered", "needs_input", "needs_choice"),
+            "reply_final": final,
+            **cut,
             "turns": new,
             "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
@@ -1776,9 +1793,9 @@ def build_server(
         turns_left saying how many more follow (read on until it is 0, and take a reply as final
         only once the session's status is "idle"; until then `latest` holds its newest reply, to
         say first when far behind); the first turn that doesn't fit is still started. A turn
-        longer than max_chars, or than the room left, is cut and says so (cut,
-        length), and `turn` (its index) with `offset` reads it whole, page by page via
-        next_offset."""
+        longer than max_chars, or than the room left, is cut and says so (cut, length; a
+        finished turn's last message only past 12,000 characters), and `turn` (its index) with
+        `offset` reads it whole, page by page via next_offset."""
         target = find_live(session)
         turns = every = numbered_turns(target)
         size = max(max_chars, 20)
@@ -1819,6 +1836,12 @@ def build_server(
                 used += need
             return picked
 
+        # The last message of a finished turn comes back whole, up to FINAL_CHARS.
+        final_index = (
+            turns[-1]["index"]
+            if turns and turns[-1]["role"] == "assistant" and target.get("status") == "idle"
+            else None
+        )
         left = 0
         if after is None:
             picked = taken(turns[::-1], forward=False)[::-1]
@@ -1828,6 +1851,8 @@ def build_server(
             left = len(later) - len(picked)  # read on with next_after until this is 0
         turns = []
         for t, room in picked:
+            if t["index"] == final_index:
+                room = FINAL_CHARS
             t["length"] = len(t["text"])
             t["cut"] = t["length"] > room
             t["text"] = transcripts.clip(t["text"], room)

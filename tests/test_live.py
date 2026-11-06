@@ -209,7 +209,11 @@ def test_clip_cuts_at_a_word_and_marks_the_cut():
 
 
 async def test_read_session_output_is_cut_to_max_chars(tmp_path, root, live):
-    long = [msg("assistant", [{"type": "text", "text": "word " * 400}])]
+    # Followed by a short one: a finished turn's last message would come back whole.
+    long = [
+        msg("assistant", [{"type": "text", "text": "word " * 400}]),
+        msg("assistant", [{"type": "text", "text": "Done."}]),
+    ]
     _, srv = server_for(tmp_path, root, live, read=lambda sid, directory: long)
     async with Client(srv) as c:
         out = await call(c, "read_session_output", session="billing-ab", max_chars=100)
