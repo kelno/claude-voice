@@ -99,7 +99,7 @@ Added upstream after the fork split off; resync choice 7 decides which are switc
 
 ## Most promising for upstream (ideas, 2026-11-06)
 
-Beyond the two pull requests already prepared (`wait_for_session`, the short first lines), the fork features most likely to help upstream, most promising first. Ideas only: nothing prepared. Each points to its candidate entry below.
+Beyond the two pull requests already offered ([#109](https://github.com/roykollensvendsen/claude-voice/pull/109) `wait_for_session`, [#108](https://github.com/roykollensvendsen/claude-voice/pull/108) the short first lines), the fork features most likely to help upstream, most promising first. Ideas only: nothing prepared. Each points to its candidate entry below.
 
 0. The relay waits on a session and carries on by itself (owner, 2026-11-06: "a big improvement over upstream"). The pieces: `wait_for_session` with `after` (in the `pr/wait-for-session` branch); `message_active_session` returning `next_after`, so a send hands the wait its starting point (6d', not in the branch; upstream's send returns none, so the relay has to read first); the 8-second default wait, under voice mode's ~10-second move to the background (6l, not in the branch, which waits up to the client's 20-second budget); the manual's "Waiting" rules, wait again on "still_working", in silence, answer the owner if they speak (6l, 6e, not in the branch); the `pending` note on a session already being waited on (6m, not in the branch). The move to the background itself is the Claude app's, not the bridge's. Guess: the news line on every result (`68b1a07`) helps the relay notice replies but isn't what makes it wait. Offer as a follow-up to `wait_for_session`: first `next_after` on a send, then the short default and the waiting rules.
 1. Messages to a session not marked destructive (6k): the Claude app asks for a tap before every message and offers only "Allow once", which every voice user of upstream hits on every message.
@@ -137,6 +137,8 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - Independent of 1 and 2; the easiest to accept.
 
 ### 4. Waiting for a session — fork `c721c3c`
+
+- Offered 2026-11-06 as [#109](https://github.com/roykollensvendsen/claude-voice/pull/109), rebuilt as fork `e429ece` on upstream's time budgets (branch `pr/wait-for-session-2`).
 
 - What: tool `wait_for_session(session_id, wait_seconds=60)`, up to 300 s, returning the recap with `waited` = finished, needs_approval, still_running, not_running. The instructions to the assistant use it after `send_task`.
 - Why: a voice client can't be notified, so it polled `session_recap` and the person had to remind it to look; in a real voice test the assistant asked for exactly this.
@@ -212,6 +214,8 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - Upstream relevance: high, standard and independent. Test: `tests/test_titles.py`.
 
 ### 6h. Each tool says what it is for in its first line — fork `2ce310c`
+
+- Offered 2026-11-06 as [#108](https://github.com/roykollensvendsen/claude-voice/pull/108), on upstream's own descriptions (branch `pr/tool-first-lines-2`).
 
 - What: every tool description opens with one whole sentence of at most 78 characters, the detail on the following lines; `tests/test_surface.py` keeps it so.
 - Why: the Claude app shows an assistant each connector tool by the first line of its description, cut at about 79 characters, until the assistant loads the tool. Measured 2026-11-01 in the app's voice mode. Most first lines broke mid-sentence; the manual's never got to say "read this first".
