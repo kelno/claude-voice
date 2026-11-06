@@ -62,6 +62,8 @@ def test_a_request_is_confirmed_once_and_reported_once(requests):
     assert book.confirm(code, "Allow Bash(git push:*)")["status"] == "confirmed"
     first = book.check(code, "sid-1")
     assert first["status"] == "confirmed" and first["summary"] == "Allow Bash(git push:*)" and first["confirmed_at"]
+    # The app can be set to skip the card, which the bridge can't see; every confirmation says so.
+    assert "always allow" in first["limit"]
     assert book.check(code, "sid-1")["status"] == "used"
     with pytest.raises(ValueError, match="already"):
         book.confirm(code, "Allow Bash(git push:*)")

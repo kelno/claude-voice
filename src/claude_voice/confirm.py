@@ -25,6 +25,11 @@ FIND_SECONDS = 3.0  # how long to look for a call in its session's transcript
 MAX_SUMMARY = 300  # the card may cut a long one, and a short one gets read
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, to be read aloud
 DESIGN = "https://github.com/kelno/claude-voice/blob/{commit}/docs/owner-confirmation.md"
+# What a confirmed result can't show, said with every one.
+LIMIT = (
+    "A tap only if the owner keeps confirm_with_owner set to ask each time in the Claude app;"
+    " set to always allow, the call goes through with no card, and the bridge can't tell."
+)
 
 SCHEMA = """
 -- Requests for the owner's confirmation: who asked, what, and when it was confirmed and checked.
@@ -143,4 +148,10 @@ class Confirmations:
             return {"status": "used", "code": code.upper(), "summary": summary}
         with self.db:
             self.db.execute("UPDATE confirmations SET checked_at=? WHERE code=?", (self.clock(), code.upper()))
-        return {"status": "confirmed", "code": code.upper(), "summary": summary, "confirmed_at": iso(confirmed_at)}
+        return {
+            "status": "confirmed",
+            "code": code.upper(),
+            "summary": summary,
+            "confirmed_at": iso(confirmed_at),
+            "limit": LIMIT,
+        }

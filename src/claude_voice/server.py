@@ -1619,8 +1619,8 @@ def build_server(
         to open a folder no session runs in yet, so start_active_session can work there; a folder
         given by path is also marked trusted in Claude Code (trusted names the folder; at a git
         repository's root when inside one), since Claude Code won't start a session in a folder it
-        never trusted. The folder and everything under it can then be read, messaged and worked in. The app asks
-        the owner before every call, with no "Always allow"."""
+        never trusted. The folder and everything under it can then be read, messaged and worked in. Its safety is
+        the owner's tap: keep it set to ask each time in the app, as on "always allow" no card shows."""
         if (session is None) == (folder is None):
             raise ToolError("Give one of session or folder.")
         if folder is not None:
@@ -1691,9 +1691,9 @@ def build_server(
         """Put a session's confirm_ask request before the owner, on a card to tap.
         owner_approves is the session's summary, copied exactly (the bridge refuses other wording),
         and code its request code; tell the owner first what it's for, as the card shows the
-        arguments, not this tool's name. Call it only from a voice chat: in a text chat a
-        classifier, not the owner, answers the card, so the owner confirms in voice or types OK at
-        the PC instead."""
+        arguments, not this tool's name. Call it only from a voice chat (in a text chat a
+        classifier, not the owner, answers the card), and the owner keeps it set to ask each time
+        in the app: on "always allow" no card shows, and a confirmation proves nothing."""
         if not confirm.from_a_voice_chat(confirm.current_caller.get()):
             raise ToolError(
                 "Only a claude.ai voice chat can confirm: in a text chat a classifier, not the owner,"

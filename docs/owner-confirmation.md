@@ -51,7 +51,7 @@ The bridge accepts each step only from the caller it belongs to:
 
 - The result comes from the bridge as the session's own tool result, not through a message, so neither the relay nor another session can write it.
 - The bridge marks a request confirmed only when `confirm_with_owner` arrives from a claude.ai voice chat through Anthropic's servers, as they identify it, not as the caller says: never from a Claude Code session, so no session can confirm a request, its own or another's.
-- That call needs the owner's tap: the tool is destructive, and the Claude app asks the owner before every call to a destructive tool, offering only "Allow once" (seen on this bridge, 2026-11-05; see the checks below).
+- That call needs the owner's tap only while the tool is set to ask each time in the owner's connector settings: the app then shows a card offering only "Allow once" (seen 2026-11-06). Set to "always allow", it shows none (see "The limits").
 - The card shows exactly the summary the session wrote, since the bridge refuses any other text. The relay can't reword what the owner approves.
 - The owner's own rule says a confirmed result counts as the owner's OK, so the session doesn't decide that on the mechanism's word. What it relies on the mechanism for is set out here, with its limits, for it to judge.
 
@@ -67,7 +67,7 @@ What a confirmed result can't prove:
 
 - That the owner read the card before tapping, or understood it. The owner sees the summary and the relay's spoken description, not the session's context.
 - That the app showed the whole summary: whether a long summary is cut off on the card is unchecked. Summaries are kept short.
-- That the app will keep asking every time. If the app ever offers "Always allow" for destructive tools, or the owner pre-allows the tool, a tap stops meaning one approval.
+- **That the owner tapped at all, unless `confirm_with_owner` is set to ask each time in the owner's connector settings.** Tested 2026-11-06: with the tool set to "always allow" (a setting both the phone and the desktop app offer), a voice chat's call went through with no card and no tap, and the bridge recorded it as confirmed. The destructive mark doesn't override that setting, and the bridge can't see whether a card was shown. So, as built, a confirmed result means the owner tapped only while that one setting is left on asking, which one change in the app's settings, made by mistake, silently undoes. Until the bridge can see the owner's answer itself (see "Next"), the owner's rule shouldn't be added.
 
 What a dishonest relay could still do:
 
@@ -80,6 +80,13 @@ Outside the relay:
 
 - Anyone holding the bridge's login token could call it without the app. Anthropic holds it for the connector.
 - A program running as the owner on this PC can read and change the bridge's database, and fake any of this. Such a program could also change the session's settings directly, so this adds nothing new.
+
+## Next
+
+The card can't carry the proof alone, since a setting the bridge can't see turns it off. Two ways to an answer the bridge observes itself, to look at in this order:
+
+1. **The owner answers the bridge, not the app's approval.** MCP lets a server ask the user a question during a call (elicitation); the client shows it to the person, and a tool approval setting doesn't answer it. To check: whether the Claude app supports it in a voice chat, and whether the owner can answer it there.
+2. **A confirm page behind the bridge's own login.** The bridge sends the owner a link; the owner opens a page showing the summary, signs in and taps Confirm. Independent of the app and its settings; the owner looks at a screen, as for the card.
 
 ## Checks
 

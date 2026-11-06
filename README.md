@@ -297,8 +297,10 @@ claude.ai could not reach the bridge on port 10000.
 
 In the Claude app, add a custom connector with that address and connect. Then
 set the tools to *always allow*, so the app does not ask before each one.
-It still asks before every call to the tools marked destructive, `request_access`,
-`update_bridge` and `confirm_with_owner`, whatever you set.
+Except two, whose safety is your tap: keep `request_access` and `confirm_with_owner`
+set to ask each time. Marked destructive, they show a card on every call, but
+only while set to ask: on *always allow*, they run with no card (tested 2026-11-06).
+Their titles say "never always allow".
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
 the time of writing.
 
