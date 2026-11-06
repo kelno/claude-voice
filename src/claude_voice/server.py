@@ -987,7 +987,7 @@ def build_server(
             out.append({**roles.public(name, spec), "session": session})
         return {"roles": out}
 
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def stop_active_session(name: str) -> dict[str, Any]:
         """Stop a background session the bridge started; any other session is refused.
         One start_active_session started; another, such as one open in a terminal, gets status

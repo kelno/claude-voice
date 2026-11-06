@@ -295,8 +295,8 @@ claude.ai could not reach the bridge on port 10000.
 
 In the Claude app, add a custom connector with that address and connect. Then
 set the tools to *always allow*, so the app does not ask before each one.
-It still asks before every call to the tools marked destructive,
-`request_access`, `stop_active_session` and `update_bridge`, whatever you set.
+It still asks before every call to the tools marked destructive, `request_access`
+and `update_bridge`, whatever you set.
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
 the time of writing.
 
