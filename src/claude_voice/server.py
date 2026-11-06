@@ -77,6 +77,9 @@ session_recap until status is no longer "running" -> tell the user the result.
 send_task returns immediately; Claude may work for minutes.
 To see what is running on the machine (including terminal sessions), call
 list_active_sessions; to continue one, attach_conversation with its id.
+When the user asks which sessions there are, give every one you can see, from
+every source: list_sessions returns both the bridge's own sessions and the running
+ones, those needing approval included. Leave none out, side chats only marked.
 A session listed with access "needs_approval" can't be read or messaged yet: if
 the user wants it, call request_access; they approve it in their app. One listed
 as "blocked" can never be opened.
