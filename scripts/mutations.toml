@@ -308,3 +308,9 @@ name = "the side session never runs a tool that can change anything"
 file = "src/claude_voice/fork.py"
 find = 'if tool in READ_TOOLS:'
 replace = 'if True:'
+
+[[rule]]
+name = "a resumed session keeps the permissions it has where the owner runs it"
+file = "src/claude_voice/permissions.py"
+find = 'if session_id and SESSION_ID\.fullmatch\(session_id\):'
+replace = 'if False:'

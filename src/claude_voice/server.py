@@ -40,6 +40,7 @@ from . import (
     gitstatus,
     launch,
     metrics,
+    permissions,
     plugins,
     procs,
     roles,
@@ -177,6 +178,7 @@ class Config:
     access_ttl: int = ACCESS_TTL
     ui_origins: list[str] = field(default_factory=list)
     ui_dir: Path | None = None
+    new_session_mode: str = "default"
 
 
 MAKE_TOKEN = (
@@ -222,6 +224,12 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
                 f"at least {MIN_ACCESS_TTL} (an hour is 3600, a week 604800)."
             )
         cfg.access_ttl = int(ttl)
+    cfg.new_session_mode = env.get("CLAUDE_VOICE_PERMISSION_MODE", "").strip() or "default"
+    if cfg.new_session_mode not in permissions.MODES:
+        raise ConfigError(
+            f"CLAUDE_VOICE_PERMISSION_MODE is {cfg.new_session_mode!r}; "
+            f"use one of {', '.join(sorted(permissions.MODES))}."
+        )
     cfg.public_url = env.get("CLAUDE_VOICE_PUBLIC_URL", "").rstrip("/") or (
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
     )
@@ -2017,6 +2025,8 @@ def serve_forever(cfg: Config) -> None:
         approvals=ApprovalBroker(store),
         denied=access.default_denied(),
         exempt=access.default_exempt(),
+        new_mode=cfg.new_session_mode,
+        grant_for=permissions.session_grant,
     )
     if cfg.transport == "stdio":
         build_server(manager).run("stdio")

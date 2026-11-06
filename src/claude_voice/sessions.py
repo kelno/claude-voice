@@ -14,6 +14,7 @@ import json
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -55,6 +56,14 @@ class SessionClosed(RuntimeError):
     pass
 
 
+@dataclass(frozen=True)
+class Grant:
+    """The permission mode a conversation the bridge runs gets, and the folders added to it."""
+
+    mode: str
+    dirs: tuple[str, ...] = ()
+
+
 class SessionManager:
     def __init__(
         self,
@@ -65,6 +74,8 @@ class SessionManager:
         approvals: ApprovalBroker | None = None,
         denied: Iterable[Path] = (),
         exempt: Iterable[Path] = (),
+        new_mode: str = "default",
+        grant_for: Callable[[str | None, str, str], Grant] | None = None,
     ) -> None:
         self.store = store
         self.root = Path(project_root).expanduser().resolve()
@@ -73,6 +84,10 @@ class SessionManager:
         self.client_factory = client_factory
         self.clock = clock
         self.approvals = approvals
+        self.new_mode = new_mode
+        # The bridge itself passes permissions.session_grant; left out, a resumed
+        # conversation gets the mode for new sessions and no added folders.
+        self.grant_for = grant_for or (lambda session_id, cwd, new_mode: Grant(new_mode))
         self._tasks: dict[str, asyncio.Task] = {}
         self._clients: dict[str, Any] = {}
         self._cancelling: set[str] = set()
@@ -170,13 +185,16 @@ class SessionManager:
         return {"session_id": session_id, "cancelled": True}
 
     def _options(self, session_id: str, s: dict[str, Any]) -> ClaudeAgentOptions:
+        grant = self.grant_for(s["claude_session_id"], s["project_path"], self.new_mode)
         opts = ClaudeAgentOptions(
             cwd=s["project_path"],
             resume=s["claude_session_id"],
-            # Behave like the user's own Claude Code: their CLAUDE.md, settings
-            # and permission rules apply, and nothing is silently pre-approved.
+            # Behave like the user's own Claude Code: their CLAUDE.md, settings and
+            # permission rules apply, with the mode and folders the conversation has
+            # where the owner runs it.
             setting_sources=["user", "project", "local"],
-            permission_mode="default",
+            permission_mode=grant.mode,  # type: ignore[arg-type]
+            add_dirs=list(grant.dirs),
             system_prompt={"type": "preset", "preset": "claude_code", "append": RELAYED_TASK_NOTE},
             # The owner's claude.ai connectors (Calendar, Drive, ...) are not the
             # task's business, and their sign-in notes would be read aloud.

@@ -164,7 +164,9 @@ and `/api/v1/doctor` say whether such a port is there.
   `ANTHROPIC_API_KEY` is set, because Claude would then be billed per token.
   Set `CLAUDE_VOICE_ALLOW_API_KEY=1` if that is what you want.
 - **Your own Claude Code settings apply**, including your permission rules.
-  Nothing is pre-approved beyond them.
+  Nothing is pre-approved beyond them. A conversation the bridge resumes keeps
+  its own permission mode, and the folders added to it, as recorded by the
+  desktop app or in its transcript; a new one gets `CLAUDE_VOICE_PERMISSION_MODE`.
 - **Risky actions wait for a yes.**
   - Anything Claude Code would normally ask you about becomes a pending approval
     with a short number you can say aloud, such as "approval 3: Bash,
@@ -242,6 +244,7 @@ also the default.
 | `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Roy via stemmen` |
 | `CLAUDE_VOICE_UI_ORIGINS` | — | comma-separated origins of a companion app served elsewhere, allowed to call the [event API](docs/event-api.md) across sites |
 | `CLAUDE_VOICE_UI_DIR` | — | a folder with a companion app's built files, served at `/ui/` |
+| `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
 | `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` | `3600` | how long a sign-in's access token lasts before the app must refresh it; set it to a week (`604800`) on a computer that sleeps, since the Claude app gives a connector up after about an hour of failed refreshes |
 

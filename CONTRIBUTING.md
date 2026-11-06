@@ -66,10 +66,10 @@ worse, so `quality.json` at the root records the levels it has reached:
 
 The layers, from the bottom: foundations (`procs`, `config`, `store`, `metrics`,
 `titles`, `access`); parts, each about one thing; parts built from parts (`events`,
-`tree`, `approvals`); the doors in from outside (`api`, `phone_hook`); `server`,
-where it is all put together; and `cli`. A new module is given its layer in
-`LAYERS`. When code is needed twice, it goes into a function both places call,
-rather than being copied.
+`tree`, `approvals`, `permissions`); the doors in from outside (`api`,
+`phone_hook`); `server`, where it is all put together; and `cli`. A new module is
+given its layer in `LAYERS`. When code is needed twice, it goes into a function both
+places call, rather than being copied.
 
 `scripts/ratchet.py check` fails a change that makes any of them worse than the
 base branch, and a change whose `quality.json` does not record the levels it
