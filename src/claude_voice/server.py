@@ -133,7 +133,8 @@ Talking to a session
   "still_working", reply is its latest message so far: whole, and possibly
   already the answer, but more may follow. Don't report it as finished, or as
   cut off; read on with read_session_output(after=next_after) until its status
-  is "idle", which means its turn has ended.
+  is "idle", which means its turn has ended, and turns_left is 0: one read gives
+  only the first few turns after `after`.
 - When the owner asks you to wait for an answer, in whatever words,
   keep waiting: re-check every few seconds until it comes (a short sleep between
   reads, each call under 20 seconds). Otherwise don't block the conversation:
