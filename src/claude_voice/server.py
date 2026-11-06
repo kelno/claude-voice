@@ -439,8 +439,10 @@ def result_notes(news: Callable[[str, str, dict[str, Any], dict[str, Any]], str 
         notes = {}
         manual = {}
         if unguided:
-            # Handed over first in the result, so it is read before the rest.
-            manual["guide_note"] = GUIDE_NOTE
+            # Handed over first in the result, so it is read before the rest; a call to guide
+            # itself needs no note that it could have been skipped.
+            if params.get("name") != "guide":
+                manual["guide_note"] = GUIDE_NOTE
             manual["guide"] = INSTRUCTIONS
             guided[str(connection)] = None
             while len(guided) > GUIDED_KEPT:

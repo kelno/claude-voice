@@ -264,6 +264,7 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - What: `result_notes()` remembers, by the `mcp-session-id` header, which MCP sessions have had the manual (the newest 1,000); the first result of a session that never called `guide` carries the manual itself, first in the result. A client without an MCP session (stateless, or the 2026-07-28 single-exchange protocol) gets nothing, so it isn't handed the manual on every call.
 - Why upstream should want it: the Claude app opens one MCP session per conversation but doesn't pass server instructions on to the model, and its agents load tools by search, so `guide` is easily never called (seen for a whole evening). Upstream has the same instructions and would face the same.
 - Expect pushback: about 3,500 characters of context once per conversation; it depends on the app keeping one MCP session per conversation (seen in this fork's log: about one initialize per conversation, hundreds of calls each), and would deliver nothing if the app moves to a sessionless protocol. Depends on 6e and 6m. Test first: `tests/test_server.py`, over HTTP with an initialize handshake, seen failing before the change.
+- Follow-ups, fork "Tell an agent the attached guide spares a call to guide" (a note before the manual, so the agent doesn't call guide for the same text) and "Leave out the note to skip guide on a call to guide itself". Fold both into the same pull request.
 
 ### 6o. request_access by folder path — fork "Open a folder by its path with request_access"
 

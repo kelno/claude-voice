@@ -155,9 +155,11 @@ async def test_the_guide_tool_says_to_skip_it_when_a_result_already_carried_the_
 async def test_a_connection_that_read_the_guide_does_not_get_it_again(http_server):
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
     async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http), mode="legacy") as c:
-        await call(c, "guide")
+        read = await call(c, "guide")
         after = await call(c, "list_projects", query="ap")
     assert "guide" not in after
+    # An agent that has just called guide is not told it needn't have.
+    assert "guide_note" not in read
 
 
 async def test_a_call_with_no_session_to_remember_never_carries_the_guide(tmp_path, root):
