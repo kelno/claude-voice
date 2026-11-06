@@ -1,14 +1,20 @@
-"""A news line on every result: what the relay hasn't read yet, without a call of its own.
+"""A news line on every result: how the sessions the relay watches stand, without a call of its own.
 
 With several sessions running, a relay misses replies, most of all when the owner talks to a
-session directly. Each conversation (one MCP session in the Claude app) keeps a read marker per
-session it started, resumed, messaged or read; a result then names the sessions with turns past
-that marker, and any session waiting on a permission prompt, which only the owner can answer.
+session directly. Counting every unread message turned into noise when one session posted many
+progress lines, and the relay stopped reading the line. So the relay watches the sessions it
+started, resumed, messaged or read (or chose with watch_session), and only four things are news:
+a reply to its message, something the owner typed in the session, a waiting permission prompt,
+and the session having ended. Every watched session gets a short entry even with nothing new, so
+"nothing new" can't be mistaken for "not watched". A permission prompt shows for every session,
+watched or not, since only the owner can answer it.
 """
 
 import asyncio
+import contextlib
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -60,28 +66,24 @@ def world(tmp_path):
     return root, live
 
 
-@pytest.fixture
-async def served(tmp_path, world):
-    """The bridge over HTTP, as the Claude app reaches it, with one desk session."""
-    root, live = world
-    desk = Desk(live, str(root / "billing"))
-    sent = []
+@contextlib.asynccontextmanager
+async def bridge(tmp_path, desk, store):
+    """The bridge over HTTP, as the Claude app reaches it, for one desk session."""
+    root = Path(desk.cwd).parent
 
     async def deliver(name, text):
-        sent.append(text)
         # The relayed message lands in the session's conversation, marked as from another session.
         desk.transcript.append(turn("user", text, "peer"))
         return {"delivered": True, "detail": "DELIVERED"}
 
     port = free_port()
-    store = Store(tmp_path / "bridge.db")
     oauth = OAuthProvider(store, TOKEN, f"http://127.0.0.1:{port}", static_token=TOKEN)
     m = SessionManager(store, project_root=root, client_factory=FakeClaude())
     server = build_server(
         m,
         oauth=oauth,
         conversations=lambda **k: [],
-        live_dir=live,
+        live_dir=desk.live,
         deliver=deliver,
         read_transcript=lambda sid, directory: list(desk.transcript),
         poll_seconds=0.01,
@@ -94,9 +96,20 @@ async def served(tmp_path, world):
     task = asyncio.create_task(uv.serve())
     while not uv.started:  # noqa: ASYNC110 - uvicorn exposes no event
         await asyncio.sleep(0.01)
-    yield f"http://127.0.0.1:{port}", desk
-    uv.should_exit = True
-    await task
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        uv.should_exit = True
+        await task
+
+
+@pytest.fixture
+async def served(tmp_path, world):
+    """The bridge with one desk session."""
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
+        yield url, desk
 
 
 def conversation(url):
@@ -110,32 +123,59 @@ async def call(client, name, **args):
     return res.structured_content
 
 
-async def test_a_reply_from_a_messaged_session_is_news_until_it_is_read(served):
+async def test_a_reply_to_the_relays_message_is_news_until_it_is_read(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
         sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
-        assert "news" not in sent
         desk.transcript.append(turn("assistant", "Export done."))
         later = await call(c, "list_projects")
         read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         after = await call(c, "list_projects")
-    assert later["news"] == "billing-ab (idle): 1 unread message, read with after=1"
+    assert later["news"] == "billing-ab (idle): reply to you, read with after=1"
     assert list(later)[-1] != "news" and "news" in list(later)[:3]  # given before the result itself
-    assert "news" not in read and "news" not in after
+    assert read["news"] == after["news"] == "billing-ab (idle): nothing new"
 
 
-async def test_a_turn_the_owner_typed_to_the_session_is_news_and_says_so(served):
+async def test_progress_while_the_session_works_is_not_news(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        desk.transcript.append(turn("assistant", "Exporting the first table."))
+        desk.transcript.append(turn("assistant", "Exporting the second table."))
+        working = await call(c, "list_projects")
+        desk.transcript.append(turn("assistant", "Export done."))
+        desk.set("idle")
+        done = await call(c, "list_projects")
+    assert working["news"] == "billing-ab (busy): nothing new"
+    assert done["news"] == "billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        asked = await call(c, "ask_active_session", session="billing-ab", message="Is the export done?")
+        desk.transcript.append(turn("assistant", "Yes."))
+        out = await call(c, "list_projects")
+    assert asked["status"] == "still_working"
+    assert out["news"] == f"billing-ab (idle): reply to you, read with after={asked['next_after']}"
+
+
+async def test_what_the_owner_typed_in_the_session_is_news(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
         sent = await call(c, "message_active_session", session="billing-ab", message="Check the script.")
+        desk.transcript.append(turn("assistant", "Checked."))
         await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         desk.transcript.append(turn("user", "I ran it myself.", "human"))  # on the phone, directly
         desk.transcript.append(turn("assistant", "Then it is done."))
         desk.set("busy")
         out = await call(c, "list_projects")
-    assert out["news"] == "billing-ab (busy): 2 unread messages, 1 typed by the owner, read with after=2"
+    assert out["news"] == "billing-ab (busy): the owner typed here, read with after=3"
 
 
 async def test_only_what_the_owner_typed_counts_as_theirs(served):
@@ -145,38 +185,39 @@ async def test_only_what_the_owner_typed_counts_as_theirs(served):
     http, client = conversation(url)
     async with http, client as c:
         sent = await call(c, "message_active_session", session="billing-ab", message="Go.")
+        desk.transcript.append(turn("assistant", "Gone."))
         await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         desk.transcript.append(turn("user", "<task-notification> done </task-notification>", "task-notification"))
         desk.transcript.append(turn("user", "From another session.", "peer"))
         desk.transcript.append(turn("user", "no origin recorded", None))
         desk.transcript.append(turn("assistant", "Noted."))
         out = await call(c, "list_projects")
-    assert out["news"] == "billing-ab (idle): 1 unread message, read with after=2"
+    assert out["news"] == "billing-ab (idle): nothing new"
 
 
-async def test_another_conversation_does_not_get_this_ones_news(served):
-    url, desk = served
-    http, client = conversation(url)
-    other_http, other = conversation(url)
-    async with http, client as c, other_http, other as o:
-        await call(c, "message_active_session", session="billing-ab", message="Go.")
-        desk.transcript.append(turn("assistant", "Gone."))
-        mine = await call(c, "list_projects")
-        theirs = await call(o, "list_projects")
-    assert "billing-ab" in mine["news"]
-    assert "news" not in theirs
-
-
-async def test_a_session_waiting_on_a_permission_prompt_is_news_to_every_conversation(served):
+async def test_a_session_waiting_on_a_permission_prompt_is_news_even_unwatched(served):
     url, desk = served
     desk.set("waiting", waiting_for="permission prompt")
     http, client = conversation(url)
     async with http, client as c:
         out = await call(c, "list_projects")
-    assert out["news"] == "billing-ab (waiting on a permission prompt)"
+    assert out["news"] == "billing-ab: waiting on a permission prompt"
 
 
-async def test_a_followed_session_that_ended_with_unread_turns_says_it_ended(served):
+async def test_a_watched_session_that_ended_says_so_once_then_leaves_the_line(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Wrap up.")
+        desk.gone()
+        ended = await call(c, "list_projects")
+        later = await call(c, "list_projects")
+    assert ended["news"] == "billing-ab: ended"  # it can't be read any more
+    assert "news" not in later
+
+
+async def test_a_session_that_ended_before_its_reply_was_read_says_so(served):
+    # It can't be read any more; the relay can still resume it with attach_conversation.
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
@@ -184,7 +225,7 @@ async def test_a_followed_session_that_ended_with_unread_turns_says_it_ended(ser
         desk.transcript.append(turn("assistant", "Wrapped up."))
         desk.gone()
         out = await call(c, "list_projects")
-    assert out["news"] == "billing-ab (ended): 1 unread message"  # it can't be read any more
+    assert out["news"] == "billing-ab: ended before you read its reply"
 
 
 async def test_two_sessions_are_set_apart_in_one_line(served):
@@ -198,11 +239,42 @@ async def test_two_sessions_are_set_apart_in_one_line(served):
         out = await call(c, "list_projects")
     assert (
         out["news"]
-        == "billing-ab (idle): 1 unread message, read with after=1 | ledger, cut-over (waiting on a permission prompt)"
+        == "billing-ab (idle): reply to you, read with after=1 | ledger, cut-over: waiting on a permission prompt"
     )
 
 
-async def test_nothing_new_means_no_news_field(served):
+async def test_watch_session_watches_a_session_without_messaging_it(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        watched = await call(c, "watch_session", session="billing-ab")
+        desk.transcript.append(turn("user", "Start on the invoices.", "human"))
+        typed = await call(c, "list_projects")
+        await call(c, "watch_session", session="billing-ab", watch=False)
+        dropped = await call(c, "list_projects")
+    assert watched["news"] == "billing-ab (idle): nothing new"  # what came before isn't news
+    assert typed["news"] == "billing-ab (idle): the owner typed here, read with after=1"
+    assert "news" not in dropped
+
+
+async def test_a_new_conversation_and_a_restarted_bridge_watch_the_same_sessions(tmp_path, world):
+    # The relay is one role across calls: a voice call cut by a restart, then a new one, still
+    # needs the reply to the message the last call sent.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+    desk.transcript.append(turn("assistant", "Export done."))
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            out = await call(c, "list_projects")
+    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_nothing_watched_and_no_prompt_means_no_news_field(served):
     url, _ = served
     http, client = conversation(url)
     async with http, client as c:

@@ -36,7 +36,9 @@ def test_the_manual_states_its_central_rules():
         "don't ask the owner",  # waiting for a reply is the default
         "wait in silence",  # no heads-up or progress between waits, whatever the app asks
         "when the owner speaks during a wait",  # a call they talk over returns by itself
-        "news",  # a result's news line: unread turns of the sessions you follow, and prompts waiting
+        "news",  # a result's news line: how the watched sessions stand, and prompts waiting
+        "watch_session",  # how a session the relay never touched gets into the news line
+        "nothing new",  # every watched session has an entry, so nothing new isn't mistaken for unwatched
         "before telling the owner what it said",  # news says something is new, not what
         "already approved",  # work done as agreed is confirmed briefly, not walked through again
         "start_active_session",  # new work
