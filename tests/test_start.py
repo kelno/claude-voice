@@ -97,6 +97,14 @@ async def test_a_session_that_never_appears_is_reported_not_promised(tmp_path, w
     assert bad.is_error and "did not appear" in bad.content[0].text
 
 
+async def test_a_session_started_without_a_model_runs_on_opus(tmp_path, world):
+    # Claude Code's own default on the owner's account is Fable; the owner wants Opus.
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        await c.call_tool("start_active_session", {"project": "billing", "name": "plain"})
+    assert starter.options[0]["model"] == "opus"
+
+
 async def test_a_chosen_model_comes_with_a_note_that_it_is_only_checked_at_the_first_reply(tmp_path, world):
     async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
         deep = (await c.call_tool("start_active_session", {"project": "billing", "model": "opus"})).structured_content
@@ -286,7 +294,7 @@ async def test_a_session_can_be_started_on_a_chosen_model_and_effort(tmp_path, w
             await c.call_tool("start_active_session", {"project": "billing", "model": "opus", "effort": "high"})
         ).structured_content
         plain = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
-    assert starter.models == (None, None)  # the second start, left to Claude Code's defaults
+    assert starter.models == ("opus", None)  # the second start: Opus, as this fork chose, and Claude Code's effort
     assert "first reply" in out["note"] and "first reply" not in plain.get("note", "")
 
 

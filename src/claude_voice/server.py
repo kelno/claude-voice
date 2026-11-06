@@ -73,6 +73,9 @@ SIDE_CHAT_PREFIX = "btw:"
 # A wait asked without a length: Claude's voice mode moves a call still running after about
 # 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
 WAIT_SECONDS = 8.0
+# The model a session starts on when none is asked for. Claude Code's own default follows the
+# account, which can be a model the owner doesn't want for everyday work.
+DEFAULT_MODEL = "opus"
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
 # in, and later delivers its result inside a call the assistant seems to have written itself,
 # carrying a field only the app may write; assistants copy it to fetch results, and are
@@ -759,7 +762,8 @@ def build_server(
         `create_folder=true` first makes the project folder under the root when it does not
         exist; only for a plain name (letters, digits, '.', '_', '-'), never by default.
         Optional: `model` (an alias such as opus or sonnet, or a full name) and `effort` (low,
-        medium, high, xhigh or max); left out, Claude Code's defaults apply."""
+        medium, high, xhigh or max); left out, the model is opus and the effort Claude Code's
+        default."""
         # RULE: only a well-formed model name and a known effort reach Claude Code
         if model is not None and not transcripts.MODEL_NAME.fullmatch(model):
             raise ToolError(f"Not a model name: {model!r}. Use an alias such as opus, or a full model name.")
@@ -793,7 +797,7 @@ def build_server(
                 "already_running": True,
                 "folder_created": folder_created,
             }
-        out = await start_listed(path, name, start_in, remote_control, model=model, effort=effort)
+        out = await start_listed(path, name, start_in, remote_control, model=model or DEFAULT_MODEL, effort=effort)
         # Claude Code accepts any model name at start and refuses an unknown one only
         # in its first reply, so a start alone does not prove the model works.
         model_note = "Claude Code checks the model only at the first reply; rely on the session after it."
