@@ -1524,7 +1524,8 @@ def build_server(
         read the project's files and answers `question` while the session itself keeps working,
         untouched (each question forks anew, so it starts from the latest state). It is
         read-only, since the bridge refuses any tool that could change something; it takes
-        seconds to minutes (wait up to 300 s), and you report its answer as the side session's."""
+        seconds to minutes (wait up to 300 s); status is "answered" (report it as the side
+        session's), "timed_out", or "error" with `detail`, never an empty answer."""
         target = find_live(session)
         out = await fork.ask(
             manager.client_factory,

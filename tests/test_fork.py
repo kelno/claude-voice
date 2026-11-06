@@ -79,3 +79,49 @@ async def test_a_side_session_that_takes_too_long_says_so(world):
             await c.call_tool("ask_forked_session", {"session": "billing-ab", "question": "?", "wait_seconds": 0.1})
         ).structured_content
     assert out["status"] == "timed_out"
+
+
+class TurnByTurn:
+    """Like the real client: each receive_response ends at a result, the next one goes on."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.prompts = []
+
+    def __call__(self, options):
+        self.options = options
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def query(self, prompt):
+        self.prompts.append(prompt)
+
+    async def interrupt(self):
+        return None
+
+    async def receive_response(self):
+        while self.script:
+            msg = self.script.pop(0)
+            yield msg
+            if type(msg).__name__ == "ResultMessage":
+                return
+
+
+async def test_a_leftover_empty_turn_before_the_question_is_skipped():
+    # Resuming a desktop session first closes a pending internal turn: no model call, no words.
+    client = TurnByTurn([result("", "f", num_turns=0), init("f"), say("pong"), result("pong", "f")])
+    out = await fork.ask(client, "desk-1", "/x", "ping?", 5)
+    assert out["status"] == "answered" and out["answer"] == "pong"
+
+
+async def test_an_empty_answer_is_an_error_not_an_answer():
+    out = await fork.ask(TurnByTurn([result("", "f", num_turns=1)]), "desk-1", "/x", "?", 5)
+    assert out["status"] == "error" and out["answer"] == ""
+    assert "no answer" in out["detail"]
+    failed = await fork.ask(TurnByTurn([result("Prompt is too long", "f", is_error=True)]), "desk-1", "/x", "?", 5)
+    assert failed["status"] == "error" and "Prompt is too long" in failed["detail"]

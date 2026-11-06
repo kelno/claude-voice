@@ -31,6 +31,8 @@ from claude_agent_sdk import (
 # Tools that only read. Everything else is refused, including commands, which could read
 # as well as write and can't be told apart.
 READ_TOOLS = frozenset({"Read", "Grep", "Glob", "LS", "NotebookRead", "ToolSearch"})
+# Empty turns a resumed session may close before reaching the question (see ask).
+LEFTOVER_TURNS = 3
 
 SIDE_SESSION_NOTE = (
     "[From the claude-voice bridge: you are the side session, a fork of this conversation made "
@@ -85,13 +87,19 @@ def fork_options(session_id: str, cwd: str) -> ClaudeAgentOptions:
 async def ask(
     client_factory: Callable[[ClaudeAgentOptions], Any], session_id: str, cwd: str, question: str, wait_seconds: float
 ) -> dict[str, Any]:
-    """Fork the session, ask it `question`, and return its answer and the tools it used."""
+    """Fork the session, ask it `question`, and return its answer and the tools it used.
+
+    status is "answered", "timed_out", or "error" with a `detail`; an empty answer is an
+    error, never an answer.
+    """
     texts: list[str] = []
     tools: Counter[str] = Counter()
     final: str | None = None
+    failure: str | None = None
 
-    async def read(client: Any) -> None:
+    async def read_turn(client: Any) -> ResultMessage | None:
         nonlocal final
+        last: ResultMessage | None = None
         async for msg in client.receive_response():
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
@@ -99,8 +107,26 @@ async def ask(
                         texts.append(block.text.strip())
                     elif isinstance(block, ToolUseBlock):
                         tools[block.name] += 1
-            elif isinstance(msg, ResultMessage) and msg.result:
-                final = msg.result.strip()
+            elif isinstance(msg, ResultMessage):
+                last = msg
+                if msg.result and not msg.is_error:
+                    final = msg.result.strip()
+        return last
+
+    async def read(client: Any) -> None:
+        nonlocal failure
+        for _ in range(LEFTOVER_TURNS + 1):
+            done = await read_turn(client)
+            if done is None:
+                return
+            if done.is_error:
+                failure = done.result or done.subtype or "the fork failed"
+                return
+            # Resuming a session can first close a turn left pending in its own history, such
+            # as background-task notifications: no model call, no words. The answer follows it.
+            if done.num_turns == 0 and not done.result and not texts:
+                continue
+            return
 
     status = "answered"
     async with client_factory(fork_options(session_id, cwd)) as client:
@@ -113,4 +139,9 @@ async def ask(
             with contextlib.suppress(Exception):
                 await client.interrupt()
     answer = final or (texts[-1] if texts else "")
-    return {"status": status, "answer": answer, "tools_used": dict(tools)}
+    out: dict[str, Any] = {"status": status, "answer": answer, "tools_used": dict(tools)}
+    if failure is not None:
+        out.update(status="error", detail=f"Claude Code reported an error: {failure}")
+    elif status == "answered" and not answer:
+        out.update(status="error", detail="the fork finished with no answer; nothing came back to report")
+    return out
