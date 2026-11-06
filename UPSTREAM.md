@@ -45,7 +45,7 @@ The owner's general rule: align with upstream, refactoring the fork to match it,
    - Contribute role (`start_role`): on. Needs the role set up for this PC in `~/.config/claude-voice/roles.toml`: its folder on a separate worktree, not the clone the bridge runs from; its first message following "How we check a pull request here" above (no full mutation sweep, push through `github-agents:`, open the pull request as a draft with `gh` for the owner to review and mark ready), since upstream's asks it to run the whole mutation script and open ready pull requests. Needs `gh` installed and signed in with the agents' account. Set up at the resync, on a separate worktree of the fork on upstream's `main`; `gh` isn't installed yet, so for now the session pushes the branch and the owner opens the pull request.
    - Chosen session (`get_active_session`, `set_active_session`): off; the fork doesn't register the two tools ("Drop the chosen-session tools the owner switched off").
    - Companion app: off. Its API code is in, without its parts for sessions run inside the bridge; its event stream reads the watcher's events through `event_feed()`, a plain function, since `whats_new` is no longer a tool ("Remove whats_new now that every result carries the news").
-   - `refresh_session_summary`, whose summary also shows on the companion page: not decided yet (asked 2026-11-06); in for now. For the relay it overlaps `digest_session`.
+   - `refresh_session_summary`, whose summary also shows on the companion page: dropped as a tool, since the resync's cold read showed it overlapping `digest_session`; the owner was asked on 2026-11-06 and the commit stands alone, to put back if they want it.
    - Plugins: code in, off; no other MCP servers on this PC for now.
 
 ## Differences from upstream
@@ -75,11 +75,12 @@ Every way the fork differs from upstream's `main`, by what an agent calling the 
 | --- | --- | --- |
 | `send_task`, `session_recap`, `cancel`, `close_session`, `list_sessions`, `create_session`, `approve`, `deny`, `list_pending_approvals` | They served sessions run inside the bridge, which the owner couldn't open on the phone or at the PC and whose prompts came only through the relay; all work now runs as ordinary sessions on Remote Control | "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Retire the tools for sessions run inside the bridge" |
 | `get_active_session`, `set_active_session` | The chosen session marks which session the owner talks to, for the companion page; the owner switched it off (resync choice 7), and tools the relay sees but never uses are noise in its list. The companion API's `/api/v1/active` routes stay | "Drop the chosen-session tools the owner switched off" |
+| `refresh_session_summary` | A second tool summing up a session, next to `digest_session`; a fresh agent reading the tools couldn't tell the two apart. The summary stays on the companion page, made by its own route | "Drop the second summary tool, leaving digest_session" |
 | `whats_new` | No relay thought to call it; every result now carries a line on what the relay hasn't read. The companion API's event stream still reads the watcher's events, through `event_feed()`, a plain function | "Tell the relay in every result what it hasn't read yet", "Remove whats_new now that every result carries the news" |
 
 ### Upstream tools new to the fork with the resync
 
-Added upstream after the fork split off, and in since the resync (choice 7): `check_dependencies`, `refresh_session_summary` (whether to keep it is still open), `start_role` (the contribute role, set up for this PC), `update_bridge` and `update_changes` (self-update, with a Windows restart: "Update the bridge on Windows, where there is no systemd").
+Added upstream after the fork split off, and in since the resync (choice 7): `check_dependencies`, `start_role` (the contribute role, set up for this PC), `update_bridge` and `update_changes` (self-update, with a Windows restart: "Update the bridge on Windows, where there is no systemd").
 
 ### Same tools, different behaviour
 

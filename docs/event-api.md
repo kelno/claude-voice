@@ -234,8 +234,7 @@ change by change. A repository with nothing recorded has every measure
 
 `{session}` is a name, an id or a number. Everything on the page is read from the
 session's transcript, so it costs no model call, and the page never makes a
-summary: only the POST does, with a small model, and so does the voice tool
-`refresh_session_summary`. `context` is the same object as on the cards.
+summary: only the POST does, with a small model. `context` is the same object as on the cards.
 `timeline` holds at most the 50 newest items, newest first, of the kinds
 `prompt` (what the owner typed), `question`, `error` (a tool that failed),
 `commit`, `pr_opened` (with `url`), `pr_merged` and `compact`. A helper

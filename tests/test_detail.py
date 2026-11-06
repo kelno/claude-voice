@@ -187,16 +187,12 @@ async def test_an_unknown_session_has_no_page(world):  # noqa: F811
     assert missing.status_code == 404
 
 
-async def test_the_voice_can_refresh_the_summary_of_a_session(world):  # noqa: F811
-    summarizer = Summarizer()
-    summarizer.release.set()
-    server = bridge(world, summarizer)
-    async with Client(server) as c:
-        out = (
-            await c.call_tool("refresh_session_summary", {"session": "billing-ab", "language": "norsk"})
-        ).structured_content
-    assert out["session"] == "billing-ab" and out["summary"].startswith("It made the export faster")
-    assert summarizer.calls[0][1] == "norsk"
+async def test_the_relay_has_one_tool_to_sum_up_a_session_digest_session(world):  # noqa: F811
+    # The page's summary stays a page feature: a second summing-up tool next to digest_session
+    # left a fresh reader unable to tell which to use.
+    async with Client(bridge(world, Summarizer())) as c:
+        names = {t.name for t in (await c.list_tools()).tools}
+    assert "digest_session" in names and "refresh_session_summary" not in names
 
 
 @pytest.mark.parametrize("language", [None, "norsk"])

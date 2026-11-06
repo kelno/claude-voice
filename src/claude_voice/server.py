@@ -2135,25 +2135,6 @@ def build_server(
         live, _ = summary_task(session, language)
         return {"session": str(live.get("sessionId")), "state": "generating"}
 
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def refresh_session_summary(session: str | None = None, language: str | None = None) -> dict[str, Any]:
-        """Make a fresh summary of a running session, read by a small model.
-        The chosen one if `session` is left out, in `language` if given (e.g. "norsk"); the companion
-        app's session page shows it too. Takes about ten seconds."""
-        if not session:
-            session = str((store.get_setting("active_session") or {}).get("id") or "")
-            if not session:
-                raise ToolError("No session is chosen; name one.")
-        try:
-            live, task = summary_task(session, language)
-        except LookupError as exc:
-            raise ToolError(str(exc)) from None
-        summary = await task
-        sid = str(live.get("sessionId"))
-        if summary is None:
-            raise ToolError(f"The summary failed: {summaries.state(sid)['summary_error']}")
-        return {"session": live.get("name"), "summary": summary, "summary_at": summaries.state(sid)["summary_at"]}
-
     def api_output(session: str, limit: int, after: int | None) -> dict[str, Any]:
         live = lookup(session)
         out = read_session_output(str(live.get("sessionId")), limit=limit, after=after)
