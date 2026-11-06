@@ -181,6 +181,15 @@ class Store:
         row = self.db.execute("SELECT 1 FROM started WHERE claude_session_id = ?", (claude_session_id,)).fetchone()
         return row is not None
 
+    def started_session(self, name_or_id: str) -> dict[str, Any] | None:
+        """A session the bridge started, by its Claude session id or name; the newest if names repeat."""
+        row = self.db.execute(
+            "SELECT claude_session_id, name, cwd FROM started WHERE claude_session_id = ? OR name = ? "
+            "ORDER BY rowid DESC LIMIT 1",
+            (name_or_id, name_or_id),
+        ).fetchone()
+        return dict(row) if row else None
+
     def create_session(self, project_path: str, label: str | None = None) -> dict[str, Any]:
         now = self.clock()
         sid = str(uuid.uuid4())

@@ -9,6 +9,7 @@ itself rather than in a copy of its conversation.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import contextvars
 import json
@@ -662,6 +663,56 @@ def clean_env(env: Mapping[str, str]) -> dict[str, str]:
     """The environment for a new session: everything but the starting session's identity."""
     # RULE: a started session does not inherit the identity of the session that started it
     return {k: v for k, v in env.items() if k not in INHERITED}
+
+
+SESSION_ID = re.compile(r"[0-9a-fA-F-]{8,64}")
+
+
+def desktop_handover_command(session_id: str, cwd: str, title: str) -> list[str]:
+    """A Windows Terminal tab, named `title`, that hands a stopped session to the desktop app.
+
+    `claude --desktop` needs a real terminal, so the handover runs where the owner can see it:
+    the tab closes by itself once it worked and stays open with the error otherwise.
+    """
+    import shutil
+
+    if not SESSION_ID.fullmatch(session_id):
+        raise ValueError(f"not a session id: {session_id!r}")
+    # Windows Terminal splits its command line on ";", even inside an argument.
+    tab = " ".join(title.replace(";", " ").replace('"', " ").split()) or "Claude session"
+    script = (
+        f"claude --desktop --resume '{session_id}'\n"
+        "if ($LASTEXITCODE -ne 0) { Read-Host 'The handover to the desktop app failed. Press Enter to close' }\n"
+    )
+    shell = shutil.which("pwsh") or "powershell"
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    return [
+        shutil.which("wt") or "wt",
+        "-w",
+        "new",
+        "new-tab",
+        "--title",
+        tab,
+        "-d",
+        cwd.replace(";", r"\;"),
+        shell,
+        "-NoProfile",
+        "-EncodedCommand",
+        encoded,
+    ]
+
+
+async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
+    """Hand a stopped session to the desktop app, in a terminal tab the owner can see."""
+    proc = await asyncio.create_subprocess_exec(
+        *desktop_handover_command(session_id, cwd, title),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    # Windows Terminal hands the tab to its window and returns at once.
+    if await asyncio.wait_for(proc.wait(), 30):
+        raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
 
 
 def background_command(

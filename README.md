@@ -110,6 +110,7 @@ the bridge says which are missing, with the exact fix, through its
 | `start_active_session` | start a new Claude Code session in the background, ready to talk to at once; with `create_folder`, a new project folder by a plain name under the root, only when asked |
 | `start_role` | start a session for a role, such as `contribute`: say what to change in claude-voice and get a pull request |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
+| `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
 | `message_active_session` | send a message into a session that is open in a terminal; answered `sending` when delivery outlasts the caller's time budget, and finished in the background; returns `next_after` to read the answer from |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
 | `ask_forked_session`, `message_forked_session`, `read_forked_session` | ask the side session, a read-only fork of a busy session's whole conversation that can read the code: ask and wait (within the caller's time budget), send and return, or read its answer later |
