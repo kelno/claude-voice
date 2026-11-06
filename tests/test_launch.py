@@ -71,13 +71,13 @@ def test_with_no_terminal_at_all_there_is_none():
 # -- the settings file -------------------------------------------------------------------
 
 
-def test_new_sessions_get_remote_control_and_a_window_unless_the_settings_file_says_otherwise(tmp_path):
+def test_new_sessions_get_remote_control_in_the_background_unless_the_settings_file_says_otherwise(tmp_path):
     assert config.load(tmp_path / "none.toml", env={"HOME": str(tmp_path)}).sessions == config.Sessions(
-        remote_control=True, launch="terminal", terminal_command=None
+        remote_control=True, launch="background", terminal_command=None
     )
     f = tmp_path / "c.toml"
-    f.write_text('[sessions]\nremote_control = false\nlaunch = "background"\nterminal_command = "kitty"\n')
-    assert config.load(f, env={"HOME": str(tmp_path)}).sessions == config.Sessions(False, "background", "kitty")
+    f.write_text('[sessions]\nremote_control = false\nlaunch = "terminal"\nterminal_command = "kitty"\n')
+    assert config.load(f, env={"HOME": str(tmp_path)}).sessions == config.Sessions(False, "terminal", "kitty")
 
 
 def test_a_way_of_starting_a_session_that_does_not_exist_is_refused(tmp_path):
@@ -125,30 +125,32 @@ def bridge(world, starter, sessions=None, find=GNOME, env=DESKTOP):
     )
 
 
-async def test_a_started_session_opens_in_a_window_with_remote_control_by_default(world):
+async def test_a_started_session_runs_in_the_background_with_remote_control_by_default(world):
     starter = Starter(world / "live")
     async with Client(bridge(world, starter)) as c:
         out = (await c.call_tool("start_active_session", {"project": "billing", "name": "inv"})).structured_content
     assert starter.calls[0]["remote_control"] is True
-    assert starter.calls[0]["terminal"][0] == "gnome-terminal"
-    assert out["started_in"] == "window"
+    assert starter.calls[0]["terminal"] is None
+    assert out["started_in"] == "background"
 
 
-async def test_one_start_can_go_to_the_background_without_changing_the_setting(world):
+async def test_one_start_can_open_in_a_window_without_changing_the_setting(world):
     starter = Starter(world / "live")
     async with Client(bridge(world, starter)) as c:
         once = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "a", "start_in": "background"})
+            await c.call_tool("start_active_session", {"project": "billing", "name": "a", "start_in": "terminal"})
         ).structured_content
         after = (await c.call_tool("start_active_session", {"project": "billing", "name": "b"})).structured_content
-    assert starter.calls[0]["terminal"] is None and once["started_in"] == "background"
-    assert after["started_in"] == "window"
+    assert starter.calls[0]["terminal"][0] == "gnome-terminal" and once["started_in"] == "window"
+    assert after["started_in"] == "background"
 
 
 async def test_with_no_terminal_to_open_the_session_starts_in_the_background_and_says_so(world):
     starter = Starter(world / "live")
     async with Client(bridge(world, starter, find=finder())) as c:
-        out = (await c.call_tool("start_active_session", {"project": "billing", "name": "inv"})).structured_content
+        out = (
+            await c.call_tool("start_active_session", {"project": "billing", "name": "inv", "start_in": "terminal"})
+        ).structured_content
     assert starter.calls[0]["terminal"] is None and out["started_in"] == "background"
     assert "terminal" in out["note"]
 
@@ -166,15 +168,15 @@ async def test_the_settings_page_reads_and_changes_how_new_sessions_start(world)
     async with client(build_app(server)) as c:
         first = (await c.get("/api/v1/settings", headers=BEARER)).json()
         with api.HUB.subscribe() as events:
-            changed = await c.put("/api/v1/settings", json={"start_in": "background"}, headers=BEARER)
+            changed = await c.put("/api/v1/settings", json={"start_in": "terminal"}, headers=BEARER)
             event = events.get_nowait()
         again = (await c.get("/api/v1/settings", headers=BEARER)).json()
     async with Client(server) as mcp:
         out = (await mcp.call_tool("start_active_session", {"project": "billing", "name": "x"})).structured_content
-    assert first["remote_control"] is True and first["start_in"] == "terminal"
-    assert changed.status_code == 200 and again["start_in"] == "background" and again["remote_control"] is True
-    assert event[0] == "settings" and event[1]["start_in"] == "background"
-    assert out["started_in"] == "background"
+    assert first["remote_control"] is True and first["start_in"] == "background"
+    assert changed.status_code == 200 and again["start_in"] == "terminal" and again["remote_control"] is True
+    assert event[0] == "settings" and event[1]["start_in"] == "terminal"
+    assert out["started_in"] == "window"
 
 
 @pytest.mark.parametrize(

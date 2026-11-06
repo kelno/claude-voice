@@ -59,7 +59,7 @@ async def test_a_started_session_runs_in_the_background_and_is_listed_at_once(tm
     async with Client(bridge(tmp_path, world, starter)) as c:
         out = (await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})).structured_content
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
-    assert out["started_in"] == "background" and out["note"].startswith("No terminal")
+    assert out["started_in"] == "background" and "note" not in out
     assert {k: out[k] for k in ("name", "claude_session_id", "project", "status")} == {
         "name": "invoices",
         "claude_session_id": "sid-invoices",

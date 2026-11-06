@@ -14,6 +14,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   local tools.
 - Risky actions wait for a spoken approval and are refused after ten minutes.
 - Sessions open elsewhere can be listed, messaged, read and searched.
+- `create_session` is gone: new work starts with `start_active_session`, whose
+  sessions the owner can also open on the phone and at the PC. They start in the
+  background on Remote Control unless one start asks for a terminal window.
+- A background session waiting on a permission prompt shows what it asks.
 - `whats_new`, a cheap delta of what happened since the last poll.
 - `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` sets how long an access token lasts, for a
   bridge on a computer that sleeps: the Claude app gives a connector up after about

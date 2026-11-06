@@ -92,7 +92,7 @@ the bridge says which are missing, with the exact fix, through its
 | --- | --- |
 | `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
-| `create_session`, `send_task` | start Claude on a task; it answers at once and works in the background |
+| `send_task` | give a resumed conversation a task; it answers at once and works in the background |
 | `session_recap` | where one session stands, short enough to read aloud |
 | `whats_new` | only what happened since you last asked: finished, failed, waiting for you |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
@@ -344,7 +344,7 @@ contribute = "~/src/claude-voice"            # the contribute session's clone; d
 
 [sessions]
 remote_control = true                        # a started session can be opened in the Claude app
-launch = "terminal"                          # or "background"
+launch = "background"                        # or "terminal"
 terminal_command = "kitty --directory {cwd}" # default: gnome-terminal, kgx, konsole or xterm, the first found
 
 [budgets]                                    # seconds each kind of client is answered within
@@ -353,10 +353,12 @@ voice_app = 120
 default = 60
 ```
 
-A session the bridge starts opens in a terminal window on your desktop, so you
-can watch it and type into it, and with Remote Control, so the Claude app on
-your phone can open it too. Without a desktop it opens in tmux (`tmux attach`
-reaches it), and with no terminal at all in the background. The companion
+A session the bridge starts runs in the background with Remote Control, so the
+Claude app on your phone and the desktop app's sidebar can open it, with no
+terminal needed. With `launch = "terminal"`, or `start_in` on one start, it
+opens in a terminal window on your desktop instead, so you can watch it and
+type into it; without a desktop that is tmux (`tmux attach` reaches it), and
+with no terminal at all it falls back to the background. The companion
 app's settings page changes `remote_control` and where sessions start, and one
 start can ask otherwise; the terminal command is set only here.
 

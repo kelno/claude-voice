@@ -156,6 +156,47 @@ def continued_in(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -
     return None
 
 
+_CSI = re.compile(r"\x1b\[[0-9;?]*([A-Za-z])")
+_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_DRAWING = str.maketrans({c: " " for c in "╌─│❯"})
+_OPTION = re.compile(r"\d\. ")
+
+
+def prompt_from_screen(screen: str) -> str | None:
+    """The permission prompt at the end of a session's screen, as plain text, if it waits on one.
+
+    Claude Code's screen shows the tool call it wants to run, what it would do, the
+    question and the numbered answers; the drawing around them is dropped.
+    """
+    text = _CSI.sub(lambda m: " " if m[1] == "C" else "", _OSC.sub("", screen))
+    lines = [" ".join(line.translate(_DRAWING).split()) for line in re.split(r"\r\n|\r|\n", text)]
+    lines = [line for line in lines if line]
+    start = max((i for i, line in enumerate(lines) if line.startswith("● ")), default=None)
+    options = [i for i, line in enumerate(lines) if _OPTION.match(line)]
+    if start is None or not options or options[-1] < start:
+        return None
+    block = lines[start : options[-1] + 1]
+    block[0] = block[0][2:]
+    return "\n".join(block)[:800]
+
+
+def pending_prompt(job_id: str) -> str | None:
+    """The permission prompt a background session waits on, read from its screen (`claude logs`)."""
+    import shutil
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [shutil.which("claude") or "claude", "logs", job_id],
+            capture_output=True,
+            timeout=15,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return prompt_from_screen(out.stdout.decode("utf-8", errors="replace"))
+
+
 def open_question(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> dict[str, Any] | None:
     """The multiple-choice question a session is waiting on its user to answer, if any.
 

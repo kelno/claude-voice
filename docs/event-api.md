@@ -251,10 +251,10 @@ last good `summary` is kept). The stream carries `summary` with
 | `GET /api/v1/settings` | `{"remote_control": true, "start_in": "terminal"\|"background", "updated_at": null\|"<time>"}` |
 | `PUT /api/v1/settings` | any of `remote_control` (true or false) and `start_in`; returns the whole object. `400` with `{"error"}` for a key that does not exist or a value that does not fit. A change: with the cookie it needs an allowed `Origin` |
 
-A session the bridge starts (`start_active_session`, a role) opens in a terminal
-window on the desktop, or in tmux when no desktop is reachable, and with Remote
-Control, so it can be opened in the Claude app; this page changes that for every
-new session, and `start_active_session` takes `start_in` and `remote_control` to
+A session the bridge starts (`start_active_session`, a role) runs in the
+background, or in a terminal window on the desktop (tmux when no desktop is
+reachable), and with Remote Control, so it can be opened in the Claude app; this
+page changes that for every new session, and `start_active_session` takes `start_in` and `remote_control` to
 change it for one start. Its reply says `started_in` (`window`, `tmux` or
 `background`). The defaults, and which terminal opens, are the settings file's
 `[sessions]` section; the terminal command is never set from here. The stream

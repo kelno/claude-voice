@@ -18,7 +18,7 @@ runs from, so the file is only needed to change something:
 
     [sessions]
     remote_control = true                       # a session the bridge starts is reachable from the Claude app
-    launch = "terminal"                         # or "background": where a started session runs
+    launch = "background"                       # or "terminal": where a started session runs
     terminal_command = "kitty --directory {cwd}"  # default: the first of gnome-terminal, kgx, konsole, xterm
 
     [budgets]                                   # seconds each client is answered within
@@ -67,7 +67,7 @@ class Paths:
 @dataclass
 class Sessions:
     remote_control: bool = True
-    launch: str = "terminal"
+    launch: str = "background"
     terminal_command: str | None = None
 
 
@@ -189,7 +189,7 @@ def load(path: Path | None = FILE, own_clone: Path | None = None, env: Mapping[s
 
 
 def _sessions(raw: dict[str, Any]) -> Sessions:
-    launch = raw.get("launch", "terminal")
+    launch = raw.get("launch", "background")
     # RULE: a way of starting a session that does not exist is refused
     if launch not in LAUNCHES:
         raise ConfigError(f"[sessions] launch = {launch!r} is not one of: {', '.join(LAUNCHES)}")

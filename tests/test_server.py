@@ -39,12 +39,11 @@ async def call(client, name, **args):
 
 
 async def test_exposes_the_voice_control_tools(tmp_path, root):
-    _, server = make(tmp_path, root, FakeClaude())
+    m, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     assert {
         "list_projects",
-        "create_session",
         "list_sessions",
         "send_task",
         "session_recap",
@@ -57,12 +56,13 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
         "approve",
         "deny",
     } <= names
+    assert "create_session" not in names  # new work starts as a background session
 
 
 async def test_a_voice_round_trip(tmp_path, root):
     m, server = make(tmp_path, root, FakeClaude([init("c-1"), say("On it."), result("Done.", "c-1")]))
     async with Client(server) as client:
-        s = await call(client, "create_session", project="app", label="demo")
+        s = m.create("app", "demo")
         sent = await call(client, "send_task", session_id=s["id"], prompt="do it")
         assert sent["status"] == "running"
         await m.wait(s["id"])
@@ -79,10 +79,7 @@ async def test_mistakes_come_back_as_readable_tool_errors(tmp_path, root):
     pause = Pause()
     m, server = make(tmp_path, root, FakeClaude([pause]))
     async with Client(server) as client:
-        bad = await client.call_tool("create_session", {"project": "/etc"})
-        assert bad.is_error and "under" in bad.content[0].text
-
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="go")
         await pause.reached.wait()
         busy = await client.call_tool("send_task", {"session_id": s["id"], "prompt": "again"})
@@ -225,7 +222,7 @@ async def test_approvals_can_be_answered_through_tools(tmp_path, root):
     claude = FakeClaude([Call(ask), result("built", "c-1")])
     m = SessionManager(store, project_root=root, client_factory=claude, approvals=broker)
     async with Client(build_server(m)) as client:
-        s = await call(client, "create_session", project="app")
+        s = m.create("app")
         await call(client, "send_task", session_id=s["id"], prompt="build")
         for _ in range(200):
             pending = (await call(client, "list_pending_approvals"))["approvals"]

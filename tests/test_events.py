@@ -122,7 +122,7 @@ async def test_whats_new_returns_only_the_delta_since_the_cursor(store, live, ro
         first = await call(c, "whats_new")
         assert first["events"] == []
 
-        s = await call(c, "create_session", project="app", label="bugfix")
+        s = m.create("app", "bugfix")
         await call(c, "send_task", session_id=s["id"], prompt="fix it")
         await m.wait(s["id"])
         put(live, "term-1", "idle", str(root / "lib"))
@@ -149,7 +149,7 @@ async def test_whats_new_flags_approvals_and_errors(store, live, root):
     m, broker, srv = server(store, live, root, [Call(ask)])
     async with Client(srv) as c:
         start = await call(c, "whats_new")
-        s = await call(c, "create_session", project="app", label="build")
+        s = m.create("app", "build")
         await call(c, "send_task", session_id=s["id"], prompt="build")
         for _ in range(200):
             if broker.pending():
