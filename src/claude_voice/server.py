@@ -504,6 +504,7 @@ def build_server(
     find_program: Callable[[str], str | None] = procs.find,
     desktop_env: Mapping[str, str] | None = None,
     ci_status: Callable[[str], dict[str, Any] | None] = software.latest_run,
+    jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
 ) -> MCPServer:
     auth = None
@@ -1142,9 +1143,8 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def rename_session(session: str, name: str) -> dict[str, Any]:
         """Rename a session the bridge started, once its turn has ended.
-        The name goes into its conversation, where Claude Code takes it up the next time the
-        session reads it. status: "renamed", "busy" (mid-turn; nothing done) or
-        "not_started_here"."""
+        Shows within seconds in the session lists, and the name stays when it is woken again.
+        status: "renamed", "busy" (mid-turn; nothing done) or "not_started_here"."""
         new = transcripts.clean_name(name)
         if not new:
             raise ToolError("A name needs at least one visible character.")
@@ -1154,11 +1154,11 @@ def build_server(
         if own is None:
             return {"session": session, "status": "not_started_here"}
         sid, cwd = own["claude_session_id"], own["cwd"]
-        # Claude Code writes its transcript during a turn; a line added then could land inside one of its own.
+        # Claude Code rewrites the job record often during a turn; a change made then could be lost.
         if live and live.get("status") != "idle":
             return {"session": own["name"], "claude_session_id": sid, "status": "busy"}
         try:
-            transcripts.write_name(sid, cwd, new, projects_dir)
+            transcripts.rename_job(sid, new, jobs_dir)
         except OSError as exc:
             raise ToolError(f"Could not rename {own['name']}: {exc}") from None
         store.record_started(sid, new, cwd)

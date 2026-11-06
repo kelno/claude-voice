@@ -127,6 +127,8 @@ def clip(text: str, max_chars: int) -> str:
 
 
 PROJECTS_DIR = Path("~/.claude/projects").expanduser()
+# Claude Code keeps one record per background session here, as <short id>/state.json.
+JOBS_DIR = Path("~/.claude/jobs").expanduser()
 
 
 def continued_in(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> str | None:
@@ -319,24 +321,29 @@ def clean_name(name: str, limit: int = 60) -> str:
     return " ".join("".join(" " if not ch.isprintable() else ch for ch in name).split())[:limit].strip()
 
 
-def write_name(session_id: str, cwd: str, name: str, projects_dir: Path = PROJECTS_DIR) -> None:
-    """Give a session a new name the way Claude Code reads one another process gave it.
+def rename_job(session_id: str, name: str, jobs_dir: Path = JOBS_DIR) -> None:
+    """Give a background session a new name through its job record, as Claude Code allows.
 
-    Claude Code keeps a session's name in its transcript, as a custom-title and an agent-name
-    line, and a running session takes up a name written there by another process the next time
-    it reads the end of its transcript.
+    A running background session watches its job record and renames itself at once when another
+    process writes a new name there; waking it again starts it with the record's saved flags, so
+    the name in `--name` is changed too. The record is replaced whole, never half-written.
     """
-    path = projects_dir / project_key_for_directory(cwd) / f"{session_id}.jsonl"
-    if not path.is_file():
-        raise FileNotFoundError(f"no transcript for {session_id}")
-    lines = [
-        {"type": "custom-title", "customTitle": name, "sessionId": session_id},
-        {"type": "agent-name", "agentName": name, "sessionId": session_id},
-    ]
-    # Compact, as Claude Code writes them, in case it finds a name by matching the text.
-    text = "".join(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n" for line in lines)
-    with path.open("a", encoding="utf-8", newline="") as f:
-        f.write(text)
+    for path in jobs_dir.glob("*/state.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if record.get("sessionId") != session_id:
+            continue
+        record["name"], record["nameSource"] = name, "user"
+        flags = record.get("respawnFlags")
+        if isinstance(flags, list) and "--name" in flags[:-1]:
+            flags[flags.index("--name") + 1] = name
+        fresh = path.with_name("state.json.rename")
+        fresh.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(fresh, path)
+        return
+    raise FileNotFoundError(f"no job record for {session_id}")
 
 
 def read_raw_transcript(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> list[Any]:
