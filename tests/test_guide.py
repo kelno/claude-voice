@@ -47,7 +47,8 @@ def test_the_manual_states_its_central_rules():
         "attach_conversation",  # resumed work
         "self-contained brief",  # what a session's first task holds
         "propose changes before applying",  # delegated work is proposed first, unless the owner says otherwise
-        "never ask a desktop",  # the app refuses a start from a relayed message
+        "so never ask one to",  # a desktop session: the app refuses a start from a relayed message
+        "a session the bridge started can",  # unlike a desktop session, it starts new work itself
         "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
     ):

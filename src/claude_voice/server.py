@@ -159,7 +159,8 @@ The relay's scope
   change within that session's plan goes to it rather than being done by you
   on the side.
 - When a session already holds the context for new work, have it write the
-  brief, start the new session itself if it can, and send the brief; then ask
+  brief, start the new session itself if it can (see Sessions: a session the
+  bridge started can, a desktop session can't), and send the brief; then ask
   it for the new session's name. It stays reachable for the new session's
   questions. If it can't start one, start it yourself with the first message
   it wrote: the relay only works from summaries, so its briefs lose details
@@ -210,9 +211,10 @@ News
 
 Sessions
 - New work: start_active_session, or attach_conversation to resume an earlier
-  conversation, then give it its task. Never ask a desktop session to start
-  one: the app refuses a start from a relayed message and puts a card in front
-  of the owner.
+  conversation, then give it its task. A session the bridge started can start
+  one itself with the bridge's tools. A desktop session (one the owner opened
+  in the desktop app) can't: the app refuses a start from a relayed message
+  and puts a card in front of the owner, so never ask one to.
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
