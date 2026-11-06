@@ -9,6 +9,7 @@ the Claude desktop app makes for a session opens even though it sits inside AppD
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import sys
 import time
@@ -26,6 +27,9 @@ CREATE TABLE IF NOT EXISTS access_grants(folder TEXT PRIMARY KEY, granted_at REA
 """
 
 HOME_SECRETS = (".ssh", ".gnupg", ".claude", ".config/claude-voice", "AppData")
+
+# Claude Code's own configuration file, which holds the workspace trust it saved per folder.
+CLAUDE_CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~").expanduser() / ".claude.json"
 
 
 def default_denied(home: Path | None = None) -> list[Path]:
@@ -154,3 +158,32 @@ class Access:
         if not gone:
             raise ValueError(f"{p} was not opened with request_access; health lists the opened folders")
         return p
+
+
+def trust_root(folder: Path) -> Path:
+    """The folder Claude Code keys its workspace trust on: the git repository holding `folder`,
+    or `folder` itself outside one."""
+    for candidate in (folder, *folder.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return folder
+
+
+def trust_in_claude_code(folder: str | Path, config: Path = CLAUDE_CONFIG) -> str:
+    """Mark a folder trusted in Claude Code, as its docs say to do by hand; returns the key set.
+
+    Claude Code refuses to start a background session in a folder it was never trusted in, and
+    asks only in a terminal. Its docs give the manual route: `hasTrustDialogAccepted` set to true
+    under `projects["<path>"]` in its config file, keyed on the repository root. Everything else
+    in the file is kept, and the file is replaced in one step, so a reader never sees half of it.
+    Raises OSError or ValueError when the file can't be read or written.
+    """
+    key = trust_root(Path(folder).resolve()).as_posix()
+    data = json.loads(config.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{config} is not a JSON object")
+    data.setdefault("projects", {}).setdefault(key, {})["hasTrustDialogAccepted"] = True
+    staged = config.with_name(f"{config.name}.claude-voice-{os.getpid()}")
+    staged.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(staged, config)
+    return key

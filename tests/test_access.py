@@ -45,7 +45,14 @@ def server(world, root=None):
         denied=access.default_denied(world["home"]),
         exempt=access.default_exempt(world["home"]),
     )
-    return m, build_server(m, conversations=lambda **k: [], live_dir=world["live"])
+    config = world["tmp"] / ".claude.json"  # Claude Code's own file, never the real one here
+    return m, build_server(m, conversations=lambda **k: [], live_dir=world["live"], claude_config=config)
+
+
+def trusted(world) -> dict:
+    """Claude Code's workspace trust per folder, as its config file holds it."""
+    config = json.loads((world["tmp"] / ".claude.json").read_text(encoding="utf-8"))
+    return {k: v.get("hasTrustDialogAccepted") for k, v in config.get("projects", {}).items()}
 
 
 async def call(client, name, **args):
@@ -134,6 +141,56 @@ async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
         granted = await call(c, "request_access", folder=str(world["elsewhere"]))
     assert granted["folder"] == str(world["elsewhere"].resolve())
     assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
+
+
+async def test_a_folder_opened_by_path_is_trusted_by_claude_code_too(world):
+    # Claude Code won't start a background session in a folder it was never trusted in, so the
+    # owner's one approval of request_access covers its trust too, as its docs say to set it.
+    (world["tmp"] / ".claude.json").write_text(
+        json.dumps({"numStartups": 7, "projects": {"C:/elsewhere": {"hasTrustDialogAccepted": True, "x": 1}}}),
+        encoding="utf-8",
+    )
+    _, srv = server(world)
+    async with Client(srv) as c:
+        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+    key = world["elsewhere"].resolve().as_posix()
+    assert granted["trusted"] == key
+    assert trusted(world) == {"C:/elsewhere": True, key: True}
+    config = json.loads((world["tmp"] / ".claude.json").read_text(encoding="utf-8"))
+    assert config["numStartups"] == 7 and config["projects"]["C:/elsewhere"]["x"] == 1
+
+
+async def test_a_folder_inside_a_repository_is_trusted_at_the_repository_root(world):
+    # Claude Code keys trust on the repository's root, so that is the folder it checks.
+    repo = world["elsewhere"]
+    (repo / ".git").mkdir()
+    (world["tmp"] / ".claude.json").write_text("{}", encoding="utf-8")
+    _, srv = server(world)
+    async with Client(srv) as c:
+        granted = await call(c, "request_access", folder=str(repo / "sub"))
+    assert granted["trusted"] == repo.resolve().as_posix()
+    assert trusted(world) == {repo.resolve().as_posix(): True}
+
+
+async def test_a_trust_that_cannot_be_written_leaves_the_grant_and_says_why(world):
+    (world["tmp"] / ".claude.json").write_text("not json", encoding="utf-8")
+    m, srv = server(world)
+    async with Client(srv) as c:
+        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+    assert granted["granted"] and "trusted" not in granted
+    assert "trust" in granted["trust_not_set"]
+    assert (world["tmp"] / ".claude.json").read_text(encoding="utf-8") == "not json"
+    assert m.resolve_project(str(world["elsewhere"])) == world["elsewhere"].resolve()
+
+
+async def test_a_session_s_folder_is_left_to_claude_code_s_own_trust(world):
+    # A session already runs there, so Claude Code trusts it; its config is left alone.
+    running(world, 2, "Notes", world["elsewhere"])
+    _, srv = server(world)
+    async with Client(srv) as c:
+        granted = await call(c, "request_access", session="Notes")
+    assert "trusted" not in granted
+    assert not (world["tmp"] / ".claude.json").exists()
 
 
 async def test_a_folder_by_path_is_refused_when_closed_relative_missing_or_doubled(world):

@@ -180,7 +180,9 @@ and `/api/v1/doctor` say whether such a port is there.
     its name, folder and status, marked `access: "folder_not_open"`: it cannot be
     read or messaged.
   - `request_access` opens that session's folder and everything under it, for
-    good; given a full path instead, it opens a folder no session runs in yet. It is marked destructive, so the Claude app asks you before every
+    good; given a full path instead, it opens a folder no session runs in yet,
+    and marks it trusted in Claude Code, which won't start a session in a folder
+    it never trusted. It is marked destructive, so the Claude app asks you before every
     grant, and only you can answer.
   - Some folders are never opened, inside the root or not: `.ssh`, `.gnupg`,
     `.claude`, `.config/claude-voice` and `AppData` in your home folder, and the

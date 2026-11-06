@@ -52,6 +52,11 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29.
 - Later (2026-11-05): `request_access(folder=<full path>)` opens a folder no
   session runs in yet, so work can start remotely in a folder never used from
   the bridge. Same grant, same deny list, same approval in the app.
+  The same approval also marks the folder trusted in Claude Code
+  (`projects["<path>"].hasTrustDialogAccepted` in its config file, at the git
+  repository's root when inside one, as its docs describe), since Claude Code
+  refuses a background session in a folder it never trusted and asks only in a
+  terminal. A closed repository root is never trusted.
 
 ## Consequences
 
