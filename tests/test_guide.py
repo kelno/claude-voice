@@ -39,6 +39,8 @@ def test_the_manual_states_its_central_rules():
         "news",  # a result's news line: how the watched sessions stand, and prompts waiting
         "watch_session",  # how a session the relay never touched gets into the news line
         "nothing new",  # every watched session has an entry, so nothing new isn't mistaken for unwatched
+        "when a topic with the owner wraps up",  # the relay checks the news then, rather than offering to
+        "one thing at a time",  # in voice, news comes what needs the owner first, the rest when asked
         "before telling the owner what it said",  # news says something is new, not what
         "already approved",  # work done as agreed is confirmed briefly, not walked through again
         "start_active_session",  # new work
