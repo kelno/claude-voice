@@ -1256,7 +1256,7 @@ def build_server(
         return {"folder": str(closed), "granted": False}
 
     @tool(
-        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True),
+        annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def message_active_session(session: str, message: str) -> dict[str, Any]:
         """Send to a session and return at once; wait_for_session then gets the reply.
@@ -1368,7 +1368,7 @@ def build_server(
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
         }
 
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def ask_active_session(
         session: str, message: str, wait_seconds: float = 20, max_chars: int = 600
     ) -> dict[str, Any]:
