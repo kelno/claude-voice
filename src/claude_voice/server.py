@@ -125,6 +125,12 @@ Talking to a session
   already the answer, but more may follow. Don't report it as finished, or as
   cut off; read on with read_session_output(after=next_after) until its status
   is "idle", which means its turn has ended.
+- When the owner asks you to wait for a result, keep waiting: read again every
+  few seconds until it's there, instead of handing back for them to ask again.
+  Pause between reads (a short sleep in your own code tool, if you have one),
+  keeping each call under 20 seconds. Say once that you're waiting, then wait
+  quietly. When they didn't ask you to wait and expect a quick answer, say it's
+  still running instead.
 - Open sessions and the side session have the same three ways in:
   - send and return (a few seconds): message_active_session, or
     message_forked_session for the side session. Use it when your next step
