@@ -120,6 +120,11 @@ Talking to a session
 - No call waits past the caller's time budget, whatever wait_seconds asks: 20
   seconds for the Claude app, which drops a call after about 30. Past that a
   call says "still_working", and you read on with the matching read tool.
+- An open session's reply is its final word only when reply_final is true. With
+  "still_working", reply is its latest message so far: whole, and possibly
+  already the answer, but more may follow. Don't report it as finished, or as
+  cut off; read on with read_session_output(after=next_after) until its status
+  is "idle", which means its turn has ended.
 - Open sessions and the side session have the same three ways in:
   - send and return (a few seconds): message_active_session, or
     message_forked_session for the side session. Use it when your next step
