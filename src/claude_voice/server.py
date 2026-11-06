@@ -10,8 +10,6 @@ import logging.handlers
 import os
 import re
 import secrets
-import subprocess
-import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -526,6 +524,7 @@ def build_server(
     roles_file: Path | None = roles.USER_FILE,
     doctor_host: doctor.Host | None = None,
     bridge_port: int = 8811,
+    bridge_host: str = "127.0.0.1",
     statusline_dir: Path = usage.STATUSLINE_DIR,
     update_log: Path = updater.LOG,
     launch_update: Callable[[Path, Path], None] | None = None,
@@ -1151,14 +1150,8 @@ def build_server(
         }
 
     def launch_updater(folder: Path, log: Path) -> None:
-        """Start the updater outside this service, so it survives the restart it causes."""
-        systemd_run = procs.find("systemd-run")
-        if not systemd_run:
-            raise RuntimeError("Updating needs systemd-run, to run outside the bridge's own service.")
-        unit = f"claude-voice-update-{int(time.time())}"
-        command = [systemd_run, "--user", "--collect", "--quiet", f"--unit={unit}", sys.executable]
-        command += ["-m", "claude_voice.updater", "--repo", str(folder), "--log", str(log), "--port", str(bridge_port)]
-        subprocess.run(command, check=True, capture_output=True, timeout=30)
+        """Start the updater outside this bridge, so it survives the restart it causes."""
+        updater.launch(folder, log, bridge_port, bridge_host)
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
     def update_bridge() -> dict[str, Any]:
@@ -2312,7 +2305,13 @@ def serve_forever(cfg: Config) -> None:
     )
     restart = metrics.restart_info("~/.local/state/claude-voice/restarts")
     server = build_server(
-        manager, oauth=oauth, watch_interval=5.0, restart=restart, ui_origins=cfg.ui_origins, bridge_port=cfg.port
+        manager,
+        oauth=oauth,
+        watch_interval=5.0,
+        restart=restart,
+        ui_origins=cfg.ui_origins,
+        bridge_port=cfg.port,
+        bridge_host=cfg.host,
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)
     configure_logging(cfg.db.parent / LOG_FILE)

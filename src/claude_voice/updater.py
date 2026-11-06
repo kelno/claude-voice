@@ -1,7 +1,7 @@
 """Update claude-voice in place: pull, install, test, restart, and roll back if anything fails.
 
-It runs as its own process, started by the bridge with `systemd-run --user`, because
-it restarts the bridge's service and must outlive the bridge doing so. Every step is
+It runs as its own process, started by the bridge with `systemd-run --user` (on Windows, as
+a detached process), because it restarts the bridge and must outlive the bridge doing so. Every step is
 written to a small JSON log as it happens; the bridge, old and new, reads that log to
 answer GET /api/v1/update and to tell open streams how it goes.
 
@@ -14,7 +14,10 @@ The rules, in order:
 - if the new version does not come back healthy, the old one is put back,
   installed and started again.
 
-Run: python -m claude_voice.updater --repo <clone> --log <file> [--port 8811]
+On Windows there is no service manager: the updater ends the bridge with RESTART_EXIT, and
+the script that runs the bridge starts it again when it ends with that code.
+
+Run: python -m claude_voice.updater --repo <clone> --log <file> [--port 8811] [--host 127.0.0.1]
 """
 
 from __future__ import annotations
@@ -32,10 +35,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from . import procs
 
 LOG = Path("~/.local/state/claude-voice/update.json")
 SERVICE = "claude-voice"
+# On Windows the script that runs the bridge starts it again when it ends with this code.
+RESTART_EXIT = 75
+# A process of its own with no console, so it outlives the bridge that started it.
+WINDOWS_DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 HEALTHY_WITHIN = 60.0
 
 
@@ -184,16 +193,56 @@ def _uv(repo: Path, *args: str) -> tuple[bool, str]:
     return out.returncode == 0, tail[-1] if tail else ""
 
 
+def launch(
+    folder: Path,
+    log: Path,
+    port: int,
+    host: str,
+    platform: str = sys.platform,
+    popen: Callable[..., Any] = subprocess.Popen,
+) -> None:
+    """Start the updater outside the bridge, so it survives the restart it causes."""
+    args = ["-m", "claude_voice.updater", "--repo", str(folder), "--log", str(log), "--port", str(port), "--host", host]
+    if platform == "win32":
+        quiet = subprocess.DEVNULL
+        popen([sys.executable, *args], creationflags=WINDOWS_DETACHED, stdin=quiet, stdout=quiet, stderr=quiet)
+        return
+    systemd_run = procs.find("systemd-run")
+    if not systemd_run:
+        raise RuntimeError("Updating needs systemd-run, to run outside the bridge's own service.")
+    unit = f"claude-voice-update-{int(time.time())}"
+    command = [systemd_run, "--user", "--collect", "--quiet", f"--unit={unit}", sys.executable, *args]
+    subprocess.run(command, check=True, capture_output=True, timeout=30)
+
+
 def _restart() -> None:
     subprocess.run(["systemctl", "--user", "restart", SERVICE], capture_output=True, timeout=120, check=False)
 
 
-def _healthy(port: int) -> Callable[[], bool]:
+def restart_on_windows(
+    port: int,
+    connections: Callable[[], list[Any]] = lambda: psutil.net_connections(kind="tcp"),
+    end: Callable[[int, int], None] = os.kill,
+) -> None:
+    """End the bridge listening on `port` with RESTART_EXIT, for its script to start it again."""
+    for c in connections():
+        if c.status == "LISTEN" and c.laddr and c.laddr.port == port and c.pid:
+            end(c.pid, RESTART_EXIT)  # on Windows os.kill ends the process with this exit code
+            return
+
+
+def health_host(host: str) -> str:
+    """Where to ask the bridge whether it is healthy: the address it listens on, or this
+    computer when it listens on every address."""
+    return "127.0.0.1" if host in ("", "0.0.0.0", "::") else host  # noqa: S104 - compared, not bound
+
+
+def _healthy(port: int, host: str = "127.0.0.1") -> Callable[[], bool]:
     def check() -> bool:
         deadline = time.monotonic() + HEALTHY_WITHIN
         while time.monotonic() < deadline:
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as r:  # noqa: S310
+                with urllib.request.urlopen(f"http://{host}:{port}/healthz", timeout=3) as r:  # noqa: S310
                     if r.status == 200:
                         return True
             except OSError:
@@ -209,14 +258,15 @@ def main() -> int:
     parser.add_argument("--repo", required=True, type=Path)
     parser.add_argument("--log", default=str(LOG))
     parser.add_argument("--port", type=int, default=8811)
+    parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args()
     outcome = run(
         args.repo,
         Path(args.log).expanduser(),
         install=lambda repo: _uv(repo, "sync", "--locked", "--all-extras"),
         tests=lambda repo: _uv(repo, "run", "pytest", "-q", "-p", "no:cacheprovider"),
-        restart=_restart,
-        healthy=_healthy(args.port),
+        restart=(lambda: restart_on_windows(args.port)) if sys.platform == "win32" else _restart,
+        healthy=_healthy(args.port, health_host(args.host)),
     )
     return 0 if outcome["result"] in ("updated", "up_to_date") else 1
 

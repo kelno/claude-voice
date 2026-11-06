@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -274,3 +275,35 @@ def test_a_refused_fetch_says_why_and_what_to_do():
         updater.fetch_failure("fatal: unable to access: Could not resolve host")
         == "Could not fetch the latest version."
     )
+
+
+def test_the_bridge_on_windows_starts_the_updater_detached_so_it_outlives_the_restart(tmp_path):
+    """No systemd-run there: the updater is its own detached process, told where the bridge listens."""
+    started = []
+
+    def popen(command, **kwargs):
+        started.append((command, kwargs))
+
+    updater.launch(tmp_path, tmp_path / "update.json", 8811, "10.0.0.2", platform="win32", popen=popen)
+    command, kwargs = started[0]
+    assert command[1:] == [
+        "-m", "claude_voice.updater", "--repo", str(tmp_path), "--log", str(tmp_path / "update.json"),
+        "--port", "8811", "--host", "10.0.0.2",
+    ]  # fmt: skip
+    assert kwargs["creationflags"] == updater.WINDOWS_DETACHED
+
+
+def test_the_updater_on_windows_ends_the_bridge_so_its_launcher_starts_it_again():
+    """The bridge's launcher runs it again when it ends with RESTART_EXIT; the updater ends it so."""
+    ended = []
+    listening = [SimpleNamespace(status="LISTEN", laddr=SimpleNamespace(port=8811), pid=4242)]
+    other = [SimpleNamespace(status="LISTEN", laddr=SimpleNamespace(port=9000), pid=7)]
+    updater.restart_on_windows(
+        8811, connections=lambda: other + listening, end=lambda pid, code: ended.append((pid, code))
+    )
+    assert ended == [(4242, updater.RESTART_EXIT)]
+
+
+def test_the_updater_checks_the_bridge_on_the_address_it_listens_on():
+    assert updater.health_host("10.0.0.2") == "10.0.0.2"
+    assert updater.health_host("0.0.0.0") == "127.0.0.1" and updater.health_host("::") == "127.0.0.1"

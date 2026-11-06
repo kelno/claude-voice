@@ -319,6 +319,12 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - Expect pushback: upstream just built the window, with settings and a companion-app page for it. Offer it as one more launch mode (`launch = "remote_control"` or similar) next to theirs, not as a replacement. Depends on how upstream's start is shaped after the resync; rebuild it on their launch settings.
 - Test first: the fork's start tests (`tests/test_start.py`), rewritten against upstream's launch settings.
 
+### 6y. Updating the bridge on Windows — fork, from the resync
+
+- What: `update_bridge` works without systemd. On Windows the bridge starts the updater as a detached process, and the updater restarts the bridge by ending it with exit code 75 (`RESTART_EXIT`), which the script that runs the bridge takes as "start me again"; a rollback does the same. The updater also checks health on the address the bridge listens on (`--host`), not always 127.0.0.1, which helps a Linux bridge bound to a Tailscale or WireGuard address too.
+- Why: upstream's update relies on `systemd-run` and `systemctl`, so on Windows (and macOS) it fails at the start.
+- Expect pushback: the restart needs the launcher's cooperation (a loop on exit code 75), which upstream doesn't ship for Windows; it comes with 8 (Windows in the README and CI). Tests: `tests/test_update.py`, the three Windows tests.
+
 ### 6g. Handing a session to the desktop app — fork `d5cb737`
 
 - What: `hand_to_desktop(name)` stops a session `start_active_session` started and opens a named Windows Terminal tab running `claude --desktop --resume '<id>'`, which brings it into the Claude desktop app's sidebar. Refuses sessions the bridge didn't start, mid-turn ones and ones with no conversation yet. A Remote Control hook (`REMOTE_CONTROL_AT_START`, off) for `claude --bg --remote-control`.
