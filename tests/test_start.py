@@ -189,9 +189,11 @@ async def test_only_a_well_formed_model_name_and_a_known_effort_reach_claude_cod
 
 
 def test_the_background_start_passes_model_and_effort_to_claude_code():
+    from claude_voice import transcripts
     from claude_voice.transcripts import background_command
 
-    assert background_command("claude", "x") == ["claude", "--bg", "--name", "x"]
+    direct = ["--settings", json.dumps(transcripts.BRIDGE_SETTINGS)]
+    assert background_command("claude", "x") == ["claude", "--bg", "--name", "x", *direct]
     assert background_command("claude", "x", model="opus", effort="max") == [
         "claude",
         "--bg",
@@ -201,6 +203,7 @@ def test_the_background_start_passes_model_and_effort_to_claude_code():
         "opus",
         "--effort",
         "max",
+        *direct,
     ]
 
 

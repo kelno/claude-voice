@@ -20,6 +20,7 @@ PID = os.getpid()
 SECRET = "s3cret-token-for-the-launch-tests-x"
 BEARER = {"Authorization": f"Bearer {SECRET}"}
 HOST = "http://127.0.0.1:8811"
+DIRECT = ["--settings", json.dumps(transcripts.BRIDGE_SETTINGS)]  # the bridge's sessions edit their project directly
 
 
 # -- the command Claude Code is started with ---------------------------------------------
@@ -29,12 +30,12 @@ def test_a_session_in_a_window_runs_claude_code_inside_the_terminal_not_in_the_b
     terminal = ["gnome-terminal", "--working-directory=/src/app", "--"]
     cmd = background_command("claude", "app-1", prompt="hello", remote_control=True, terminal=terminal)
     assert cmd[:3] == terminal and "--bg" not in cmd
-    assert cmd[3:] == ["claude", "--name", "app-1", "--remote-control", "app-1", "--", "hello"]
+    assert cmd[3:] == ["claude", "--name", "app-1", "--remote-control", "app-1", *DIRECT, "--", "hello"]
 
 
 def test_a_background_session_can_have_remote_control_too():
     cmd = background_command("claude", "app-1", remote_control=True)
-    assert cmd == ["claude", "--bg", "--name", "app-1", "--remote-control", "app-1"]
+    assert cmd == ["claude", "--bg", "--name", "app-1", "--remote-control", "app-1", *DIRECT]
     assert "--remote-control" not in background_command("claude", "app-1")
 
 
@@ -208,7 +209,7 @@ def test_a_window_runs_claude_code_through_the_owners_login_shell():
     cmd = background_command("claude", "app-1", terminal=terminal, shell="/bin/bash")
     assert cmd[:3] == terminal
     assert cmd[3:7] == ["/bin/bash", "-lic", 'exec "$@"', "claude-voice"]
-    assert cmd[7:] == ["claude", "--name", "app-1"]
+    assert cmd[7:] == ["claude", "--name", "app-1", *DIRECT]
     assert "/bin/bash" not in background_command("claude", "app-1", shell="/bin/bash")  # not in the background
 
 

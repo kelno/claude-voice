@@ -143,3 +143,16 @@ def test_the_handover_runs_in_a_named_terminal_tab_the_owner_can_see():
 def test_only_a_session_id_is_ever_put_into_the_handover_script():
     with pytest.raises(ValueError):
         transcripts.desktop_handover_command("x'; Remove-Item", r"D:\work", "x")
+
+
+def test_sessions_the_bridge_starts_may_edit_their_project_directly():
+    # Claude Code keeps a background session's edits in a worktree unless told otherwise;
+    # the owner wants that off for the bridge's sessions only, not every background session.
+    command = transcripts.background_command("claude", "deep")
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings == {"worktree": {"bgIsolation": "none"}}
+    hooked = transcripts.background_command("claude", "deep", settings=json.dumps({"hooks": {"x": []}}))
+    assert json.loads(hooked[hooked.index("--settings") + 1]) == {
+        "worktree": {"bgIsolation": "none"},
+        "hooks": {"x": []},
+    }

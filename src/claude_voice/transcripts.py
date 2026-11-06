@@ -767,6 +767,12 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
         raise RuntimeError(f"Windows Terminal exited {proc.returncode}")
 
 
+# Claude Code keeps a background session's edits in a worktree of their own unless told
+# otherwise. The owner wants the bridge's sessions to edit their project directly, as a
+# session at the PC does; other background sessions keep Claude Code's default.
+BRIDGE_SETTINGS: dict[str, Any] = {"worktree": {"bgIsolation": "none"}}
+
+
 def background_command(
     cli: str,
     name: str,
@@ -794,7 +800,8 @@ def background_command(
         *(["--remote-control", name] if remote_control else []),
         *(["--model", model] if model else []),
         *(["--effort", effort] if effort else []),
-        *(["--settings", settings] if settings else []),
+        "--settings",
+        json.dumps({**BRIDGE_SETTINGS, **(json.loads(settings) if settings else {})}),
         *(["--", prompt] if prompt else []),
     ]
 
