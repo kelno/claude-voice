@@ -30,7 +30,7 @@ What the bridge sees on an incoming call, measured on 2026-11-06 by logging real
 
 - **The sign-in:** every caller uses the same login token, from the same sign-in to the bridge, and arrives from Anthropic's servers through the owner's proxy. The token tells no caller apart.
 - **A label of the calling product,** in a header: `ClaudeAI` for a claude.ai voice chat, `Cowork` for a text chat in the Claude app, `ClaudeCode` for a Claude Code session.
-- **A claude.ai voice chat:** a connection id (`mcp-session-id`) the bridge itself issued when the chat connected. It stayed the same across the chat's calls, and across a reconnected voice call in the same chat (the owner hung up and called back; no bridge restart). It changed when the bridge restarted, since the bridge keeps connections in memory and the app connects anew when its id is refused.
+- **A claude.ai voice chat:** a connection id (`mcp-session-id`) the bridge itself issued when the chat connected. It stayed the same across the chat's calls, and across a reconnected voice call in the same chat (the owner hung up and called back; no bridge restart). It changed when the bridge restarted, since the bridge keeps connections in memory and the app connects anew when its id is refused. But it can't be relied on: the same chat switched to text mode came as `Cowork` with no connection id, and back in voice an hour later, after another reconnect, came as `ClaudeAI` with no connection id at all (the newer protocol without connections, client version 1.0.0). So no claude.ai chat carries an id the bridge can count on (tested 2026-11-06).
 - **A Claude Code session:** the id of each tool call (`claudecode/toolUseId`). The session's transcript on the PC records that id, so the bridge can tell which session made the call. Nothing else names the session.
 - **A text chat (`Cowork`):** the same details as a Claude Code session, a tool call id but no connection id. Nothing visible names the chat.
 
@@ -45,7 +45,7 @@ What the others observe:
 The bridge accepts each step only from the caller it belongs to:
 
 - `confirm_ask` and `confirm_check`: only from a Claude Code session, identified by its tool call id found in its transcript. The session that checks must be the one that asked, so no other session can see or use the request.
-- `confirm_with_owner`: only from a claude.ai chat, voice or text (labels `ClaudeAI` and `Cowork`), never from a Claude Code session (label `ClaudeCode`). The owner's choice (2026-11-06) over a tighter rule that would accept only the voice chat a request was handed to, matched by its connection id: a text chat can't be told apart from another text chat, so the tighter rule would have cost relaying confirmations from a text chat. With any chat accepted, a request survives a bridge restart and a reconnected call.
+- `confirm_with_owner`: only from a claude.ai chat, voice or text (labels `ClaudeAI` and `Cowork`), never from a Claude Code session (label `ClaudeCode`). The owner's choice (2026-11-06) over a tighter rule that would accept only the voice chat a request was handed to, matched by its connection id: no chat carries an id the bridge can count on (see above), so the tighter rule can't be built. With any chat accepted, a request survives a bridge restart and a reconnected call.
 
 ## Why a session can trust a confirmed result
 
@@ -54,6 +54,12 @@ The bridge accepts each step only from the caller it belongs to:
 - That call needs the owner's tap: the tool is destructive, and the Claude app asks the owner before every call to a destructive tool, offering only "Allow once" (seen on this bridge, 2026-11-05; see the checks below).
 - The card shows exactly the summary the session wrote, since the bridge refuses any other text. The relay can't reword what the owner approves.
 - The owner's own rule says a confirmed result counts as the owner's OK, so the session doesn't decide that on the mechanism's word. What it relies on the mechanism for is set out here, with its limits, for it to judge.
+
+## Checking the running code against this document
+
+`confirm_ask` and `confirm_check` return the commit the running bridge was started from (the hash `health` also reports), whether its working tree had uncommitted changes, and a link to this document at that commit: `https://github.com/kelno/claude-voice/blob/<hash>/docs/owner-confirmation.md`. A session reads the document as it was for the code actually running, not a later or earlier version; on the PC it can also run `git show <hash>:docs/owner-confirmation.md` in the fork's clone. The owner's idea (2026-11-06).
+
+What it shows and what it doesn't: a clean tree at a pushed commit means the running code is the code anyone can read at that link. Uncommitted changes mean the running code may differ from any published version, and the result says so. The hash is reported by the bridge itself, so it guards against a mistake or an outdated document, not against a program that changed the bridge on purpose (see "Outside the relay").
 
 ## The limits
 
