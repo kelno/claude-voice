@@ -5,7 +5,6 @@ import os
 
 import pytest
 from fakes import FakeClaude
-from mcp.client import Client
 
 from claude_voice.events import LiveWatcher
 from claude_voice.server import build_server
@@ -111,35 +110,3 @@ async def call(client, name, **args):
     res = await client.call_tool(name, args)
     assert not res.is_error, res.content
     return res.structured_content
-
-
-async def test_whats_new_returns_only_the_delta_since_the_cursor(store, live, root):
-    put(live, "term-1", "busy", str(root / "lib"))
-    srv = server(store, live, root)
-    async with Client(srv) as c:
-        first = await call(c, "whats_new")
-        assert first["events"] == []
-
-        put(live, "term-1", "idle", str(root / "lib"))
-        put(live, "app-1", "waiting", str(root / "app"))
-
-        second = await call(c, "whats_new", cursor=first["cursor"])
-        got = kinds(second["events"])
-        assert ("app-1", "started") in got and ("term-1", "finished") in got
-        term = next(e for e in second["events"] if e["session"] == "term-1")
-        assert term["text"] == "term-1 has finished and is waiting."
-
-        third = await call(c, "whats_new", cursor=second["cursor"])
-        assert third["events"] == []
-
-
-async def test_a_bad_cursor_starts_over(store, live, root):
-    put(live, "term-1", "busy", str(root / "lib"))
-    srv = server(store, live, root)
-    async with Client(srv) as c:
-        first = await call(c, "whats_new")
-        put(live, "term-1", "idle", str(root / "lib"))
-        for bad in ("garbage", "b3.f5"):  # an older bridge's cursor too
-            out = await call(c, "whats_new", cursor=bad)
-            assert out["events"] == []
-            assert int(out["cursor"]) > int(first["cursor"])

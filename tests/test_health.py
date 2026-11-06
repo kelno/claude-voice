@@ -3,6 +3,7 @@
 from fakes import FakeClaude
 from mcp.client import Client
 
+from claude_voice import transcripts
 from claude_voice.metrics import METRICS
 from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
@@ -15,11 +16,24 @@ def server(tmp_path, **extra):
     return build_server(m, conversations=lambda **k: [], live_dir=tmp_path / "live", **extra)
 
 
-async def test_health_reports_the_bridges_state_and_its_calls(tmp_path):
+async def test_health_reports_the_bridges_state_and_its_calls(tmp_path, monkeypatch):
+    class Reader:  # the served bridge warms its side-question reader; no real one here
+        async def warm(self):
+            pass
+
+    async def no_jobs():
+        return []
+
+    monkeypatch.setattr(transcripts, "shared_reader", Reader)
     METRICS.reset()
-    srv = server(tmp_path, restart={"at": "2026-10-08T10:00:00+00:00", "reason": "auto-restart", "total": 2})
+    srv = server(
+        tmp_path,
+        restart={"at": "2026-10-08T10:00:00+00:00", "reason": "auto-restart", "total": 2},
+        watch_interval=60.0,  # served: the watcher looks at once, then every minute
+        background_jobs=no_jobs,
+    )
     async with Client(srv) as c:
-        await c.call_tool("whats_new", {})
+        await c.call_tool("guide", {})
         await c.call_tool("read_session_output", {"session": "nope"}, meta={"trace_id": "t9"})
         h = (await c.call_tool("health", {})).structured_content
     now = h["now"]
@@ -27,7 +41,7 @@ async def test_health_reports_the_bridges_state_and_its_calls(tmp_path):
     assert now["last_restart"] == {"at": "2026-10-08T10:00:00+00:00", "reason": "auto-restart"}
     assert now["restarts_total"] == 2
     tools = {t["name"]: t for t in h["tools"]}
-    assert tools["whats_new"]["calls"] == 1
+    assert tools["guide"]["calls"] == 1
     assert h["errors"][0]["trace_id"] == "t9" and h["errors"][0]["kind"] == "tool_error"
     assert h["courier"] == {"warm": False, "last_delivery_ms": None}
     assert h["watcher"]["last_check_at"] and h["watcher"]["tree_version"]

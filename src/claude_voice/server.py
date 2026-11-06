@@ -1976,11 +1976,9 @@ def build_server(
             match["text"] = transcripts.clip(match["text"], size)
         return {"session": target["name"], "total_turns": len(turns), "matches": matches}
 
-    @tool(annotations=READ_ONLY)
-    def whats_new(cursor: str | None = None) -> dict[str, Any]:
-        """News since you last asked: a session finished, needs input, started or ended.
-        Returns only new events and a cursor to pass next time; call without a cursor first,
-        cheap enough to poll."""
+    def event_feed(cursor: str | None = None) -> dict[str, Any]:
+        """The watcher's events since `cursor`, and the cursor to pass next time; for the
+        companion API's event stream, no longer a tool since every result carries the news."""
         check()
         after = _parse_cursor(cursor)
         items = watcher.feed_after(after) if after is not None else []
@@ -1995,7 +1993,7 @@ def build_server(
         """The sessions as a tree, with which ones have messaged each other lately.
         The bridge, the Claude Code sessions running on this machine, helper agents, and for
         each which others it has sent messages to in the last day (talks_to); `version` changes
-        when the shape changes, and whats_new reports that as kind "tree_changed"."""
+        when the shape changes."""
         return tree.build()
 
     @tool(annotations=READ_ONLY)
@@ -2169,7 +2167,7 @@ def build_server(
             output=api_output,
             pending=api_pending,
             prs=api_prs,
-            news=whats_new,
+            news=event_feed,
             roles=roles_now,
             doctor=doctor_report,
             update_state=update_state,

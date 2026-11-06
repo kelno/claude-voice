@@ -1,9 +1,8 @@
-"""What has happened since the client last asked: a delta feed for polling clients.
+"""The running sessions as the bridge last saw them, and what changed between looks.
 
-MCP clients pull; they cannot be pushed to. So the bridge keeps the news: a
-LiveWatcher turns status changes of running Claude Code sessions (finished,
-waiting for input, started, ended) into feed entries, and `whats_new` returns
-them after a cursor.
+A LiveWatcher looks at the running Claude Code sessions every few seconds and keeps the last
+look in the database, which tells the bridge, once restarted, what a shutdown interrupted. It
+also records status changes (finished, waiting for input, started, ended) as feed entries.
 """
 
 from __future__ import annotations

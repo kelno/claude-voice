@@ -197,7 +197,7 @@ def test_the_version_changes_with_the_shape_and_not_with_a_status(world):
 # -- through the bridge ----------------------------------------------------------
 
 
-async def test_the_bridge_offers_the_tree_and_says_when_its_shape_changes(world):
+async def test_the_bridge_offers_the_tree(world):
     from fakes import FakeClaude
     from mcp.client import Client
 
@@ -209,13 +209,7 @@ async def test_the_bridge_offers_the_tree_and_says_when_its_shape_changes(world)
     srv = build_server(m, conversations=lambda **k: [], live_dir=world.live, projects_dir=world.projects)
     async with Client(srv) as c:
         tree = (await c.call_tool("session_tree", {})).structured_content
-        assert "sid-alpha" in {n["id"] for n in tree["nodes"]}
-        start = (await c.call_tool("whats_new", {})).structured_content
-        world.session("beta", pid=PID)
-        news = (await c.call_tool("whats_new", {"cursor": start["cursor"]})).structured_content
-    changed = [e for e in news["events"] if e["kind"] == "tree_changed"]
-    assert len(changed) == 1
-    assert changed[0]["text"] != tree["version"]  # carries the new version
+    assert "sid-alpha" in {n["id"] for n in tree["nodes"]}
 
 
 def test_a_session_continued_elsewhere_is_marked_moved(world):
