@@ -105,3 +105,21 @@ def test_a_growing_transcript_is_read_from_where_it_left_off(tmp_path):
         "two",
         "three",
     ]
+
+
+def test_a_model_claude_code_does_not_know_reads_as_a_clear_error_with_what_to_do(tmp_path):
+    cwd = "/home/someone/project"
+    text = "There's an issue with the selected model (opsu). It may not exist or you may not have access to it."
+    entry = {
+        "type": "assistant",
+        "error": "model_not_found",
+        "isApiErrorMessage": True,
+        "message": {"role": "assistant", "model": "<synthetic>", "content": [{"type": "text", "text": text}]},
+    }
+    path = tmp_path / project_key_for_directory(cwd) / "sid-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    [turn] = recent_turns(read_raw_transcript("sid-1", cwd, projects_dir=tmp_path), None)
+    assert turn["text"].startswith(text)
+    assert "stop_active_session" in turn["text"] and "start_active_session" in turn["text"]

@@ -41,6 +41,12 @@ from claude_agent_sdk import (
 from . import procs
 
 MESSAGING_TOOLS = frozenset({"ListAgents", "SendMessage", "ToolSearch"})
+# Claude Code accepts any model name at start and only refuses it at the first message, with
+# a reply of its own; this says what the caller can do about it.
+MODEL_NOT_FOUND_NOTE = (
+    "\n\nThis session can't work: Claude Code doesn't know its model. Stop it with "
+    "stop_active_session and start it again with start_active_session and a valid model."
+)
 
 
 def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[str, Any]]:
@@ -63,7 +69,10 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10) -> list[dict[s
                 if b.get("type") == "tool_use":
                     pending_tools.append(b.get("name", "?"))
                 elif b.get("type") == "text" and b.get("text", "").strip():
-                    turns.append({"role": "assistant", "text": b["text"], "tools": pending_tools})
+                    text = b["text"]
+                    if getattr(m, "error", None) == "model_not_found":
+                        text += MODEL_NOT_FOUND_NOTE
+                    turns.append({"role": "assistant", "text": text, "tools": pending_tools})
                     pending_tools = []
     return turns if limit is None else turns[-limit:]
 
@@ -325,7 +334,9 @@ def _lean(raw: bytes) -> Any:
             for b in content
             if isinstance(b, dict) and b.get("type") in ("text", "tool_use")
         ]
-    return SimpleNamespace(type=entry["type"], message={"role": message.get("role"), "content": content})
+    return SimpleNamespace(
+        type=entry["type"], message={"role": message.get("role"), "content": content}, error=entry.get("error")
+    )
 
 
 def read_transcript(session_id: str, directory: str | None) -> list[Any]:
