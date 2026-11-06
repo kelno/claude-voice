@@ -172,6 +172,10 @@ Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
   whether to. Call wait_for_session again while it says "still_working",
   until the reply comes: the owner interrupts if they have something to say.
+- In a voice chat, give every wait_seconds about 5 (on trial): the app sends a
+  call past about 10 s to the background, and 8 s waits already cross it.
+  5 s waits return in time, so you can call again in the same turn, saying
+  nothing in between.
 - Wait in silence: nothing between waits, no heads-up, no progress, even when
   the app asks you to say it is taking a while. Speak once, with the reply.
 - When the owner speaks during a wait, answer them. The call they talked over
