@@ -33,7 +33,11 @@ def test_the_manual_states_its_central_rules():
         "don't ask the owner",  # waiting for a reply is the default
         "wait in silence",  # no heads-up or progress between waits, whatever the app asks
         "when the owner speaks during a wait",  # a call they talk over returns by itself
+        "already approved",  # work done as agreed is confirmed briefly, not walked through again
         "start_active_session",  # new work
+        "attach_conversation",  # resumed work
+        "self-contained brief",  # what a session's first task holds
+        "propose changes before applying",  # delegated work is proposed first, unless the owner says otherwise
         "never ask a desktop",  # the app refuses a start from a relayed message
         "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
