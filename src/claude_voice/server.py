@@ -36,6 +36,7 @@ from . import (
     detail,
     doctor,
     events,
+    fork,
     gitstatus,
     launch,
     metrics,
@@ -1479,6 +1480,23 @@ def build_server(
         kept, skipped = conversation_end(target, side_chars)
         answer = await side_answer("\n".join(kept), question, language)
         return {"answer": transcripts.whole_sentences(answer, 300), "considered_turns": len(kept), "cut": bool(skipped)}
+
+    @tool(annotations=READ_ONLY)
+    async def ask_forked_session(session: str, question: str, wait_seconds: float = 180) -> dict[str, Any]:
+        """Ask the side session: a new fork of a running session's whole conversation that can
+        read the project's files and answers `question` while the session itself keeps working,
+        untouched (each question forks anew, so it starts from the latest state). It is
+        read-only, since the bridge refuses any tool that could change something; it takes
+        seconds to minutes (wait up to 300 s), and you report its answer as the side session's."""
+        target = find_live(session)
+        out = await fork.ask(
+            manager.client_factory,
+            str(target["sessionId"]),
+            str(target["cwd"]),
+            question,
+            max(min(wait_seconds, 300), 1),
+        )
+        return {"session": target.get("name"), **out}
 
     @tool(annotations=READ_ONLY)
     async def digest_session(session: str, question: str | None = None, language: str | None = None) -> dict[str, Any]:

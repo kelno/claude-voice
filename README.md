@@ -111,6 +111,7 @@ the bridge says which are missing, with the exact fix, through its
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
 | `message_active_session` | send a message into a session that is open in a terminal; answered `sending` when delivery outlasts the caller's time budget, and finished in the background |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
+| `ask_forked_session` | ask the side session: a read-only fork of a busy session's whole conversation, which can read the code, while the session keeps working |
 | `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `refresh_session_summary` | a fresh summary of a session (the chosen one by default), shown on its page in the companion app too |
