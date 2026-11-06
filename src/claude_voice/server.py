@@ -91,6 +91,8 @@ PENDING_NOTE = "A wait on this session is still running; its result arrives by i
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
+# Claude Code shows a background session a shutdown stopped as failed for this long, then as stopped.
+WAKE_WITHIN_SECONDS = 48 * 3600
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
 READ_BUDGET = 3_000
@@ -434,6 +436,44 @@ def result_notes() -> Any:
     return note
 
 
+async def wake_interrupted(
+    store: Store,
+    background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]],
+    boot_time: Callable[[], float],
+    projects_dir: Path,
+    start_background: Callable[..., Awaitable[str | None]],
+) -> list[str]:
+    """Wake the sessions the bridge started or resumed that the last shutdown interrupted.
+
+    A shutdown stops every background session, and Claude Code shows each as failed for 48
+    hours, then as stopped; nothing restarts them. One counts as interrupted when it is failed
+    and its conversation last changed before this boot, within those 48 hours. Each is woken in
+    place with its saved options, Remote Control included, and logged. Returns their names.
+    """
+    boot = boot_time()
+    woken = []
+    for job in await background_jobs():
+        sid, cwd = str(job.get("sessionId")), str(job.get("cwd") or "")
+        if job.get("state") != "failed" or not cwd or not store.was_started(sid):
+            continue
+        conversation = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
+        try:
+            last = conversation.stat().st_mtime
+        except OSError:
+            continue
+        if not boot - WAKE_WITHIN_SECONDS < last < boot:
+            continue
+        name = str(job.get("name") or sid)
+        try:
+            await start_background(cwd, "", resume=sid, wake=True)
+        except Exception as exc:
+            log.info("could not wake %s (%s) after the restart: %s", name, sid, exc)
+            continue
+        log.info("woke %s (%s), interrupted by the last shutdown", name, sid)
+        woken.append(name)
+    return woken
+
+
 def build_server(
     manager: SessionManager,
     oauth: OAuthProvider | None = None,
@@ -445,6 +485,8 @@ def build_server(
     restart: dict[str, Any] | None = None,
     start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
     background_sessions: Callable[[], Awaitable[set[str]]] = transcripts.background_sessions,
+    background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] = transcripts.background_jobs,
+    boot_time: Callable[[], float] = procs.boot_time,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], None] = transcripts.trust_folder,
@@ -574,6 +616,11 @@ def build_server(
             # The service keeps the side-question reader ready, so the first answer is quick too.
             warming = asyncio.create_task(transcripts.shared_reader().warm())
             warming.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            # The served bridge starts at logon: bring back what the last shutdown stopped.
+            waking = asyncio.create_task(
+                wake_interrupted(manager.store, background_jobs, boot_time, projects_dir, start_background)
+            )
+            waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         try:
             yield {}
         finally:

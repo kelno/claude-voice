@@ -896,8 +896,9 @@ async def start_background(
     return out.decode(errors="replace")
 
 
-async def background_sessions() -> set[str]:
-    """The ids of every conversation Claude Code has run as a background session, finished ones too."""
+async def background_jobs() -> list[dict[str, Any]]:
+    """Every background session Claude Code knows, finished ones too, as `claude agents` lists them:
+    sessionId, cwd, name, and state (running, done, stopped, failed, ...)."""
     import claude_agent_sdk
 
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
@@ -909,8 +910,13 @@ async def background_sessions() -> set[str]:
     try:
         jobs = json.loads(raw.decode(errors="replace") or "[]")
     except ValueError:
-        return set()
-    return {str(j["sessionId"]) for j in jobs if isinstance(j, dict) and j.get("sessionId")}
+        return []
+    return [j for j in jobs if isinstance(j, dict) and j.get("sessionId")] if isinstance(jobs, list) else []
+
+
+async def background_sessions() -> set[str]:
+    """The ids of every conversation Claude Code has run as a background session, finished ones too."""
+    return {str(j["sessionId"]) for j in await background_jobs()}
 
 
 LOGIN_SHELLS = ("bash", "zsh", "sh", "ksh")  # shells that take -l -i -c and "$@"
