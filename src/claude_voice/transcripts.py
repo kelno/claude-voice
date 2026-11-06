@@ -333,7 +333,8 @@ def write_name(session_id: str, cwd: str, name: str, projects_dir: Path = PROJEC
         {"type": "custom-title", "customTitle": name, "sessionId": session_id},
         {"type": "agent-name", "agentName": name, "sessionId": session_id},
     ]
-    text = "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines)
+    # Compact, as Claude Code writes them, in case it finds a name by matching the text.
+    text = "".join(json.dumps(line, ensure_ascii=False, separators=(",", ":")) + "\n" for line in lines)
     with path.open("a", encoding="utf-8", newline="") as f:
         f.write(text)
 
