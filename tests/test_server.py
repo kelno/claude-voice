@@ -327,18 +327,6 @@ async def test_conversations_from_every_project_under_the_root_are_listed(tmp_pa
     assert out["conversations"][0]["minutes_ago"] == 1
 
 
-async def test_attach_finds_the_project_from_the_conversation(tmp_path, root):
-    convs = FakeConversations([conversation("t-2", str(root / "lib"), "Refactor")])
-    claude = FakeClaude([result("back", "t-2")])
-    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=claude)
-    async with Client(build_server(m, conversations=convs)) as client:
-        s = await call(client, "attach_conversation", claude_session_id="t-2")
-        assert s["project_path"] == str(root / "lib")
-        await call(client, "send_task", session_id=s["id"], prompt="where were we?")
-        await m.wait(s["id"])
-    assert claude.clients[0].options.resume == "t-2"
-
-
 async def test_attach_refuses_conversations_outside_the_root(tmp_path, root):
     convs = FakeConversations([conversation("t-3", "/somewhere/else", "Private")])
     m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())

@@ -118,7 +118,7 @@ the bridge says which are missing, with the exact fix, through its
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `refresh_session_summary` | a fresh summary of a session (the chosen one by default), shown on its page in the companion app too |
 | `read_session_output`, `search_session_history` | read what such a session said lately, or search everything it said |
-| `list_claude_conversations`, `attach_conversation` | continue an earlier conversation, as a copy run by the bridge |
+| `list_claude_conversations`, `attach_conversation` | continue an earlier conversation as a background session, in its own permission mode |
 
 ## The companion app
 

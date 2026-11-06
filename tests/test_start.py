@@ -17,18 +17,20 @@ PID = os.getpid()
 class Starter:
     """Stands in for `claude --bg`: records the call and registers the session like Claude Code does."""
 
-    def __init__(self, live, register=True):
+    def __init__(self, live, register=True, copies=False):
         self.live = live
         self.register = register
+        self.copies = copies  # Claude Code couldn't continue the conversation in place
         self.calls = []
+        self.options = []
 
     async def __call__(self, cwd, name, **how):
         self.calls.append((cwd, name))
+        self.options.append(how)
+        sid = how.get("resume") if how.get("resume") and not self.copies else f"sid-{name}"
         if self.register:
             (self.live / f"{name}.json").write_text(
-                json.dumps(
-                    {"pid": PID, "sessionId": f"sid-{name}", "cwd": cwd, "name": name, "kind": "bg", "status": "idle"}
-                )
+                json.dumps({"pid": PID, "sessionId": sid, "cwd": cwd, "name": name, "kind": "bg", "status": "idle"})
             )
 
 
@@ -89,6 +91,76 @@ async def test_a_session_that_never_appears_is_reported_not_promised(tmp_path, w
     async with Client(bridge(tmp_path, world, Starter(world[1], register=False))) as c:
         bad = await c.call_tool("start_active_session", {"project": "billing", "name": "ghost"})
     assert bad.is_error and "did not appear" in bad.content[0].text
+
+
+async def test_a_chosen_model_comes_with_a_note_that_it_is_only_checked_at_the_first_reply(tmp_path, world):
+    async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
+        deep = (await c.call_tool("start_active_session", {"project": "billing", "model": "opus"})).structured_content
+        plain = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
+    assert "first reply" in deep["note"]
+    assert "note" not in plain
+
+
+OLD = "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
+
+
+def resuming(tmp_path, world, starter, grant=None):
+    from test_server import FakeConversations, conversation
+
+    from claude_voice.permissions import Grant
+
+    root, live = world
+    m = SessionManager(
+        Store(tmp_path / "b.db"),
+        project_root=root,
+        client_factory=FakeClaude(),
+        grant_for=lambda sid, cwd, new_mode: grant or Grant(new_mode),
+    )
+    convs = FakeConversations([conversation(OLD, str(root / "billing"), "Invoice export")])
+    return build_server(m, conversations=convs, live_dir=live, start_background=starter, start_seconds=1.0)
+
+
+async def test_an_old_conversation_resumes_as_a_background_session_with_its_own_permissions(tmp_path, world):
+    from claude_voice.permissions import Grant
+
+    starter = Starter(world[1])
+    grant = Grant("acceptEdits", (r"D:\work\shared",))
+    async with Client(resuming(tmp_path, world, starter, grant)) as c:
+        out = (await c.call_tool("attach_conversation", {"claude_session_id": OLD})).structured_content
+        listed = (await c.call_tool("list_active_sessions", {})).structured_content
+    assert starter.calls == [(str(world[0] / "billing"), "Invoice export")]
+    assert starter.options[0]["resume"] == OLD
+    assert starter.options[0]["permission_mode"] == "acceptEdits"
+    assert starter.options[0]["add_dirs"] == (r"D:\work\shared",)
+    assert out["claude_session_id"] == OLD and out["name"] == "Invoice export" and "copied_from" not in out
+    assert "Invoice export" in {r["name"] for r in listed["sessions"]}
+
+
+async def test_a_conversation_claude_code_could_not_continue_in_place_is_reported_as_a_copy(tmp_path, world):
+    async with Client(resuming(tmp_path, world, Starter(world[1], copies=True))) as c:
+        out = (await c.call_tool("attach_conversation", {"claude_session_id": OLD})).structured_content
+    assert out["copied_from"] == OLD and out["claude_session_id"] == "sid-Invoice export"
+
+
+async def test_a_resumed_session_can_be_stopped_like_one_the_bridge_started(tmp_path, world):
+    stopper = Stopper(world[1])
+    root, live = world
+    from test_server import FakeConversations, conversation
+
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
+    convs = FakeConversations([conversation(OLD, str(root / "billing"), "Invoice export")])
+    srv = build_server(
+        m,
+        conversations=convs,
+        live_dir=live,
+        start_background=Starter(live),
+        stop_background=stopper,
+        start_seconds=1.0,
+    )
+    async with Client(srv) as c:
+        await c.call_tool("attach_conversation", {"claude_session_id": OLD})
+        out = (await c.call_tool("stop_active_session", {"name": "Invoice export"})).structured_content
+    assert out["status"] == "stopped" and stopper.calls == [OLD]
 
 
 class Stopper:

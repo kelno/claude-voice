@@ -783,11 +783,15 @@ def background_command(
     remote_control: bool = False,
     terminal: list[str] | None = None,
     shell: str | None = None,
+    resume: str | None = None,
+    permission_mode: str | None = None,
+    add_dirs: Iterable[str] = (),
 ) -> list[str]:
     """The command that starts a named session, on a model and effort if given, with extra
     settings (such as a hook), Remote Control and a first message if given. In the
     background, or inside `terminal`, the command that opens a terminal window; there it
-    runs through `shell` as a login shell, so it gets the owner's PATH and settings."""
+    runs through `shell` as a login shell, so it gets the owner's PATH and settings. With
+    `resume`, it continues that conversation, in its permission mode and with its folders."""
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
     return [
@@ -800,6 +804,9 @@ def background_command(
         *(["--remote-control", name] if remote_control else []),
         *(["--model", model] if model else []),
         *(["--effort", effort] if effort else []),
+        *(["--resume", resume] if resume else []),
+        *(["--permission-mode", permission_mode] if permission_mode else []),
+        *(arg for d in add_dirs for arg in ("--add-dir", d)),
         "--settings",
         json.dumps({**BRIDGE_SETTINGS, **(json.loads(settings) if settings else {})}),
         *(["--", prompt] if prompt else []),
@@ -815,6 +822,9 @@ async def start_background(
     settings: str | None = None,
     remote_control: bool = False,
     terminal: list[str] | None = None,
+    resume: str | None = None,
+    permission_mode: str | None = None,
+    add_dirs: Iterable[str] = (),
 ) -> None:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal,
     or inside a terminal window when `terminal` is given.
@@ -828,7 +838,9 @@ async def start_background(
     bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
     cli = procs.find("claude") or str(bundled)
     shell = login_shell() if terminal else None
-    command = background_command(cli, name, model, effort, prompt, settings, remote_control, terminal, shell)
+    command = background_command(
+        cli, name, model, effort, prompt, settings, remote_control, terminal, shell, resume, permission_mode, add_dirs
+    )
     if terminal:
         opener = procs.find(terminal[0]) or terminal[0]
         window = await asyncio.create_subprocess_exec(

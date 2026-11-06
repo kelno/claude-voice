@@ -155,9 +155,13 @@ Talking to a session
 - The side session is a read-only fork of a session's whole conversation that
   can read the code; each question forks anew. Report its answer as the side
   session's.
-- For a conversation you resumed with attach_conversation: send_task returns at
-  once; then wait_for_session, again while it says "still_running", then tell the
-  owner the result. Poll whats_new (pass back its cursor) for other news.
+- An earlier conversation: attach_conversation resumes it as a background session,
+  like new work (on the phone and in the sidebar, in its own permission mode);
+  then talk to it like any open session. If the result has copied_from, Claude
+  Code started a copy because the original is still open elsewhere: say so.
+- For an older bridge session (from list_sessions): send_task returns at once;
+  then wait_for_session, again while it says "still_running", then tell the owner
+  the result. Poll whats_new (pass back its cursor) for other news.
 - To learn about a session cheaply, without sending into it: peek_session
   (seconds, the last few turns' words) or digest_session (about ten seconds, the
   whole conversation's words); neither reads code.
@@ -165,13 +169,13 @@ Talking to a session
 Approvals
 - When a recap shows pending_approvals, read the tool and its input to the owner
   and call approve only if they clearly say yes; otherwise call deny.
-- A conversation the bridge resumed (attach_conversation, send_task) asks the
-  bridge, not the desktop app or the phone: its prompts reach the owner
-  only through you, so check for them while it works.
-- A session start_active_session started asks the owner directly, on the phone and
-  in the desktop app; you can't answer it. When it waits on one, its status is
-  "waiting" and prompt says what it asks: tell the owner, and that they answer it
-  there.
+- An older bridge session (send_task) asks the bridge, not the desktop app or the
+  phone: its prompts reach the owner only through you, so check for them while it
+  works.
+- A session start_active_session started or attach_conversation resumed asks the
+  owner directly, on the phone and in the desktop app; you can't answer it. When
+  it waits on one, its status is "waiting" and prompt says what it asks: tell the
+  owner, and that they answer it there.
 - In voice, the app's approval card for this connector's tools shows no tool details. Before
   a call the owner may have to approve, say which tool you are calling and why,
   so they know what they are tapping.
@@ -564,7 +568,7 @@ def build_server(
                 f"{session_id} is a Claude Code session running on this machine (in a "
                 "terminal or in the background), not one this bridge started or attached. "
                 "Use message_active_session to talk to it, or "
-                "attach_conversation to work on a copy of its conversation."
+                "attach_conversation to resume its conversation in the background."
             )
         raise ToolError(f"No session with id {session_id}")
 
@@ -877,18 +881,28 @@ def build_server(
                 "already_running": True,
                 "folder_created": folder_created,
             }
+        out = await start_listed(path, name, start_in, remote_control, model=model, effort=effort)
+        # Claude Code accepts any model name at start and refuses an unknown one only
+        # in its first reply, so a start alone does not prove the model works.
+        model_note = "Claude Code checks the model only at the first reply; rely on the session after it."
+        notes = [n for n in (out.pop("note", None), model_note if model else None) if n]
+        return {**out, "folder_created": folder_created, **({"note": " ".join(notes)} if notes else {})}
+
+    async def start_listed(
+        path: Path, name: str | None, start_in: str | None = None, remote_control: bool | None = None, **options: Any
+    ) -> dict[str, Any]:
+        """Start a session in `path` under a free name, where the settings say unless this start
+        asks otherwise, and wait until it is listed."""
         taken = {str(d.get("name")) for d in live_sessions()}
-        wanted = (name or "").strip() or f"{path.name}-{secrets.token_hex(2)}"
+        wanted = (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
         while wanted in taken:
             wanted = f"{wanted}-{secrets.token_hex(2)}"
         if start_in is not None and start_in not in config.LAUNCHES:
             raise ToolError(f"start_in is one of: {', '.join(config.LAUNCHES)}")
         how, started_in, where_note = how_to_start(str(path), wanted, start_in, remote_control)
         try:
-            if model or effort:
-                await start_background(str(path), wanted, model=model, effort=effort, **how)
-            else:
-                await start_background(str(path), wanted, **how)
+            given = {k: v for k, v in options.items() if v is not None}
+            await start_background(str(path), wanted, **given, **how)
         except Exception as exc:
             raise ToolError(f"Claude Code could not start a session: {exc}") from None
         deadline = time.monotonic() + start_seconds
@@ -896,18 +910,13 @@ def build_server(
             found = next((d for d in live_sessions() if d.get("name") == wanted and d.get("cwd") == str(path)), None)
             if found:
                 store.record_started(str(found.get("sessionId")), wanted, str(path))
-                # Claude Code accepts any model name at start and refuses an unknown one only
-                # in its first reply, so a start alone does not prove the model works.
-                model_note = "Claude Code checks the model only at the first reply; rely on the session after it."
-                notes = [n for n in (where_note, model_note if model else None) if n]
                 return {
                     "name": wanted,
                     "claude_session_id": found.get("sessionId"),
                     "project": under_root(str(path)),
                     "status": found.get("status") or "idle",
                     "started_in": started_in,
-                    "folder_created": folder_created,
-                    **({"note": " ".join(notes)} if notes else {}),
+                    **({"note": where_note} if where_note else {}),
                 }
             await asyncio.sleep(0.2)
         raise ToolError(f"{wanted} was started but did not appear among the running sessions")
@@ -1293,11 +1302,14 @@ def build_server(
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
-    def attach_conversation(
+    async def attach_conversation(
         claude_session_id: str, project: str | None = None, label: str | None = None
     ) -> dict[str, Any]:
-        """Continue an existing Claude Code conversation (from list_claude_conversations).
-        If it is still open in a terminal, both copies will carry on separately."""
+        """Continue an existing Claude Code conversation (from list_claude_conversations) as a
+        background session, like start_active_session: on Remote Control under `label` or its
+        title, in its own permission mode and folders; talk to it with ask_active_session. If
+        Claude Code can't continue it in place, as when it is still open elsewhere, it starts a
+        copy under a new id, and copied_from names the original."""
         if project is None:
             live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
             match = None
@@ -1311,14 +1323,16 @@ def build_server(
             project = (live or {}).get("cwd") or (match.cwd if match else "") or ""
             label = label or (live or {}).get("name") or (match.custom_title or match.summary if match else None)
         try:
-            path = str(manager.resolve_project(project))
+            path = manager.resolve_project(project)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
-        try:
-            history = transcripts.recent_turns(read_transcript(claude_session_id, path), limit=10)
-        except Exception:
-            history = []
-        return manager.attach(claude_session_id, path, label, history=history)
+        if not transcripts.SESSION_ID.fullmatch(claude_session_id):
+            raise ToolError(f"Not a Claude Code session id: {claude_session_id!r}")
+        grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
+        out = await start_listed(path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs)
+        if out["claude_session_id"] != claude_session_id:
+            out["copied_from"] = claude_session_id
+        return out
 
     def find_any_live(session: str) -> dict[str, Any]:
         session = by_number(session)

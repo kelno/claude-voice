@@ -156,3 +156,18 @@ def test_sessions_the_bridge_starts_may_edit_their_project_directly():
         "worktree": {"bgIsolation": "none"},
         "hooks": {"x": []},
     }
+
+
+def test_a_resumed_conversation_is_started_with_its_own_mode_and_folders():
+    command = transcripts.background_command(
+        "claude",
+        "old",
+        resume="0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b",
+        permission_mode="acceptEdits",
+        add_dirs=("D:/a", "D:/b"),
+    )
+    assert command[command.index("--resume") + 1] == "0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"
+    assert command[command.index("--permission-mode") + 1] == "acceptEdits"
+    assert [command[i + 1] for i, a in enumerate(command) if a == "--add-dir"] == ["D:/a", "D:/b"]
+    plain = transcripts.background_command("claude", "new")
+    assert "--resume" not in plain and "--permission-mode" not in plain and "--add-dir" not in plain

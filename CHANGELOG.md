@@ -18,6 +18,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   sessions the owner can also open on the phone and at the PC. They start in the
   background on Remote Control unless one start asks for a terminal window.
 - A background session waiting on a permission prompt shows what it asks.
+- `attach_conversation` resumes an earlier conversation as a background session,
+  on Remote Control and in its own permission mode and folders.
 - `whats_new`, a cheap delta of what happened since the last poll.
 - `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` sets how long an access token lasts, for a
   bridge on a computer that sleeps: the Claude app gives a connector up after about
