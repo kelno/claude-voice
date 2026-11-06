@@ -58,6 +58,15 @@ from .tree import PROJECTS_DIR, SessionTree
 MIN_TOKEN_CHARS = 32
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 COURIER_PREFIX = "claude-voice-msg-"
+# Added after every message the relay sends into a running session: the session can't know
+# otherwise that nobody reads its screen and that a SendMessage reply goes nowhere.
+RELAYED_MESSAGE_NOTE = (
+    "[From the claude-voice bridge: this message comes from the relay, the voice assistant the "
+    "owner is talking to. The owner sees neither this message nor your reply unless the relay "
+    "passes them on, and the relay has no inbox: answer in your reply text, not with SendMessage. "
+    "Address the relay, not the owner, and make the reply self-contained: name things instead of "
+    "pointing back to text it may not have.]"
+)
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
 # Claude Code keeps one JSON file per running session here.
@@ -1195,7 +1204,7 @@ def build_server(
             return {"session": target["name"], "delivered": False, "status": "moved", "moved_to": moved}
         sid = str(target["sessionId"])
         budget = repos.budgets.seconds(transcripts.current_client.get())
-        delivery = asyncio.ensure_future(deliver(target["name"], message))
+        delivery = asyncio.ensure_future(deliver(target["name"], f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -1280,7 +1289,7 @@ def build_server(
             }
         before = len(numbered_turns(target))
         was_busy = target.get("status") in ("busy", "shell")
-        out = await deliver(target["name"], message)
+        out = await deliver(target["name"], f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
