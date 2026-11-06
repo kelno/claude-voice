@@ -718,7 +718,7 @@ def build_server(
             d = live_by_id.get(str(row["claude_session_id"]), {})
             if row["status"] == "moved":
                 where = row["moved_to"]["name"] or "another session"
-                doing = f"flyttet til {where}"
+                doing = f"moved to {where}"
             else:
                 doing = transcripts.doing_line(str(row["claude_session_id"]), str(d.get("cwd")), projects_dir)
             state, waiting_kind = live_state(str(row["status"]), str(row["claude_session_id"]), str(d.get("cwd")))

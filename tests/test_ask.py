@@ -211,8 +211,10 @@ async def test_a_session_continued_elsewhere_is_shown_as_moved_and_not_asked(tmp
         listed = await call(c, "list_active_sessions")
         asked = await call(c, "ask_active_session", session="billing-ab", message="hi")
         sent = await call(c, "message_active_session", session="billing-ab", message="hi")
+        fleet = await call(c, "fleet_recap")
     row = listed["sessions"][0]
     assert row["status"] == "moved" and row["moved_to"] == {"id": "sid-2", "name": None}
+    assert fleet["sessions"][0]["doing"] == "moved to another session"
     assert asked["status"] == "moved" and asked["moved_to"]["id"] == "sid-2"
     assert sent["status"] == "moved" and sent["delivered"] is False
 
@@ -296,10 +298,10 @@ def open_question(tmp_path, cwd, sid, answered=False):
         "input": {
             "questions": [
                 {
-                    "question": "Skal jeg kjøre en gjennomgang først?",
+                    "question": "Should I run a review first?",
                     "header": "Gjennomgang",
                     "multiSelect": False,
-                    "options": [{"label": "Ja", "description": "..."}, {"label": "Nei", "description": "..."}],
+                    "options": [{"label": "Yes", "description": "..."}, {"label": "No", "description": "..."}],
                 }
             ]
         },
@@ -321,11 +323,11 @@ async def test_a_session_waiting_on_a_question_is_not_sent_anything_and_the_ques
         raise AssertionError("a message would only queue behind the open question")
 
     async with Client(bridge(tmp_path, root, live, target, deliver)) as c:
-        out = await call(c, "ask_active_session", session="billing-ab", message="ja")
+        out = await call(c, "ask_active_session", session="billing-ab", message="yes")
         listed = await call(c, "list_active_sessions")
     assert out["status"] == "needs_choice"
-    assert out["question"] == {"text": "Skal jeg kjøre en gjennomgang først?", "options": ["Ja", "Nei"]}
-    assert listed["sessions"][0]["question"]["options"] == ["Ja", "Nei"]
+    assert out["question"] == {"text": "Should I run a review first?", "options": ["Yes", "No"]}
+    assert listed["sessions"][0]["question"]["options"] == ["Yes", "No"]
 
 
 async def test_a_session_waiting_on_something_else_reports_needs_input(tmp_path, root, live):
@@ -354,7 +356,7 @@ async def test_a_question_opened_while_answering_us_is_reported(tmp_path, root, 
     async with Client(bridge(tmp_path, root, live, target, deliver)) as c:
         out = await call(c, "ask_active_session", session="billing-ab", message="review it?", wait_seconds=5)
     assert out["status"] == "needs_choice"
-    assert out["question"]["text"] == "Skal jeg kjøre en gjennomgang først?"
+    assert out["question"]["text"] == "Should I run a review first?"
 
 
 # -- saying when a turn was cut, and paging through it ------------------------------------------

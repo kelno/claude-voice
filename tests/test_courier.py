@@ -302,7 +302,7 @@ async def test_a_send_claude_code_refuses_is_reported_as_refused_and_not_tried_a
 
 
 async def test_the_couriers_own_words_never_reach_the_caller():
-    factory = Factory([ok("hi")], [[done("Hei Roy! I'll connect you to Hermes.")], [done("Sure thing.")]])
+    factory = Factory([ok("hi")], [[done("Hi Roy! I'll connect you to Hermes.")], [done("Sure thing.")]])
     courier = Courier(client_factory=factory)
     delivered = await courier.deliver("billing", "hi")
     assert "DELIVERED" not in str(delivered)
