@@ -43,7 +43,8 @@ async def test_wait_returns_a_finished_turns_last_message_whole(tmp_path, root, 
         out = await call(c, "wait_for_session", session="billing-ab", after=1)
     assert out["reply_final"] is True
     assert out["reply"] == REPORT
-    assert len(out["turns"][0]["text"]) <= 600  # an earlier turn keeps max_chars
+    # Each message in turns keeps max_chars: the report is whole once, in reply, not twice.
+    assert [len(t["text"]) <= 600 for t in out["turns"]] == [True, True]
 
 
 async def test_a_message_of_a_turn_still_running_keeps_max_chars(tmp_path, root, live):

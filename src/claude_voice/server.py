@@ -165,13 +165,21 @@ Waiting
   the app asks you to say it is taking a while. Speak once, with the reply.
 - When the owner speaks during a wait, answer them. The call they talked over
   keeps running and its result arrives by itself; then wait again.
-- A result may start with news: the sessions you started, resumed, messaged
-  or read that have turns you haven't read (the owner may have written to them
-  directly), and any session waiting on a permission prompt. Read a session
-  before telling the owner what it said.
 - A session's reply is final only when its turn has ended (reply_final true,
   or status "idle" with turns_left 0). Before that it is its latest message so
   far: don't report it as finished, or as cut off.
+
+News
+- A result may start with news: the sessions you started, resumed, messaged
+  or read that have messages you haven't read (the owner may have typed to
+  them directly), with their state and where to read from, and any session
+  waiting on a permission prompt. A message counts as read once
+  read_session_output, wait_for_session or ask_active_session returned it.
+- News repeats on each result until you read the session, or until a prompt
+  is answered: mention it to the owner once, at your next reply, not during a
+  silent wait. Read a session before telling the owner what it said, and
+  before writing to it again. A waiting prompt is the owner's: say what it
+  asks (list_active_sessions shows it).
 
 Sessions
 - New work: start_active_session, or attach_conversation to resume an earlier
@@ -181,9 +189,10 @@ Sessions
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
-  propose changes before applying them; relay its proposal to the owner. Sessions the bridge starts or resumes are
-  on Remote Control and in the desktop app's sidebar, so the owner can open
-  them on the phone or at the PC and take over.
+  propose changes before applying them; relay its proposal to the owner.
+  Sessions the bridge starts or resumes are on Remote Control and in the
+  desktop app's sidebar, so the owner can open them on the phone or at the PC
+  and take over.
 - A session's permission prompt is the owner's to answer, on the phone or in
   the desktop app, never yours. When a session's status is "waiting", prompt
   says what it asks: tell the owner.
@@ -704,15 +713,17 @@ def build_server(
             if not unread:
                 continue
             owner = sum(1 for t in unread if t["role"] == "user")
-            item = f"{name}: {len(unread)} unread turn{'s' if len(unread) > 1 else ''}"
+            item = f"{name} ({session_state(d)}): {len(unread)} unread message{'s' if len(unread) > 1 else ''}"
             if owner:
-                item += f", {owner} from the owner"
-            items.append(f"{item}, {session_state(d)}")
+                item += f", {owner} typed by the owner"
+            if d is not None:
+                item += f", read with after={mark['seen']}"
+            items.append(item)
             listed.add(sid)
         for sid, d in live.items():
             if sid not in listed and d.get("status") == "waiting" and d.get("waitingFor") == "permission prompt":
-                items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
-        return f"news: {'; '.join(items)}" if items else None
+                items.append(f"{d.get('name') or sid} (waiting on a permission prompt)")
+        return " | ".join(items) if items else None
 
     def session_state(d: dict[str, Any] | None) -> str:
         if d is None:
@@ -723,7 +734,7 @@ def build_server(
                 if d.get("waitingFor") == "permission prompt"
                 else "waiting for an answer"
             )
-        return "finished" if d.get("status") == "idle" else "still working"
+        return "idle" if d.get("status") == "idle" else "busy"
 
     mcp = MCPServer(
         "claude-voice",
@@ -1603,16 +1614,19 @@ def build_server(
         """The running session with this process id now, or None once it has exited."""
         return next((d for d in live_sessions() if d.get("pid") == pid), None)
 
-    def clip_turns(turns: list[dict[str, Any]], max_chars: int, final: bool) -> dict[str, Any]:
-        """Cut each turn to max_chars, except the last of a finished turn, which comes back whole up
-        to FINAL_CHARS; returns reply_cut and reply_length when even that was cut."""
-        cut: dict[str, Any] = {}
-        for i, turn in enumerate(turns):
-            whole = final and i == len(turns) - 1
-            if whole and len(turn["text"]) > FINAL_CHARS:
-                cut = {"reply_cut": True, "reply_length": len(turn["text"])}
-            turn["text"] = transcripts.clip(turn["text"], FINAL_CHARS if whole else max(max_chars, 20))
-        return cut
+    def reply_of(turns: list[dict[str, Any]], max_chars: int, final: bool) -> dict[str, Any]:
+        """The reply, the last message: whole up to FINAL_CHARS once the turn has ended, with
+        reply_cut and reply_length past that, else cut to max_chars. Each message in `turns` is
+        cut to max_chars, so a long report is sent once, in reply, not twice."""
+        if not turns:
+            return {"reply": ""}
+        last = turns[-1]["text"]
+        out: dict[str, Any] = {"reply": transcripts.clip(last, FINAL_CHARS if final else max(max_chars, 20))}
+        if final and len(last) > FINAL_CHARS:
+            out.update(reply_cut=True, reply_length=len(last))
+        for turn in turns:
+            turn["text"] = transcripts.clip(turn["text"], max(max_chars, 20))
+        return out
 
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
@@ -1625,7 +1639,8 @@ def build_server(
         words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
         user; prompt or question says what for), "still_working" (the wait ran out; call again),
         "session_ended" or "moved" (the conversation now lives in moved_to); with reply_final,
-        reply is whole up to 12,000 characters (reply_cut past that; max_chars cuts the rest)."""
+        reply is whole up to 12,000 characters (reply_cut past that), while max_chars cuts each
+        message in turns."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -1650,14 +1665,13 @@ def build_server(
         written = [] if now is None else said(target)
         new = [dict(t) for t in (written if after is not None else written[-1:])]
         final = bool(new) and status in ("idle", "needs_input", "needs_choice")
-        cut = clip_turns(new, max_chars, final)
+        reply = reply_of(new, max_chars, final)
         return {
             "status": status,
             "session": target["name"],
-            "reply": new[-1]["text"] if new else "",
+            **reply,
             "reply_final": final,
             "session_ended": now is None,
-            **cut,
             "turns": new,
             "next_after": new[-1]["index"] if new else (after if after is not None else -1),
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
@@ -1670,7 +1684,7 @@ def build_server(
         """Ask a session and wait (8 s, up to 20) for its answer; only when needed now.
         The conversation waits too, so prefer message_active_session when the next step doesn't
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
-        word, whole up to 12,000 characters (reply_cut past that; max_chars cuts the rest), and
+        word, whole up to 12,000 characters (reply_cut past that; max_chars cuts turns), and
         while false, reply is its latest message so far, maybe already the answer, but more may
         follow. status: "answered", "needs_input" (it waits for
         its user; prompt is the permission prompt, if one), "still_working" (the wait ran out
@@ -1764,14 +1778,13 @@ def build_server(
             new = new[:1]
         # RULE: a reply is final only once the turn has ended
         final = bool(new) and status in ("answered", "needs_input", "needs_choice")
-        cut = clip_turns(new, max_chars, final)
+        reply = reply_of(new, max_chars, final)
         return {
             "session": target["name"],
             "status": status,
             "session_ended": status == "session_ended",
-            "reply": new[-1]["text"] if new else "",
+            **reply,
             "reply_final": final,
-            **cut,
             "turns": new,
             "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
@@ -1794,8 +1807,8 @@ def build_server(
         only once the session's status is "idle"; until then `latest` holds its newest reply, to
         say first when far behind); the first turn that doesn't fit is still started. A turn
         longer than max_chars, or than the room left, is cut and says so (cut, length; a
-        finished turn's last message only past 12,000 characters), and `turn` (its index) with
-        `offset` reads it whole, page by page via next_offset."""
+        finished turn's last message only past 12,000, even beyond 3,000), and `turn` (its
+        index) with `offset` reads it whole, page by page via next_offset."""
         target = find_live(session)
         turns = every = numbered_turns(target)
         size = max(max_chars, 20)

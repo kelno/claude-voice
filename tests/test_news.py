@@ -120,7 +120,7 @@ async def test_a_reply_from_a_messaged_session_is_news_until_it_is_read(served):
         later = await call(c, "list_projects")
         read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         after = await call(c, "list_projects")
-    assert later["news"] == "news: billing-ab: 1 unread turn, finished"
+    assert later["news"] == "billing-ab (idle): 1 unread message, read with after=1"
     assert list(later)[-1] != "news" and "news" in list(later)[:3]  # given before the result itself
     assert "news" not in read and "news" not in after
 
@@ -135,7 +135,7 @@ async def test_a_turn_the_owner_typed_to_the_session_is_news_and_says_so(served)
         desk.transcript.append(turn("assistant", "Then it is done."))
         desk.set("busy")
         out = await call(c, "list_projects")
-    assert out["news"] == "news: billing-ab: 2 unread turns, 1 from the owner, still working"
+    assert out["news"] == "billing-ab (busy): 2 unread messages, 1 typed by the owner, read with after=2"
 
 
 async def test_another_conversation_does_not_get_this_ones_news(served):
@@ -157,7 +157,7 @@ async def test_a_session_waiting_on_a_permission_prompt_is_news_to_every_convers
     http, client = conversation(url)
     async with http, client as c:
         out = await call(c, "list_projects")
-    assert out["news"] == "news: billing-ab: waiting on a permission prompt"
+    assert out["news"] == "billing-ab (waiting on a permission prompt)"
 
 
 async def test_a_followed_session_that_ended_with_unread_turns_says_it_ended(served):
@@ -168,7 +168,22 @@ async def test_a_followed_session_that_ended_with_unread_turns_says_it_ended(ser
         desk.transcript.append(turn("assistant", "Wrapped up."))
         desk.gone()
         out = await call(c, "list_projects")
-    assert out["news"] == "news: billing-ab: 1 unread turn, ended"
+    assert out["news"] == "billing-ab (ended): 1 unread message"  # it can't be read any more
+
+
+async def test_two_sessions_are_set_apart_in_one_line(served):
+    url, desk = served
+    other = Desk(desk.live, desk.cwd, name="ledger, cut-over", sid="sid-2")
+    other.set("waiting", waiting_for="permission prompt")
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Go.")
+        desk.transcript.append(turn("assistant", "Gone."))
+        out = await call(c, "list_projects")
+    assert (
+        out["news"]
+        == "billing-ab (idle): 1 unread message, read with after=1 | ledger, cut-over (waiting on a permission prompt)"
+    )
 
 
 async def test_nothing_new_means_no_news_field(served):
