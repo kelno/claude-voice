@@ -56,6 +56,19 @@ def test_a_terminal_session_keeps_the_last_mode_its_transcript_records(tmp_path,
     assert session_grant(SID, str(tmp_path), new_mode="auto", **dirs) == Grant("acceptEdits")
 
 
+def test_a_mode_recorded_on_a_prompt_counts_too(tmp_path, dirs):
+    # `claude -p` and background sessions record the mode on each prompt, not as an entry of its own.
+    transcript(
+        dirs["projects_dir"],
+        str(tmp_path),
+        SID,
+        {"type": "permission-mode", "permissionMode": "default"},
+        {"type": "user", "permissionMode": "acceptEdits", "message": {"content": "hi"}},
+    )
+
+    assert session_grant(SID, str(tmp_path), new_mode="auto", **dirs) == Grant("acceptEdits")
+
+
 def test_a_new_session_gets_the_mode_set_for_new_sessions(tmp_path, dirs):
     assert session_grant(None, str(tmp_path), new_mode="auto", **dirs) == Grant("auto")
 

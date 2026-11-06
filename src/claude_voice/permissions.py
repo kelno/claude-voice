@@ -54,7 +54,11 @@ def _transcript_mode(session_id: str, cwd: str, projects_dir: Path) -> str | Non
             entry = json.loads(line)
         except ValueError:
             continue  # a line still being written
+        # An interactive session records a change of mode as an entry of its own; `claude -p`
+        # and background sessions record the mode on each prompt.
         if isinstance(entry, dict) and entry.get("type") == "permission-mode":
+            mode = entry.get("permissionMode")
+        elif isinstance(entry, dict) and entry.get("type") == "user" and entry.get("permissionMode"):
             mode = entry.get("permissionMode")
     return mode
 
