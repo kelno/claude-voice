@@ -49,6 +49,9 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29.
   folders. A session inside one, or in a folder that holds one, is listed as
   `access: "blocked"`, and no grant opens it. This holds inside the root too.
 - `revoke_access(folder)` closes a granted folder again; `health` lists the grants.
+- Later (2026-11-05): `request_access(folder=<full path>)` opens a folder no
+  session runs in yet, so work can start remotely in a folder never used from
+  the bridge. Same grant, same deny list, same approval in the app.
 
 ## Consequences
 

@@ -127,6 +127,30 @@ async def test_a_denied_folder_stays_closed_inside_the_root(world):
         m.resolve_project(".ssh")
 
 
+async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
+    # To start work remotely in a folder never used from the bridge, the owner opens it by path.
+    m, srv = server(world)
+    async with Client(srv) as c:
+        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+    assert granted["folder"] == str(world["elsewhere"].resolve())
+    assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
+
+
+async def test_a_folder_by_path_is_refused_when_closed_relative_missing_or_doubled(world):
+    running(world, 2, "Notes", world["elsewhere"])
+    _, srv = server(world)
+    async with Client(srv) as c:
+        closed = await refused(c, "request_access", folder=str(world["home"]))
+        relative = await refused(c, "request_access", folder="notes")
+        missing = await refused(c, "request_access", folder=str(world["tmp"] / "nowhere"))
+        both = await refused(c, "request_access", session="Notes", folder=str(world["elsewhere"]))
+        neither = await refused(c, "request_access")
+    assert "holds" in closed
+    assert "full path" in relative
+    assert "not a directory" in missing
+    assert "one of" in both and "one of" in neither
+
+
 async def test_revoking_a_grant_closes_the_folder_again(world):
     running(world, 2, "Notes", world["elsewhere"])
     _, srv = server(world)

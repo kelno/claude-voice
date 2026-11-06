@@ -1317,17 +1317,26 @@ def build_server(
         return d
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
-    def request_access(session: str) -> dict[str, Any]:
-        """Open a session's folder to the bridge for good; the owner approves in the app.
-        A listed session's folder, and everything under it, so it can be read, messaged and
-        worked in. The owner should set this tool to ask each time in the Claude app, so they
-        approve every grant themselves."""
-        d = find_any_live(session)
+    def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
+        """Open a folder to the bridge for good, a session's or by path; owner approves.
+        Give one of: `session`, a listed session, to open its folder; or `folder`, a full path,
+        to open a folder no session runs in yet, so start_active_session can work there. The
+        folder and everything under it can then be read, messaged and worked in. The app asks
+        the owner before every call, with no "Always allow"."""
+        if (session is None) == (folder is None):
+            raise ToolError("Give one of session or folder.")
+        if folder is not None:
+            if not Path(folder).is_absolute():
+                raise ToolError(f"{folder!r}: give the folder's full path.")
+            target, d = folder, {}
+        else:
+            d = find_any_live(str(session))
+            target = str(d.get("cwd"))
         try:
-            folder = manager.access.grant(str(d.get("cwd")))
+            opened = manager.access.grant(target)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
-        return {"session": d.get("name"), "folder": str(folder), "granted": True}
+        return {**({"session": d.get("name")} if d else {}), "folder": str(opened), "granted": True}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def revoke_access(folder: str) -> dict[str, Any]:
