@@ -326,8 +326,8 @@ replace = 'if False:'
 [[rule]]
 name = "only the session that asked can check its request"
 file = "src/claude_voice/confirm.py"
-find = 'return req if mine and req\["session_id"\] == session_id else None'
-replace = 'return req if mine else None'
+find = 'return req if req\["session_id"\] == session_id else None'
+replace = 'return req'
 
 [[rule]]
 name = "a request belongs to the session whose transcript holds the call"

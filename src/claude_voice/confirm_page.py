@@ -30,6 +30,8 @@ const say = (t) => { document.getElementById('status').textContent = t; };
 function closeSoon(done) {
   document.querySelectorAll('button').forEach(b => b.disabled = true);
   say(done + ' You can close this tab and go back to the chat.');
+  // Tested, and refused in at least one case: on Android, in a tab opened from a link in the Claude
+  // app, the browser won't close a tab no script opened. Kept in case a browser allows it.
   window.close();
 }
 async function post(path, body) {
