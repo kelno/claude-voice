@@ -35,8 +35,17 @@ function closeSoon(done) {
   window.close();
 }
 async function post(path, body) {
-  const r = await fetch(here + '/' + path, {
+  let r;
+  try {
+    r = await fetch(here + '/' + path, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
+  } catch (e) {
+    r = null;
+  }
+  // No answer, or the proxy's 502 to 504 while the bridge is down (a restart): say so plainly.
+  if (!r || (r.status >= 502 && r.status <= 504)) {
+    throw new Error("the bridge didn't answer (it may be restarting): nothing was recorded. Try again in a moment.");
+  }
   const out = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(out.error || ('HTTP ' + r.status));
   return out;
