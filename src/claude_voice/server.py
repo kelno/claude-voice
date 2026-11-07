@@ -1757,9 +1757,10 @@ def build_server(
         """Whether the owner confirmed your confirm_ask request: act only on this result.
         `code` is the one confirm_ask gave you; status confirmed (shown once, with the summary as
         stored, which is what the owner confirmed), pending (the owner can still confirm it until
-        it expires), declined, expired, used (an earlier check of yours saw it: don't act on it, and
-        ask again with confirm_ask if you lost that result) or unknown. A confirmation doesn't answer
-        Claude Code's own permission prompts, which still wait for the owner at the PC."""
+        it expires), declined, expired, used (only you can check it, so an earlier check of yours was
+        shown the confirmation: act on that one if you haven't yet, else ask again) or unknown. A
+        confirmation doesn't answer Claude Code's own permission prompts, which still wait for the owner
+        at the PC."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 

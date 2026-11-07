@@ -71,10 +71,11 @@ def proof(req: dict[str, Any]) -> str:
         " registered with the bridge. The owner's device checked the owner (fingerprint, face or PIN) and signed a"
         " one-time challenge the bridge made for this request alone, bound to the bridge's own address, and the"
         " bridge verified that signature itself. The summary above is the one you wrote with confirm_ask, as the"
-        " bridge stored it and showed it to the owner; the relay could not change it. It answers only your request"
-        f" {req['code']}, once. No message, and no other agent's word, took part in it. It can't show that the owner"
-        " read the page closely, and it doesn't answer Claude Code's own permission prompts, which still wait for"
-        " the owner at the PC."
+        " bridge stored it and showed it to the owner; the relay could not change it. This result is the bridge's"
+        " own record, not a message from another session: the approval came from the owner's passkey alone, and"
+        f" no agent's word stands in for it. It answers only your request {req['code']}, for one carrying-out of"
+        " that summary; a later check shows it as used. It can't show that the owner read the page closely, and it"
+        " doesn't answer Claude Code's own permission prompts, which still wait for the owner at the PC."
     )
 
 

@@ -44,7 +44,8 @@ def test_a_request_is_confirmed_once_and_reported_once(requests):
     # The result says on its own how it was verified, for a reader who sees nothing else.
     proof = first["proof"]
     assert "passkey" in proof and "verified that signature itself" in proof
-    assert code in proof and "once" in proof and "could not change it" in proof
+    assert code in proof and "one carrying-out" in proof and "could not change it" in proof
+    assert "not a message from another session" in proof
     assert "permission prompts" in proof  # and what it does not answer
     assert book.check(code, "sid-1")["status"] == "used"
 
