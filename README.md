@@ -301,11 +301,12 @@ Nothing that needs your own OK rests on those approvals: opening a folder and a
 session's request for your OK are confirmed with a passkey on the bridge's own
 page. Add one with `claude-voice passkey add`, which prints a one-time link to open
 on your phone; the page answers only from your own network (the tailnet here).
-To see the passkeys added so far:
+`claude-voice passkey list` shows the passkeys added so far, each with its id, and
+`claude-voice passkey remove <id>` removes one; an id it doesn't know is refused:
 
 ```console
-$ claude-voice passkey list
-No passkey yet: add one with `claude-voice passkey add`.
+$ claude-voice passkey remove no-such-id
+claude-voice: no passkey 'no-such-id'; `claude-voice passkey list` shows their ids
 ```
 
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
