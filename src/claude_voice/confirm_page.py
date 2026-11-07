@@ -25,16 +25,12 @@ const unb64 = (s) => Uint8Array.from(
   (c) => c.charCodeAt(0));
 const here = location.pathname.replace(/\\/+$/, '');
 const say = (t) => { document.getElementById('status').textContent = t; };
-// After an answer, count down and close; a browser may refuse to close a tab it didn't open.
+// After an answer, say so at once and try to close; a browser usually refuses to close a tab it
+// didn't open (seen on Android, from the Claude app), so the text never promises it will.
 function closeSoon(done) {
   document.querySelectorAll('button').forEach(b => b.disabled = true);
-  let left = 3;
-  const tick = () => {
-    if (left > 0) { say(done + ' Closing in ' + left + '...'); left -= 1; setTimeout(tick, 1000); return; }
-    window.close();
-    setTimeout(() => say(done + ' You can close this tab.'), 300);
-  };
-  tick();
+  say(done + ' You can close this tab and go back to the chat.');
+  window.close();
 }
 async function post(path, body) {
   const r = await fetch(here + '/' + path, {
