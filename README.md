@@ -91,7 +91,7 @@ the bridge says which are missing, with the exact fix, through its
 
 | Tool | What it is for |
 | --- | --- |
-| `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions |
+| `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions, also handed over with a conversation's first result |
 | `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |

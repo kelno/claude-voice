@@ -36,7 +36,8 @@ LEFTOVER_TURNS = 3
 
 SIDE_SESSION_NOTE = (
     "[From the claude-voice bridge: you are the side session, a fork of this conversation made "
-    "just now to answer one question from the relay, the voice assistant the owner is talking to, "
+    "just now to answer one question from the relay (the agent working with it through the bridge "
+    "for the owner: a voice assistant, or another session), "
     "while the original session (the desk session) keeps working. You are read-only: read files "
     "and look back through this conversation as you need, but change nothing; any tool that could "
     "change something is refused. You know this conversation up to the fork, plus what you read "

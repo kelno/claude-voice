@@ -141,10 +141,10 @@ JOBS_DIR = Path("~/.claude/jobs").expanduser()
 TOOL_USE_TAIL = 1_048_576  # a call being made is near the end of its session's transcript
 
 
-def session_of_tool_use(
+def transcript_of_tool_use(
     tool_use_id: str, sessions: Iterable[Mapping[str, Any]], projects_dir: Path = PROJECTS_DIR
-) -> str | None:
-    """The running session whose transcript records this tool call: the session that made it."""
+) -> tuple[str, Path] | None:
+    """The running session whose transcript records this tool call, and that transcript."""
     needle = json.dumps(tool_use_id).encode()
     for d in sessions:
         sid, cwd = str(d.get("sessionId")), str(d.get("cwd"))
@@ -158,8 +158,32 @@ def session_of_tool_use(
             continue
         # RULE: a request belongs to the session whose transcript holds the call
         if needle in tail:
-            return sid
+            return sid, path
     return None
+
+
+def session_of_tool_use(
+    tool_use_id: str, sessions: Iterable[Mapping[str, Any]], projects_dir: Path = PROJECTS_DIR
+) -> str | None:
+    """The running session whose transcript records this tool call: the session that made it."""
+    found = transcript_of_tool_use(tool_use_id, sessions, projects_dir)
+    return found[0] if found else None
+
+
+def compacted_since(path: Path, offset: int | None) -> tuple[int, bool]:
+    """A transcript's length now, and whether it was compacted past `offset` (a length read
+    earlier); with no offset, nothing is known to have happened yet."""
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            if offset is None:
+                return size, False
+            f.seek(offset if offset <= size else 0)
+            added = f.read()
+    except OSError:
+        return offset or 0, False
+    return size, b'"compact_boundary"' in added
 
 
 def continued_in(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> str | None:
