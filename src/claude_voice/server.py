@@ -72,7 +72,8 @@ RELAYED_MESSAGE_NOTE = (
 SIDE_CHAT_PREFIX = "btw:"
 # A wait asked without a length: Claude's voice mode moves a call still running after about
 # 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
-WAIT_SECONDS = 8.0
+# With the server proxy's overhead an 8 s wait crossed it once (2026-11-06), so 5 s.
+WAIT_SECONDS = 5.0
 # The model a session starts on when none is asked for. Claude Code's own default follows the
 # account, which can be a model the owner doesn't want for everyday work.
 DEFAULT_MODEL = "opus"
@@ -172,10 +173,6 @@ Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
   whether to. Call wait_for_session again while it says "still_working",
   until the reply comes: the owner interrupts if they have something to say.
-- In a voice chat, give every wait_seconds about 5 (on trial): the app sends a
-  call past about 10 s to the background, and 8 s waits already cross it.
-  5 s waits return in time, so you can call again in the same turn, saying
-  nothing in between.
 - Wait in silence: nothing between waits, no heads-up, no progress, even when
   the app asks you to say it is taking a while. Speak once, with the reply.
 - When the owner speaks during a wait, answer them. The call they talked over
@@ -1826,7 +1823,8 @@ def build_server(
     async def wait_for_session(
         session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Wait 8 s, up to 20, for a session's turn to end or need input; then its reply.
+        """Wait for a session's turn to end or need input, up to 20 s; then its reply.
+        5 s by default: the Claude app sends a call past about 10 s to the background.
         Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
         that turn, so a session that hasn't picked the message up yet is still waited for; without
         it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
@@ -1876,7 +1874,8 @@ def build_server(
     async def ask_active_session(
         session: str, message: str, wait_seconds: float = WAIT_SECONDS, max_chars: int = 600
     ) -> dict[str, Any]:
-        """Ask a session and wait (8 s, up to 20) for its answer; only when needed now.
+        """Ask a session and wait, up to 20 s, for its answer; only when needed now.
+        5 s by default: the Claude app sends a call past about 10 s to the background.
         The conversation waits too, so prefer message_active_session when the next step doesn't
         depend on the answer. reply_final is true once its turn has ended, so reply is its last
         word, whole up to 12,000 characters (reply_cut past that; max_chars cuts turns), and
@@ -2150,7 +2149,8 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     async def ask_forked_session(session: str, question: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
-        """Ask the side session, a read-only fork that reads code; waits 8 s, up to 20.
+        """Ask the side session, a read-only fork that reads code; waits up to 20 s.
+        5 s by default: the Claude app sends a call past about 10 s to the background.
         The side session is a new read-only fork of a running session's whole conversation that
         can read the project's files, while the session itself keeps working, untouched; each
         question forks anew, from the latest state. It waits up to the caller's time budget (20 s
@@ -2170,7 +2170,8 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     async def read_forked_session(fork_id: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
-        """The side session's answer, waiting 8 s, up to 20; call again on still_working.
+        """The side session's answer, waiting up to 20 s; call again on still_working.
+        5 s by default: the Claude app sends a call past about 10 s to the background.
         status "answered", "still_working" (call again), "timed_out" (it worked five minutes and
         was stopped) or "error" with `detail`; answers are kept for an hour, and forgotten when
         the bridge restarts."""
