@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed, built on the branch owner-passkey, not merged (2026-11-07). Accepted in direction by the owner, with the plan for the page: the page shows the
+Accepted by the owner of the kelno fork, 2026-11-07, after a live test with the owner's passkey passed; with the plan for the page: the page shows the
 request behind its long random link, and one passkey prompt confirms it. Amends ADR-CV-010, whose card
 can't carry the proof. The page's path is open to the owner's VPN only.
 
