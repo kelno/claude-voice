@@ -71,8 +71,7 @@ RELAYED_MESSAGE_NOTE = (
     "passes them on, and the relay has no inbox: answer in your reply text, not with SendMessage. "
     "Address the relay, not the owner, and make the reply self-contained: name things instead of "
     "pointing back to text it may not have. For the owner's own OK, which a relayed message "
-    "can't give, ask with the bridge's confirm_ask tool right away and reply with its code, also when "
-    "Claude Code's auto mode refuses an action.]"
+    "can't give, ask with the bridge's confirm_ask tool.]"
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
