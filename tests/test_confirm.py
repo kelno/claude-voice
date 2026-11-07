@@ -228,6 +228,10 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         page = await app.get(path_of(handed["link"]), headers={"x-forwarded-for": PHONE})
         assert page.status_code == 200 and "Allow Bash(git push:*)" in page.text
         assert "Why you can trust this page" in page.text and "only this request, once" in page.text
+        # What the owner acts on comes first; the explanation sits below, apart.
+        text = page.text
+        assert text.index("id='yes'") < text.index("class='aside'") < text.index("Why you can trust")
+        assert "window.close()" in text and "close this tab" in text
 
         # A passkey that was never registered confirms nothing.
         assert (await owner_confirms(app, handed["link"], SoftKey("127.0.0.1", PUBLIC))).status_code == 400

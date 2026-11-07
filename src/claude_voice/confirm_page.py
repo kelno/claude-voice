@@ -13,6 +13,7 @@ STYLE = (
     "body{font-family:sans-serif;max-width:34em;margin:1.5em auto;padding:0 1em;line-height:1.4}"
     "button{font-size:1.1em;padding:.6em 1.2em;margin:.3em .5em .3em 0}"
     ".summary{border:1px solid #888;padding:.8em;margin:1em 0;white-space:pre-wrap}"
+    ".aside{margin-top:2.5em;padding-top:.6em;border-top:1px solid #ccc;font-size:.85em;color:#666}"
 )
 
 # Turning the bridge's JSON options into what the browser's passkey API takes, and back.
@@ -24,6 +25,17 @@ const unb64 = (s) => Uint8Array.from(
   (c) => c.charCodeAt(0));
 const here = location.pathname.replace(/\\/+$/, '');
 const say = (t) => { document.getElementById('status').textContent = t; };
+// After an answer, count down and close; a browser may refuse to close a tab it didn't open.
+function closeSoon(done) {
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  let left = 3;
+  const tick = () => {
+    if (left > 0) { say(done + ' Closing in ' + left + '...'); left -= 1; setTimeout(tick, 1000); return; }
+    window.close();
+    setTimeout(() => say(done + ' You can close this tab.'), 300);
+  };
+  tick();
+}
 async function post(path, body) {
   const r = await fetch(here + '/' + path, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {})});
@@ -50,7 +62,7 @@ def _page(title: str, body: str, script: str = "") -> str:
     return (
         f"<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
         f"<title>{html.escape(title)}</title><style>{STYLE}</style></head><body>"
-        f"<h2>{html.escape(title)}</h2>{body}<p id='status'></p>"
+        f"<h2>{html.escape(title)}</h2>{body}{'' if "id='status'" in body else "<p id='status'></p>"}"
         + (f"<script>{SCRIPT}{script}</script>" if script else "")
         + "</body></html>"
     )
@@ -74,10 +86,10 @@ def request_page(req: dict[str, Any], state: str) -> str:
     else:
         source, effect = f"written by session {req['asker']}", "approves only this request, once, for that session"
     body += (
-        f"<p><b>Why you can trust this page:</b> the request above was {html.escape(source)} and stored by the "
-        "bridge; this page shows it as stored, and the relay can't change it. Confirming with your passkey "
-        f"{html.escape(effect)}. Declining, or doing nothing for 15 minutes, approves nothing.</p>"
-        "<button id='yes'>Confirm with passkey</button><button id='no'>Decline</button>"
+        "<button id='yes'>Confirm with passkey</button><button id='no'>Decline</button><p id='status'></p>"
+        f"<div class='aside'><b>Why you can trust this page:</b> the request above was {html.escape(source)} and"
+        " stored by the bridge; this page shows it as stored, and the relay can't change it. Confirming with your"
+        f" passkey {html.escape(effect)}. Declining, or doing nothing for 15 minutes, approves nothing.</div>"
     )
     script = """
 document.getElementById('yes').onclick = async () => {
@@ -88,12 +100,11 @@ document.getElementById('yes').onclick = async () => {
     (o.allowCredentials || []).forEach(c => { c.id = unb64(c.id); });
     const c = await navigator.credentials.get({publicKey: o});
     await post('confirm', asJson(c));
-    say('Confirmed. The session has been told.');
-    document.querySelectorAll('button').forEach(b => b.disabled = true);
+    closeSoon('Confirmed.');
   } catch (e) { say('Not confirmed: ' + e.message); }
 };
 document.getElementById('no').onclick = async () => {
-  try { await post('decline'); say('Declined.'); document.querySelectorAll('button').forEach(b => b.disabled = true); }
+  try { await post('decline'); closeSoon('Declined.'); }
   catch (e) { say('Not declined: ' + e.message); }
 };
 """
