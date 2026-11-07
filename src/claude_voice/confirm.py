@@ -68,14 +68,15 @@ def proof(req: dict[str, Any]) -> str:
     """How a confirmation was verified, in full, for a reader who sees nothing but the result."""
     return (
         f"Confirmed by the owner at {iso(req['confirmed_at'])} on the bridge's own page, with a passkey the owner"
-        " registered with the bridge. The owner's device checked the owner (fingerprint, face or PIN) and signed a"
-        " one-time challenge the bridge made for this request alone, bound to the bridge's own address, and the"
-        " bridge verified that signature itself. The summary above is the one you wrote with confirm_ask, as the"
-        " bridge stored it and showed it to the owner; the relay could not change it. This result is the bridge's"
-        " own record, not a message from another session: the approval came from the owner's passkey alone, and"
-        f" no agent's word stands in for it. It answers only your request {req['code']}, for one carrying-out of"
-        " that summary; a later check shows it as used. It can't show that the owner read the page closely, and it"
-        " doesn't answer Claude Code's own permission prompts, which still wait for the owner at the PC."
+        " registered with the bridge. The bridge required the owner's device to check the owner (fingerprint,"
+        " face or PIN) and to sign a one-time challenge the bridge made for this request alone, for the bridge's"
+        " own address, and the bridge verified that signature itself. The summary above is the one you wrote with"
+        " confirm_ask, as the bridge stored it and showed it to the owner; the relay could not change it. This"
+        " result is the bridge's own record, not a message from another session: the approval came from the"
+        f" owner's passkey alone, and no agent's word stands in for it. It answers only your request {req['code']},"
+        " for one carrying-out of that summary; a later check shows it as used. It can't show that the owner read"
+        " the page closely, and it doesn't answer Claude Code's own permission prompts, which still wait for the"
+        " owner at the PC. If the summary above isn't what you asked for, don't act on it, and report it."
     )
 
 
