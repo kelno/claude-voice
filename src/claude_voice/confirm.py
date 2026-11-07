@@ -138,10 +138,16 @@ class Confirmations:
             self.db.execute(f"UPDATE owner_requests SET {column}=? WHERE link=?", (self.clock(), link))
         return {**req, column: self.clock()}
 
-    def check(self, code: str, session_id: str) -> dict[str, Any]:
+    def _asked_by(self, code: str, session_id: str) -> dict[str, Any] | None:
+        """The request, if `session_id` is the session that asked it."""
         req = self.by_code(code)
+        mine = req is not None and req["kind"] == "session"
         # RULE: only the session that asked can check its request
-        if req is None or req["kind"] != "session" or req["session_id"] != session_id:
+        return req if mine and req["session_id"] == session_id else None
+
+    def check(self, code: str, session_id: str) -> dict[str, Any]:
+        req = self._asked_by(code, session_id)
+        if req is None:
             return {"status": "unknown", "code": code}
         status, code = self.state(req), req["code"]
         if status == "pending":
