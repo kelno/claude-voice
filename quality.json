@@ -4,8 +4,8 @@
     "claude_voice/api.py": 13,
     "claude_voice/cli.py": 14,
     "claude_voice/config.py": 17,
-    "claude_voice/confirm.py": 7,
-    "claude_voice/confirm_page.py": 3,
+    "claude_voice/confirm.py": 5,
+    "claude_voice/confirm_page.py": 4,
     "claude_voice/detail.py": 40,
     "claude_voice/doctor.py": 19,
     "claude_voice/events.py": 15,
@@ -44,7 +44,7 @@
     "seconds": 180,
     "tolerance": 0.25
   },
-  "test_seconds": 110.2,
+  "test_seconds": 110.6,
   "tests": 627,
-  "type_errors": 0
+  "type_errors": 1
 }
