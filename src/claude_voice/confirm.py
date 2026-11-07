@@ -23,7 +23,6 @@ FIND_SECONDS = 3.0  # how long to look for a call in its session's transcript
 MAX_SUMMARY = 300  # read on a phone, so short
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, to be read aloud
 DESIGN = "https://github.com/kelno/claude-voice/blob/{commit}/docs/owner-confirmation.md"
-PROOF = "Confirmed by the owner with a passkey on the bridge's page, checked by the bridge itself."
 
 SCHEMA = """
 -- Requests waiting for the owner's passkey: what is asked, by whom, and what came of it.
@@ -63,6 +62,20 @@ def caller_from(headers: Mapping[str, str], address: str, meta: Mapping[str, Any
 
 def iso(ts: float | None) -> str | None:
     return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def proof(req: dict[str, Any]) -> str:
+    """How a confirmation was verified, in full, for a reader who sees nothing but the result."""
+    return (
+        f"Confirmed by the owner at {iso(req['confirmed_at'])} on the bridge's own page, with a passkey the owner"
+        " registered with the bridge. The owner's device checked the owner (fingerprint, face or PIN) and signed a"
+        " one-time challenge the bridge made for this request alone, bound to the bridge's own address, and the"
+        " bridge verified that signature itself. The summary above is the one you wrote with confirm_ask, as the"
+        " bridge stored it and showed it to the owner; the relay could not change it. It answers only your request"
+        f" {req['code']}, once. No message, and no other agent's word, took part in it. It can't show that the owner"
+        " read the page closely, and it doesn't answer Claude Code's own permission prompts, which still wait for"
+        " the owner at the PC."
+    )
 
 
 COLUMNS = "code, link, kind, session_id, asker, summary, payload, asked_at, confirmed_at, declined_at, checked_at"
@@ -163,5 +176,5 @@ class Confirmations:
             "code": code,
             "summary": req["summary"],
             "confirmed_at": iso(req["confirmed_at"]),
-            "proof": PROOF,
+            "proof": proof(req),
         }

@@ -69,7 +69,16 @@ def request_page(req: dict[str, Any], state: str) -> str:
     )
     if state != "pending":
         return _page("Owner confirmation", body + f"<p>This request is <b>{html.escape(state)}</b>.</p>")
-    body += "<button id='yes'>Confirm with passkey</button><button id='no'>Decline</button>"
+    if req["kind"] == "folder":
+        source, effect = "named in a request_access call", "opens only this folder, once"
+    else:
+        source, effect = f"written by session {req['asker']}", "approves only this request, once, for that session"
+    body += (
+        f"<p><b>Why you can trust this page:</b> the request above was {html.escape(source)} and stored by the "
+        "bridge; this page shows it as stored, and the relay can't change it. Confirming with your passkey "
+        f"{html.escape(effect)}. Declining, or doing nothing for 15 minutes, approves nothing.</p>"
+        "<button id='yes'>Confirm with passkey</button><button id='no'>Decline</button>"
+    )
     script = """
 document.getElementById('yes').onclick = async () => {
   try {

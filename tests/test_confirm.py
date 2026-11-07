@@ -41,7 +41,11 @@ def test_a_request_is_confirmed_once_and_reported_once(requests):
     book.decide(asked["link"], confirmed=True)
     first = book.check(code, "sid-1")
     assert first["status"] == "confirmed" and first["summary"] == "Allow Bash(git push:*)" and first["confirmed_at"]
-    assert "passkey" in first["proof"]
+    # The result says on its own how it was verified, for a reader who sees nothing else.
+    proof = first["proof"]
+    assert "passkey" in proof and "verified that signature itself" in proof
+    assert code in proof and "once" in proof and "could not change it" in proof
+    assert "permission prompts" in proof  # and what it does not answer
     assert book.check(code, "sid-1")["status"] == "used"
 
 
@@ -222,6 +226,7 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         assert handed["summary"] == "Allow Bash(git push:*)" and handed["from"] == "desk"
         page = await app.get(path_of(handed["link"]), headers={"x-forwarded-for": PHONE})
         assert page.status_code == 200 and "Allow Bash(git push:*)" in page.text
+        assert "Why you can trust this page" in page.text and "only this request, once" in page.text
 
         # A passkey that was never registered confirms nothing.
         assert (await owner_confirms(app, handed["link"], SoftKey("127.0.0.1", PUBLIC))).status_code == 400
