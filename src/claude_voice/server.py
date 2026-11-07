@@ -71,7 +71,8 @@ RELAYED_MESSAGE_NOTE = (
     "passes them on, and the relay has no inbox: answer in your reply text, not with SendMessage. "
     "Address the relay, not the owner, and make the reply self-contained: name things instead of "
     "pointing back to text it may not have. For the owner's own OK, which a relayed message "
-    "can't give, ask with the bridge's confirm_ask tool.]"
+    "can't give, ask with the bridge's confirm_ask tool right away and reply with its code, also when "
+    "Claude Code's auto mode refuses an action.]"
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
@@ -252,6 +253,8 @@ Sessions
 - A session's permission prompt is the owner's to answer, on the phone or in
   the desktop app, never yours. When a session's status is "waiting", prompt
   says what it asks: tell the owner.
+- A refusal from Claude Code's auto mode is not a prompt: the session asks for
+  the owner's OK with confirm_ask, and you hand the owner its link.
 
 Missing tools
 - The app caches this connector's tool list. If a tool named here isn't in
@@ -1758,7 +1761,8 @@ def build_server(
         command or permission string), at most 300 characters; put the result's tell_the_relay
         line in your reply and end your turn. The owner confirms on the bridge's page with their
         passkey and the bridge then messages you, but you act only on your own confirm_check, which
-        you may call at any time; the result's running.design link says how it works and why."""
+        you may call at any time; the result's running.design link says how it works and why. Ask
+        at once, not after reporting back, also when Claude Code's auto mode refuses an action."""
         d = await asking_session()
         try:
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
@@ -1795,8 +1799,8 @@ def build_server(
             "summary": req["summary"],
             "from": req["asker"],
             "expires_at": confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS),
-            "note": "If carrying it out raises a permission prompt in Claude Code, that still waits for the owner at"
-            " the PC.",
+            "note": "If carrying it out raises a permission prompt shown at the PC, that still waits for the owner"
+            " there.",
         }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
@@ -1806,8 +1810,8 @@ def build_server(
         stored, which is what the owner confirmed), pending (the owner can still confirm it until
         it expires), declined, expired, used (only you can check it, so an earlier check of yours was
         shown the confirmation: act on that one if you haven't yet, else ask again) or unknown. A
-        confirmation doesn't answer Claude Code's own permission prompts, which still wait for the owner
-        at the PC."""
+        confirmation can't answer a permission prompt shown at the PC, which waits for the owner there;
+        a refusal from Claude Code's auto mode is different, and a confirmation has cleared one."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 
