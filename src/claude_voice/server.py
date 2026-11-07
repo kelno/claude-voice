@@ -1659,10 +1659,11 @@ def build_server(
     def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
         """Open a folder to the bridge for good, once the owner confirms with a passkey.
         Give one of `session`, a listed session, to open its folder, or `folder`, a full path, to
-        open one no session runs in yet (also marked trusted in Claude Code, at its git
-        repository's root when inside one), so start_active_session can work there. Send the
-        owner the returned link: the folder, and everything under it, opens once they confirm there
-        with their passkey."""
+        open one no session runs in yet, so start_active_session can work there (Claude Code's
+        trust is then marked too, and covers the whole repository when the folder is inside one,
+        which the owner should hear); revoke_access closes it again. Send the owner the
+        returned link in the chat: the page shows the code and the folder, which opens with
+        everything under it once they confirm there with their passkey."""
         target, d = folder_to_open(session, folder)
         resolved = Path(target).resolve()
         if manager.access.state(resolved) == "closed":
@@ -1706,11 +1707,11 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def confirm_ask(summary: str) -> dict[str, Any]:
         """Get the owner's own OK on your summary, which a relayed message can't give.
-        Write it for someone with no context, exactly what is approved (the file, text, command or
-        permission string), at most 300 characters; put the result's tell_the_relay line in your
-        reply and end your turn. The owner confirms on the bridge's page with their passkey, the
-        bridge then messages you, and you act only on your own confirm_check; the design link says
-        how it works and what it proves."""
+        Write `summary` for someone with no context, exactly what is approved (the file, text,
+        command or permission string), at most 300 characters; put the result's tell_the_relay
+        line in your reply and end your turn. The owner confirms on the bridge's page with their
+        passkey and the bridge then messages you, but you act only on your own confirm_check, which
+        you may call at any time; the result's running.design link says how it works and why."""
         d = await asking_session()
         try:
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
@@ -1731,9 +1732,10 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def confirm_with_owner(code: str) -> dict[str, Any]:
         """Get the link where the owner confirms a session's confirm_ask request.
-        Send the owner the link in the chat and say in a few words what it's for: the page shows the
-        request as the bridge stored it, and the owner confirms it there with their passkey. Nothing
-        else confirms it, so there is nothing to retry or confirm on the owner's behalf."""
+        Send the owner the link in the chat and tell them in a few words what the returned summary
+        asks, since the page shows the request as the bridge stored it and the owner confirms it
+        there with their passkey. Nothing else confirms it, so never pass on an OK the owner gave
+        aloud; an expired or answered request needs a new confirm_ask from the session."""
         req = confirmations.by_code(code)
         if req is None or req["kind"] != "session":
             raise ToolError(f"No request {code}: ask the session for its code.")
@@ -1746,15 +1748,18 @@ def build_server(
             "summary": req["summary"],
             "from": req["asker"],
             "expires_at": confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS),
+            "note": "If carrying it out raises a permission prompt in Claude Code, that still waits for the owner at"
+            " the PC.",
         }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def confirm_check(code: str) -> dict[str, Any]:
         """Whether the owner confirmed your confirm_ask request: act only on this result.
-        confirmed (once, with the summary as stored: act only if it is exactly yours), pending (not
-        answered yet; usable until it expires), declined, expired, used (checked before: don't act
-        again) or unknown. A confirmation doesn't answer Claude Code's own permission prompts,
-        which still wait for the owner at the PC."""
+        `code` is the one confirm_ask gave you; status confirmed (shown once, with the summary as
+        stored, which is what the owner confirmed), pending (the owner can still confirm it until
+        it expires), declined, expired, used (an earlier check of yours saw it: don't act on it, and
+        ask again with confirm_ask if you lost that result) or unknown. A confirmation doesn't answer
+        Claude Code's own permission prompts, which still wait for the owner at the PC."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 
