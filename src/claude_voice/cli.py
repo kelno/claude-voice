@@ -16,7 +16,7 @@ from .server import Config, ConfigError, load_config, serve_forever
 
 #: Every verb this command has. The documentation test requires each one to
 #: appear in a worked example, so a verb cannot be added without one.
-COMMANDS: tuple[str, ...] = ("serve", "check", "plugins")
+COMMANDS: tuple[str, ...] = ("serve", "check", "plugins", "passkey")
 
 SIGN_IN = (
     "Run `claude`, type /login and sign in with your Claude account, then check again. If `claude` "
@@ -116,10 +116,16 @@ def main(
     plugin_cmd = sub.add_parser("plugins", help="list plugins, or approve one by typing its name")
     plugin_cmd.add_argument("action", nargs="?", choices=["list", "approve"], default="list")
     plugin_cmd.add_argument("name", nargs="?")
+    key_cmd = sub.add_parser("passkey", help="add the owner's passkey from a one-time link, list or remove them")
+    key_cmd.add_argument("action", nargs="?", choices=["add", "list", "remove"], default="list")
+    key_cmd.add_argument("id", nargs="?")
     parsed = parser.parse_args(args)
 
     if parsed.command == "plugins":
         return plugins_command(parsed.action, parsed.name, env)
+
+    if parsed.command == "passkey":
+        return passkey_command(parsed.action, parsed.id, env)
 
     if parsed.command == "check":
         return check_command(env, parsed.transport, parsed.json, login)
@@ -149,6 +155,39 @@ def check_command(env: Mapping[str, str], transport: str, as_json: bool, login: 
             if not c["ok"]:
                 sys.stdout.write(f"claude-voice: note: {c['detail']}. {c['fix']}\n")
     return 0 if ready else 1
+
+
+def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> int:
+    """The owner's passkeys, which confirm requests on the bridge's page (ADR-CV-011)."""
+    from . import passkeys
+    from .store import Store
+
+    try:
+        cfg = load_config(env, "stdio")
+    except ConfigError as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    cfg.db.parent.mkdir(parents=True, exist_ok=True)
+    book = passkeys.for_url(Store(cfg.db), cfg.public_url)
+    if action == "add":
+        link = f"{cfg.public_url}/confirm/passkey/{book.new_registration()}"
+        sys.stdout.write(
+            "Open this link on the device that will hold the passkey (your phone), from your own network,\n"
+            f"within 10 minutes; it works once:\n\n  {link}\n"
+        )
+        return 0
+    if action == "remove":
+        if not key_id or not book.remove(key_id):
+            sys.stderr.write(f"claude-voice: no passkey {key_id!r}; `claude-voice passkey list` shows their ids\n")
+            return 1
+        sys.stdout.write("Removed.\n")
+        return 0
+    keys = book.registered()
+    if not keys:
+        sys.stdout.write("No passkey yet: add one with `claude-voice passkey add`.\n")
+    for k in keys:
+        sys.stdout.write(f"{k['id']}  {k['name']}\n")
+    return 0
 
 
 def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> int:

@@ -100,8 +100,8 @@ the bridge says which are missing, with the exact fix, through its
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
-| `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, with your approval in the app; close it again |
-| `confirm_ask`, `confirm_with_owner`, `confirm_check` | the owner's own OK for a session, given from a voice chat: the session asks with its exact summary, the owner taps the app's card for `confirm_with_owner`, and the session checks the result itself; how and why: [docs/owner-confirmation.md](docs/owner-confirmation.md) |
+| `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |
+| `confirm_ask`, `confirm_with_owner`, `confirm_check` | the owner's own OK for a session: the session asks with its exact summary, `confirm_with_owner` gives the link to the bridge's page where you confirm it with your passkey, and the session checks the result itself; how and why: [docs/owner-confirmation.md](docs/owner-confirmation.md) |
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new project folder by a plain name under the root, only when asked |
 | `start_role` | start a session for a role, such as `contribute`: say what to change in claude-voice and get a pull request |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
@@ -181,8 +181,8 @@ and `/api/v1/doctor` say whether such a port is there.
   - `request_access` opens that session's folder and everything under it, for
     good; given a full path instead, it opens a folder no session runs in yet,
     and marks it trusted in Claude Code, which won't start a session in a folder
-    it never trusted. It is marked destructive, so the Claude app asks you before every
-    grant, and only you can answer.
+    it never trusted. It opens nothing itself: it returns a link to the bridge's
+    page, where you confirm the folder with your passkey, and only you can.
   - Some folders are never opened, inside the root or not: `.ssh`, `.gnupg`,
     `.claude`, `.config/claude-voice` and `AppData` in your home folder, and the
     system's own folders. A session there, or in a folder holding one, is listed
@@ -297,10 +297,17 @@ claude.ai could not reach the bridge on port 10000.
 
 In the Claude app, add a custom connector with that address and connect. Then
 set the tools to *always allow*, so the app does not ask before each one.
-Except two, whose safety is your tap: keep `request_access` and `confirm_with_owner`
-set to ask each time. Marked destructive, they show a card on every call, but
-only while set to ask: on *always allow*, they run with no card (tested 2026-11-06).
-Their titles say "never always allow".
+Nothing that needs your own OK rests on those approvals: opening a folder and a
+session's request for your OK are confirmed with a passkey on the bridge's own
+page. Add one with `claude-voice passkey add`, which prints a one-time link to open
+on your phone; the page answers only from your own network (the tailnet here).
+To see the passkeys added so far:
+
+```console
+$ claude-voice passkey list
+No passkey yet: add one with `claude-voice passkey add`.
+```
+
 ChatGPT on a Plus plan could not connect to a custom MCP server from Android at
 the time of writing.
 

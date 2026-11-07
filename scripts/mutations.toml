@@ -321,17 +321,7 @@ file = "src/claude_voice/server.py"
 find = 'if own is None:'
 replace = 'if False:'
 
-[[rule]]
-name = "only a voice chat through anthropic may confirm"
-file = "src/claude_voice/confirm.py"
-find = 'return caller.label == VOICE_CHAT and through_anthropic\(caller.address\)'
-replace = 'return True'
 
-[[rule]]
-name = "the summary must match except for spaces"
-file = "src/claude_voice/confirm.py"
-find = 'return " ".join\(asked.split\(\)\) == " ".join\(given.split\(\)\)'
-replace = 'return asked.lower() == given.lower()'
 
 [[rule]]
 name = "only the session that asked can check its request"
@@ -344,3 +334,33 @@ name = "a request belongs to the session whose transcript holds the call"
 file = "src/claude_voice/transcripts.py"
 find = 'if needle in tail:'
 replace = 'if tail:'
+
+[[rule]]
+name = "a registration link works once for ten minutes"
+file = "src/claude_voice/passkeys.py"
+find = 'if row is None or row\[2\] or self.clock\(\) > row\[1\]:'
+replace = 'if row is None:'
+
+[[rule]]
+name = "an assertion counts only for the request its challenge was made for"
+file = "src/claude_voice/passkeys.py"
+find = 'if row is None or row\[0\] != purpose or self.clock\(\) > row\[1\]:'
+replace = 'if row is None:'
+
+[[rule]]
+name = "a confirmation needs a passkey the bridge verified"
+file = "src/claude_voice/passkeys.py"
+find = 'if key is None:'
+replace = 'if False:'
+
+[[rule]]
+name = "a request is answered once while it is pending"
+file = "src/claude_voice/confirm.py"
+find = 'if self.state\(req\) != "pending":'
+replace = 'if False:'
+
+[[rule]]
+name = "the confirm page answers only from a private address"
+file = "src/claude_voice/api.py"
+find = 'return ip.is_private or ip.is_loopback or any\(ip in net for net in TAILNET\)'
+replace = 'return True'

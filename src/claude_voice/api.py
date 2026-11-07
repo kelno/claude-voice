@@ -68,6 +68,16 @@ def from_tailnet_or_here(address: str) -> bool:
     return ip.is_loopback or any(ip in net for net in TAILNET)
 
 
+def from_private_network(address: str) -> bool:
+    """This computer, a private network such as the owner's VPN, or the tailnet: never the internet."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    # RULE: the confirm page answers only from a private address
+    return ip.is_private or ip.is_loopback or any(ip in net for net in TAILNET)
+
+
 class TailnetOnly:
     """Refuses the event API and the companion app's files to anyone but this computer and
     the tailnet, so they cannot be reached through Funnel; everything else passes."""

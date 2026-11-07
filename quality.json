@@ -4,7 +4,8 @@
     "claude_voice/api.py": 13,
     "claude_voice/cli.py": 14,
     "claude_voice/config.py": 17,
-    "claude_voice/confirm.py": 6,
+    "claude_voice/confirm.py": 7,
+    "claude_voice/confirm_page.py": 3,
     "claude_voice/detail.py": 40,
     "claude_voice/doctor.py": 19,
     "claude_voice/events.py": 15,
@@ -14,6 +15,7 @@
     "claude_voice/launch.py": 10,
     "claude_voice/metrics.py": 7,
     "claude_voice/oauth.py": 7,
+    "claude_voice/passkeys.py": 7,
     "claude_voice/permissions.py": 12,
     "claude_voice/phone_hook.py": 17,
     "claude_voice/plugins.py": 9,
@@ -29,9 +31,9 @@
     "claude_voice/updater.py": 13,
     "claude_voice/usage.py": 11
   },
-  "coverage": 92.84,
+  "coverage": 92.72,
   "cycles": 0,
-  "duplication": 1.91,
+  "duplication": 1.79,
   "layer_violations": 0,
   "lint_errors": 0,
   "mutation": {
@@ -42,7 +44,7 @@
     "seconds": 180,
     "tolerance": 0.25
   },
-  "test_seconds": 117.5,
-  "tests": 616,
+  "test_seconds": 110.2,
+  "tests": 627,
   "type_errors": 0
 }

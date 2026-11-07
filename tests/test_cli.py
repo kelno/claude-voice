@@ -13,8 +13,8 @@ def env(tmp_path, **extra):
     return {"CLAUDE_VOICE_ROOT": str(tmp_path), **extra}
 
 
-def test_the_command_has_serve_check_and_plugins():
-    assert COMMANDS == ("serve", "check", "plugins")
+def test_the_command_has_serve_check_plugins_and_passkey():
+    assert COMMANDS == ("serve", "check", "plugins", "passkey")
 
 
 def test_serve_starts_the_bridge_with_the_chosen_transport(tmp_path):
@@ -95,3 +95,20 @@ def test_a_bad_configuration_is_one_line_and_exit_code_one(tmp_path, capsys):
     err = capsys.readouterr().err.strip()
     assert err.startswith("claude-voice: ANTHROPIC_API_KEY is set")
     assert "\n" not in err
+
+
+def test_a_passkey_is_added_from_a_one_time_link_made_at_the_pc(tmp_path, capsys):
+    from claude_voice import passkeys
+    from claude_voice.store import Store
+
+    settings = env(
+        tmp_path, CLAUDE_VOICE_DB=str(tmp_path / "b.db"), CLAUDE_VOICE_PUBLIC_URL="https://pc.example.com/cv"
+    )
+    assert main(["passkey", "add"], env=settings) == 0
+    link = next(w for w in capsys.readouterr().out.split() if w.startswith("https://"))
+    assert link.startswith("https://pc.example.com/cv/confirm/passkey/")
+    book = passkeys.for_url(Store(tmp_path / "b.db"), "https://pc.example.com/cv")
+    book.check_registration(link.rsplit("/", 1)[1])  # a live, unused link
+    assert main(["passkey", "list"], env=settings) == 0
+    assert "No passkey" in capsys.readouterr().out
+    assert main(["passkey", "remove", "nope"], env=settings) == 1

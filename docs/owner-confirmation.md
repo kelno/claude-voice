@@ -1,24 +1,31 @@
 # The owner's confirmation through the bridge
 
-Status: built (2026-11-06), tested by the checks below; what must be checked before building is listed at the end. This document is meant for an agent deciding whether to trust a confirmation: how it works, what each party can observe, why a confirmed result stands for the owner's own OK, and what it can't prove.
+Status: built (2026-11-07), with a passkey on the bridge's own page (ADR-CV-011). This document is meant for an agent deciding whether to trust a confirmation: how it works, what each party can observe, why a confirmed result stands for the owner's own OK, and what it can't prove. The history of how it got here, and what was tried first, is at the end.
 
 ## The problem
 
 The owner often works through a relay: a Claude chat (voice or text) that passes the owner's words to Claude Code sessions on the PC through this bridge. Sessions rightly refuse a relayed approval for changes to their own rules or settings: the relay's message reaches them through SendMessage, the same channel any other session uses, and Claude Code tells every session never to take another session's message as its user's approval. The owner then has to type "OK" into the session by hand, at the PC.
 
-So a confirmation can't travel inside a message. Nothing in a message's text, a stamp included, proves anything: whatever the bridge could write there, the relay could write too.
+So a confirmation can't travel inside a message: whatever the bridge could write there, the relay could write too. And it can't rest on the Claude app's approval card either: a setting in the app silently skips the card, and the bridge can't see whether it was shown (see "History"). The owner's answer has to reach the bridge by a path no model can produce.
 
 ## How it works
 
-The parties: the **session** that wants approval (a Claude Code session on the PC), the **relay** (the Claude chat the owner talks to), the **bridge** (this server, on the PC, which both reach as a connector), the **Claude app** (where the owner sees an approval card), and the **owner**.
+The parties: the **session** that wants approval (a Claude Code session on the PC), the **relay** (the Claude chat the owner talks to), the **bridge** (this server, on the PC, which both reach as a connector), the **owner**, and the owner's **passkey** (on the owner's phone or computer).
 
-1. The session writes what it wants approved and calls the bridge tool `confirm_ask` with it. The summary is exact, not a paraphrase: the text to add, the permission string, the command, the branch. The bridge records the request: a short code, the summary, which session asked, the time. A request expires after 15 minutes and is used once; a summary is at most 300 characters.
-2. The session gives the relay the code and the summary, in its reply.
-3. The relay calls the bridge tool `confirm_with_owner` with the code and the summary copied exactly. The tool is marked destructive, so the Claude app shows the owner an approval card before the call goes through. The card shows the call's arguments, not the tool's name, so the argument is named `owner_approves`: the owner reads "owner_approves: <the summary>". The owner taps to allow, or declines.
-4. When the call arrives, the bridge checks that it comes from a claude.ai voice chat (see "Who called"), and that the summary is exactly the session's, character for character, except for spaces and line breaks at the ends or repeated. Punctuation and capitals count: `Bash(git push:*)` and `Bash(git push*)` are different approvals. On a match it marks the request confirmed; otherwise it refuses, says why, and the relay calls again (a new card, a new tap).
-5. The bridge tells the session, by message, that its request is confirmed. That message is only a nudge: the session then calls `confirm_check` with the code, and acts only if the result says confirmed and shows its summary.
+Once, at the PC: the owner runs `claude-voice passkey add`, which prints a one-time link (it works once, for ten minutes), opens it on the phone, and creates a passkey for the bridge, checked by fingerprint, face or PIN. The bridge keeps only the passkey's public key.
 
-`confirm_ask` and `confirm_check` work only for a Claude Code session running on this PC, found by its call in its transcript. `confirm_check` returns one of: confirmed (with the summary, as stored, and the time); pending (no confirmation recorded, which covers a call the bridge refused, a card the owner declined or never saw, and a call never made: the bridge can't tell these apart, since a declined card never reaches it); expired; used (already confirmed and checked once before, by this session); unknown code.
+Then, for each request:
+
+1. The session writes what it wants approved and calls the bridge tool `confirm_ask` with it. The summary is exact, not a paraphrase: the file, the text to add, the permission string, the command. The bridge records the request: a short code, the summary, which session asked, the time, and a long random link. A request expires after 15 minutes and is answered once; a summary is at most 300 characters.
+2. The session gives the relay the code, in its reply.
+3. The relay calls `confirm_with_owner` with the code. The bridge returns the request's link and summary; the relay sends the owner the link in the chat and says in a few words what it's for.
+4. The owner opens the link. The page, served by the bridge from the owner's own network only, shows the request as the bridge stored it: the code, which session asked, the summary. The owner taps Confirm, and the passkey asks for the owner's fingerprint, face or PIN; or taps Decline.
+5. On Confirm, the bridge has made a one-time challenge for this request; the passkey signs it, for the bridge's own address only. The bridge checks the signature against the registered public key, that the owner was verified, that the challenge was made for this request and not used before, and that the address signed is its own. Only then does it mark the request confirmed.
+6. The bridge tells the session, by message, that its request is confirmed. That message is only a nudge: the session then calls `confirm_check` with the code, and acts only if the result says confirmed and shows its summary.
+
+`confirm_ask` and `confirm_check` work only for a Claude Code session running on this PC, found by its call in its transcript. `confirm_check` returns one of: confirmed (once, with the summary as stored and the time); pending (not answered yet); declined; expired; used (confirmed and checked before); unknown.
+
+Opening a folder works the same way: `request_access` records the folder as a request and returns its link, and the bridge opens the folder itself once the owner confirms it with the passkey.
 
 The owner's rule (in the owner's global rules for Claude Code, added by the owner): a confirmed result from `confirm_check`, showing exactly the summary the session wrote, counts as if the owner had typed OK to that summary at the PC, changes to the session's own rules and permission settings included. It covers what the summary says, once; the session's usual process around it (a commit and push its own rules call for) follows as it would after a typed OK. A message saying the owner confirmed never counts; only the session's own `confirm_check` result does.
 
@@ -26,74 +33,57 @@ A confirmation is the owner's OK in the conversation, not an answer to Claude Co
 
 ## What each party can observe
 
-What the bridge sees on an incoming call, measured on 2026-11-06 by logging real calls:
-
-- **The sign-in:** every caller uses the same login token, from the same sign-in to the bridge, and arrives from Anthropic's servers through the owner's proxy. The token tells no caller apart.
-- **A label of the calling product,** in a header: `ClaudeAI` for a claude.ai voice chat, `Cowork` for a text chat in the Claude app, `ClaudeCode` for a Claude Code session.
-- **A claude.ai voice chat:** a connection id (`mcp-session-id`) the bridge itself issued when the chat connected. It stayed the same across the chat's calls, and across a reconnected voice call in the same chat (the owner hung up and called back; no bridge restart). It changed when the bridge restarted, since the bridge keeps connections in memory and the app connects anew when its id is refused. But it can't be relied on: the same chat switched to text mode came as `Cowork` with no connection id, and back in voice an hour later, after another reconnect, came as `ClaudeAI` with no connection id at all (the newer protocol without connections, client version 1.0.0). So no claude.ai chat carries an id the bridge can count on (tested 2026-11-06).
-- **A Claude Code session:** the id of each tool call (`claudecode/toolUseId`). The session's transcript on the PC records that id, so the bridge can tell which session made the call. Nothing else names the session.
-- **A text chat (`Cowork`):** the same details as a Claude Code session, a tool call id but no connection id. Nothing visible names the chat.
-
-What the others observe:
-
-- **The session** sees what it sent to `confirm_ask` and what `confirm_check` returns, straight from the bridge, with no message in between. It never sees the card.
-- **The relay** sees its tool results and its conversation with the owner. It never sees the bridge's records, and it can't set a header or a connection id: Anthropic's servers send those.
-- **The owner** sees the card's arguments, the code and the session's summary, and hears the relay's description.
-
-## Who called
-
-The bridge accepts each step only from the caller it belongs to:
-
-- `confirm_ask` and `confirm_check`: only from a Claude Code session, identified by its tool call id found in its transcript. The session that checks must be the one that asked, so no other session can see or use the request.
-- `confirm_with_owner`: only from a claude.ai voice chat (label `ClaudeAI`), arriving from Anthropic's published outbound addresses (`160.79.104.0/21`, `153.61.208.0/20`); never from a text chat (`Cowork`) or a Claude Code session (`ClaudeCode`). Why not text chats: a text chat in the Claude app runs as a Claude Code session in Anthropic's cloud, and its tool approvals are answered by Claude Code's auto-mode classifier, not by the owner: in the card test (2026-11-06), a text chat's call to the destructive `request_access` was refused by that classifier and never reached the owner or the bridge. A classifier that can refuse can also allow, so a `Cowork` call doesn't mean the owner tapped. Why the address check: a caller reaching the bridge directly, over the owner's VPN, could send any label; through Anthropic, the label is Anthropic's. Cost: a relay in a text chat can't confirm. The owner had first chosen any claude.ai chat, voice or text, over a tighter rule matching the one voice chat a request was handed to; no chat carries an id the bridge can count on (see above), so the tighter rule can't be built, and the text-chat test then ruled text chats out.
+- **The session** sees what it sent to `confirm_ask` and what `confirm_check` returns, straight from the bridge, with no message in between.
+- **The relay** sees the code, the summary and the link. It never holds the passkey and can't produce its signature.
+- **The owner** sees the page: the request as the bridge stored it, not the relay's retelling.
+- **The bridge** sees which session asked (the tool call's id, found in that session's transcript), and the passkey's signature with what it signed: the challenge, and the address of the page it was made on.
 
 ## Why a session can trust a confirmed result
 
 - The result comes from the bridge as the session's own tool result, not through a message, so neither the relay nor another session can write it.
-- The bridge marks a request confirmed only when `confirm_with_owner` arrives from a claude.ai voice chat through Anthropic's servers, as they identify it, not as the caller says: never from a Claude Code session, so no session can confirm a request, its own or another's.
-- That call needs the owner's tap only while the tool is set to ask each time in the owner's connector settings: the app then shows a card offering only "Allow once" (seen 2026-11-06). Set to "always allow", it shows none (see "The limits").
-- The card shows exactly the summary the session wrote, since the bridge refuses any other text. The relay can't reword what the owner approves.
+- The bridge marks a request confirmed only on a passkey signature it checked itself: made by a passkey registered at the PC, with the owner verified (fingerprint, face or PIN), over a one-time challenge made for this request. No model holds a passkey, and none can make that signature.
+- The signature names the address it was made on, and the bridge accepts only its own. A look-alike page, a link swapped by a relay, gets a signature the bridge refuses, so nobody has to check a link's domain.
+- The page shows the bridge's own copy of the request, so the relay can't change what the owner confirms.
+- Nothing here depends on the Claude app's settings or on what it chooses to show: the app only carries the link.
 - The owner's own rule says a confirmed result counts as the owner's OK, so the session doesn't decide that on the mechanism's word. What it relies on the mechanism for is set out here, with its limits, for it to judge.
 
 ## Checking the running code against this document
 
-`confirm_ask` and `confirm_check` return the commit the running bridge was started from (the hash `health` also reports), whether its working tree had uncommitted changes, and a link to this document at that commit: `https://github.com/kelno/claude-voice/blob/<hash>/docs/owner-confirmation.md`. A session reads the document as it was for the code actually running, not a later or earlier version; on the PC it can also run `git show <hash>:docs/owner-confirmation.md` in the fork's clone. The owner's idea (2026-11-06).
+`confirm_ask` and `confirm_check` return the commit the running bridge was started from (the hash `health` also reports), whether its working tree had uncommitted changes, and a link to this document at that commit: `https://github.com/kelno/claude-voice/blob/<hash>/docs/owner-confirmation.md`. A session reads the document as it was for the code actually running; on the PC it can also run `git show <hash>:docs/owner-confirmation.md` in the fork's clone. The owner's idea (2026-11-06).
 
-What it shows and what it doesn't: a clean tree at a pushed commit means the running code is the code anyone can read at that link. Uncommitted changes mean the running code may differ from any published version, and the result says so. The hash is reported by the bridge itself, so it guards against a mistake or an outdated document, not against a program that changed the bridge on purpose (see "Outside the relay").
+A clean tree at a pushed commit means the running code is the code anyone can read at that link. Uncommitted changes mean the running code may differ from any published version, and the result says so. The hash is reported by the bridge itself, so it guards against a mistake or an outdated document, not against a program that changed the bridge on purpose (see "The limits").
 
 ## The limits
 
 What a confirmed result can't prove:
 
-- That the owner read the card before tapping, or understood it. The owner sees the summary and the relay's spoken description, not the session's context.
-- That the app showed the whole summary: whether a long summary is cut off on the card is unchecked. Summaries are kept short.
-- **That the owner tapped at all, unless `confirm_with_owner` is set to ask each time in the owner's connector settings.** Tested 2026-11-06, once on each client, with the tool set to "always allow" (a setting both the phone and the desktop app offer): in the desktop app's voice chat, the call went through with no card and no tap, and the bridge recorded it as confirmed; in the phone app's voice chat, a card still appeared, offering only "Allow once". So the setting is honoured differently by each client, and either may change with an update: the phone's card is most likely the app failing to honour a saved "always allow", reported publicly as a bug (anthropics/claude-ai-mcp#1087, #1223, both open), which a fix would remove. The bridge's message tools were marked destructive from 2026-10-05, yet "always allow" worked from the phone until early November: the change came from the app. Whether the bridge can tell a phone call from a desktop one is unchecked; both voice chats seen so far came labelled `ClaudeAI`. The destructive mark doesn't override that setting, and the bridge can't see whether a card was shown. So, as built, a confirmed result means the owner tapped only while that one setting is left on asking, which one change in the app's settings, made by mistake, silently undoes. Until the bridge can see the owner's answer itself (see "Next"), the owner's rule shouldn't be added.
+- That the owner read the page before confirming, or understood it. The owner sees the summary and the relay's description, not the session's context.
+- That the owner, and not someone holding the owner's unlocked phone and able to pass its fingerprint, face or PIN check, confirmed it.
 
 What a dishonest relay could still do:
 
-- Describe the request misleadingly when asking the owner to tap; the card still shows the session's words.
+- Describe the request misleadingly when sending the link; the page still shows the bridge's copy.
+- Send the link of another pending request; the page shows that request's own summary and session.
 - Delay a request, or not pass it on.
-- It can't confirm without the tap, or change the words.
-- Any claude.ai voice chat of the owner's can confirm any pending request whose code and summary it has, still only with the owner's tap on the card.
+- It can't confirm, change the words, or make a look-alike page work.
 
-Outside the relay:
+The page itself:
 
-- Anyone holding the bridge's login token could call it without the app. Anthropic holds it for the connector.
-- A program running as the owner on this PC can read and change the bridge's database, and fake any of this. Such a program could also change the session's settings directly, so this adds nothing new.
+- It answers only from a private network (the owner's VPN, this computer, or a tailnet), and the owner's proxy lets it through from the VPN only. Anyone there who holds a request's link can read its summary and decline it, but not confirm it.
 
-## Next
+Outside all of this:
 
-The card can't carry the proof alone, since a setting the bridge can't see turns it off. Ways to an answer the bridge observes itself:
+- A program running as the owner on this PC can read and change the bridge's database, register its own passkey or mark a request confirmed. Such a program could also change the session's settings directly, so this adds nothing new.
 
-1. **The owner answers the bridge, not the app's approval.** MCP lets a server ask the user a question during a call (elicitation). Ruled out for now (2026-11-06): the phone app's voice chat declares no elicitation support (its capabilities name only the MCP Apps extension, `io.modelcontextprotocol/ui`), and the request for it in the Claude app, anthropics/claude-ai-mcp#153, is open. A text chat declares it, but its approvals go to a classifier, so its answers may not be the owner's either. To look at again if the app adds it.
-2. **A panel in the chat (an MCP App) whose tap carries a secret no model sees.** Tested 2026-11-06 with a temporary panel: the bridge's tool result held a marker (in `structuredContent`) and a secret (in the result's `_meta`); the relay, a voice chat, received the marker but not the secret, while the panel received both. Opened in the desktop app, the panel showed its button, and the owner's tap reached the bridge as a tool call from the panel carrying the secret, which matched. No model can produce that call, since none holds the secret; and no approval setting answers it. But the phone app, in voice, fetched the panel and then showed instead: "To protect your account, this can't be shown in the app on this device right now." A tap from the panel reaches the bridge through Anthropic's servers like any tool call, so only the secret tells it apart. Works on the desktop, not (yet) on the phone, where the owner mostly confirms.
-3. **A confirm page behind the bridge's own login, as a stopgap.** The owner's choice (2026-11-07): the owner would prefer 1 or 2, both features of the Claude app that don't work today (elicitation isn't supported, the panel is blocked on the phone); the page stands in until one of them does, so it stays plain and minimal, and only its security properties matter. The bridge sends the owner a link; the owner opens a page showing the summary, signs in and taps Confirm. Independent of the app and its settings; the owner looks at a screen, as for the card.
+## History
 
-## Checks
+What was tried first, and why the passkey page replaced it (2026-11-06 and 07). ADR-CV-010 and ADR-CV-011 have the decisions; this is what an agent may want to check.
 
-Checked before building, 2026-11-06: 1 holds as far as any agent can act (a caller would have to hand-craft requests with the owner's stored sign-in, which falls under "Outside the relay"), and the bridge also requires Anthropic's addresses; 2 holds in voice (a card offering only "Allow once"), and failed in text chats, which are therefore ruled out. If either stops holding, the fallback is a confirm page behind the bridge's own login, which the owner opens and taps, independent of the app's card and of caller labels. 3 and 4 are still unchecked.
+- **A stamp in the bridge's message:** whatever the bridge writes in a message, the relay could write too.
+- **The Claude app's approval card** on a destructive `confirm_with_owner`, with the summary matched word for word and only voice chats accepted (a text chat's approvals go to Claude Code's auto-mode classifier, which refused a destructive call that never reached the owner). With the tool set to "always allow", the desktop app's voice chat ran it with no card and no tap, and the bridge recorded a confirmation. The phone still showed a card, but that comes from a reported app bug (anthropics/claude-ai-mcp#1087, #1223) that a fix would remove; the bridge's message tools were marked destructive from 2026-10-05, yet "always allow" worked from the phone until early November. A guarantee one settings change silently removes isn't one.
+- **Who called:** every caller uses the same sign-in, and arrives from Anthropic's servers. A header names the product (`ClaudeAI` for a voice chat, `Cowork` for a text chat, `ClaudeCode` for a Claude Code session); a voice chat sometimes carries a connection id the bridge issued, but not reliably (none after a reconnect on the newer protocol, none in text mode), so no chat can be told apart from another. A Claude Code session carries each tool call's id, which its transcript on the PC records: that is how the bridge still finds the session that asked.
+- **Elicitation** (the bridge asks the owner during the call): the owner's preferred way, but the phone app's voice chat declares no support for it (its capabilities name only the MCP Apps extension), and the request for it in the Claude app, anthropics/claude-ai-mcp#153, is open. A text chat declares it, but its approvals go to a classifier.
+- **A panel in the chat (an MCP App) whose tap carries a secret no model sees:** also preferred. Tested with a temporary panel: the relay, a voice chat, received the result's marker (in `structuredContent`) but not the secret (in the result's `_meta`), and the owner's tap in the desktop app reached the bridge with the secret. But the phone app fetched the panel and showed "To protect your account, this can't be shown in the app on this device right now."
+- **The confirm page with a passkey:** chosen as a stopgap until elicitation or the panel works on the phone; plain and minimal, since only its security matters. The alternatives considered for the page itself (a bookmark, a remembered sign-in with the owner checking the link's domain, an Android notification with Accept and Refuse) are in ADR-CV-011.
 
-1. Whether Anthropic sets the caller labels itself, or passes on a value the caller sent. Everything in "Who called" rests on it.
-2. That the card appears on every call to a destructive tool, with no "Always allow" and no setting that skips it, in voice chats (text chats are ruled out, see "Who called").
-3. Whether the card shows a long summary in full.
-4. Whether the owner can approve a card by voice, without a tap.
+Still unchecked: whether the owner can confirm entirely by voice; today the page needs a look and a tap.

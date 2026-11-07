@@ -63,6 +63,8 @@ LAYERS = {
             "oauth",
             "fork",
             "confirm",
+            "confirm_page",
+            "passkeys",
         ),
         1,
     ),  # parts, each about one thing

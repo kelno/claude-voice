@@ -2,12 +2,14 @@
 
 import json
 
+import httpx
 import pytest
 from fakes import FakeClaude
 from mcp.client import Client
+from softkey import SoftKey
 
-from claude_voice import access, procs
-from claude_voice.server import build_server
+from claude_voice import access, passkeys, procs
+from claude_voice.server import build_app, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
@@ -61,6 +63,23 @@ async def call(client, name, **args):
     return res.structured_content
 
 
+async def owner_grants(c, srv, world, **args):
+    """request_access, then the owner's passkey on the bridge's page: what the bridge did."""
+    asked = await call(c, "request_access", **args)
+    assert asked["status"] == "waiting_for_owner"
+    book = passkeys.for_url(Store(world["tmp"] / "bridge.db"), "http://localhost")
+    key = SoftKey("localhost", "http://localhost")
+    token = book.new_registration()
+    book.register(token, key.register(book.registration_options(token)), "test")
+    page = asked["link"].removeprefix("http://localhost")
+    transport = httpx.ASGITransport(app=build_app(srv), client=("127.0.0.1", 4321))
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as h:
+        options = (await h.post(page + "/challenge")).json()
+        done = await h.post(page + "/confirm", json=key.assert_(options))
+    assert done.status_code == 200, done.text
+    return done.json()["folder"]
+
+
 async def refused(client, name, **args):
     res = await client.call_tool(name, args)
     assert res.is_error
@@ -93,7 +112,7 @@ async def test_granting_opens_a_sessions_folder_and_everything_under_it_for_good
     running(world, 3, "Notes, deeper", world["elsewhere"] / "sub")
     m, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", session="Notes")
+        granted = await owner_grants(c, srv, world, session="Notes")
         assert granted["folder"] == str(world["elsewhere"].resolve())
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert "access" not in listed["Notes"] and "access" not in listed["Notes, deeper"]
@@ -138,21 +157,21 @@ async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
     # To start work remotely in a folder never used from the bridge, the owner opens it by path.
     m, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+        granted = await owner_grants(c, srv, world, folder=str(world["elsewhere"]))
     assert granted["folder"] == str(world["elsewhere"].resolve())
     assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
 
 
 async def test_a_folder_opened_by_path_is_trusted_by_claude_code_too(world):
     # Claude Code won't start a background session in a folder it was never trusted in, so the
-    # owner's one approval of request_access covers its trust too, as its docs say to set it.
+    # owner's passkey confirmation of request_access covers its trust too, as its docs say to set it.
     (world["tmp"] / ".claude.json").write_text(
         json.dumps({"numStartups": 7, "projects": {"C:/elsewhere": {"hasTrustDialogAccepted": True, "x": 1}}}),
         encoding="utf-8",
     )
     _, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+        granted = await owner_grants(c, srv, world, folder=str(world["elsewhere"]))
     key = world["elsewhere"].resolve().as_posix()
     assert granted["trusted"] == key
     assert trusted(world) == {"C:/elsewhere": True, key: True}
@@ -167,7 +186,7 @@ async def test_a_folder_inside_a_repository_is_trusted_at_the_repository_root(wo
     (world["tmp"] / ".claude.json").write_text("{}", encoding="utf-8")
     _, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", folder=str(repo / "sub"))
+        granted = await owner_grants(c, srv, world, folder=str(repo / "sub"))
     assert granted["trusted"] == repo.resolve().as_posix()
     assert trusted(world) == {repo.resolve().as_posix(): True}
 
@@ -176,7 +195,7 @@ async def test_a_trust_that_cannot_be_written_leaves_the_grant_and_says_why(worl
     (world["tmp"] / ".claude.json").write_text("not json", encoding="utf-8")
     m, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", folder=str(world["elsewhere"]))
+        granted = await owner_grants(c, srv, world, folder=str(world["elsewhere"]))
     assert granted["granted"] and "trusted" not in granted
     assert "trust" in granted["trust_not_set"]
     assert (world["tmp"] / ".claude.json").read_text(encoding="utf-8") == "not json"
@@ -188,7 +207,7 @@ async def test_a_session_s_folder_is_left_to_claude_code_s_own_trust(world):
     running(world, 2, "Notes", world["elsewhere"])
     _, srv = server(world)
     async with Client(srv) as c:
-        granted = await call(c, "request_access", session="Notes")
+        granted = await owner_grants(c, srv, world, session="Notes")
     assert "trusted" not in granted
     assert not (world["tmp"] / ".claude.json").exists()
 
@@ -212,7 +231,7 @@ async def test_revoking_a_grant_closes_the_folder_again(world):
     running(world, 2, "Notes", world["elsewhere"])
     _, srv = server(world)
     async with Client(srv) as c:
-        await call(c, "request_access", session="Notes")
+        await owner_grants(c, srv, world, session="Notes")
         await call(c, "revoke_access", folder=str(world["elsewhere"]))
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Notes"]["access"] == "folder_not_open"
@@ -240,7 +259,7 @@ async def test_only_a_desktop_scratch_folder_is_opened_inside_a_denied_folder(wo
         assert listed["Scratch"]["access"] == "folder_not_open"
         assert listed["Workspaces"]["access"] == "folder_closed"
         assert listed["App storage"]["access"] == "folder_closed"
-        granted = await call(c, "request_access", session="Scratch")
+        granted = await owner_grants(c, srv, world, session="Scratch")
         assert granted["folder"] == str(scratch.resolve())
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert "access" not in listed["Scratch"] and "access" not in listed["Scratch, deeper"]

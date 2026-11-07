@@ -25,6 +25,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp
 
 from . import (
@@ -32,6 +34,7 @@ from . import (
     api,
     config,
     confirm,
+    confirm_page,
     detail,
     doctor,
     events,
@@ -39,6 +42,7 @@ from . import (
     gitstatus,
     launch,
     metrics,
+    passkeys,
     permissions,
     plugins,
     procs,
@@ -566,6 +570,7 @@ def build_server(
     poll_seconds: float = 1.0,
     receive_seconds: float = 15.0,
     projects_dir: Path = PROJECTS_DIR,
+    public_url: str = "http://localhost",
     roles_file: Path | None = roles.USER_FILE,
     doctor_host: doctor.Host | None = None,
     bridge_port: int = 8811,
@@ -654,6 +659,8 @@ def build_server(
     running_version = metrics.version()
     running_uncommitted = metrics.uncommitted()
     confirmations = confirm.Confirmations(manager.store)
+    page_url = (oauth.public_url if oauth is not None else public_url).rstrip("/")
+    owner_keys = passkeys.for_url(manager.store, page_url)
 
     def check() -> None:
         """Look at the running sessions and the tree's shape; record what changed."""
@@ -1613,32 +1620,28 @@ def build_server(
             )
         return d
 
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
-    def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
-        """Open a folder to the bridge for good, a session's or by path; owner approves.
-        Give one of: `session`, a listed session, to open its folder; or `folder`, a full path,
-        to open a folder no session runs in yet, so start_active_session can work there; a folder
-        given by path is also marked trusted in Claude Code (trusted names the folder; at a git
-        repository's root when inside one), since Claude Code won't start a session in a folder it
-        never trusted. The folder and everything under it can then be read, messaged and worked in. Its safety is
-        the owner's tap: keep it set to ask each time in the app, as on "always allow" no card shows."""
+    def folder_to_open(session: str | None, folder: str | None) -> tuple[str, dict[str, Any]]:
         if (session is None) == (folder is None):
             raise ToolError("Give one of session or folder.")
         if folder is not None:
             if not Path(folder).is_absolute():
                 raise ToolError(f"{folder!r}: give the folder's full path.")
-            target, d = folder, {}
-        else:
-            d = find_any_live(str(session))
-            target = str(d.get("cwd"))
+            return folder, {}
+        d = find_any_live(str(session))
+        return str(d.get("cwd")), d
+
+    def open_folder(target: str, by_path: bool, session_name: str | None) -> dict[str, Any]:
+        """Open a folder the owner confirmed with a passkey; a folder by path is trusted too."""
         try:
             opened = manager.access.grant(target)
         except ValueError as exc:
-            raise ToolError(str(exc)) from None
-        out: dict[str, Any] = {**({"session": d.get("name")} if d else {}), "folder": str(opened), "granted": True}
-        if folder is not None:
+            return {"folder": target, "granted": False, "error": str(exc)}
+        out: dict[str, Any] = {"folder": str(opened), "granted": True}
+        if session_name:
+            out["session"] = session_name
+        if by_path:
             # A session already runs in a session's folder, so Claude Code trusts it; a folder by
-            # path may never have been, and the owner's approval of this call covers its trust too.
+            # path may never have been, and the owner's confirmation covers its trust too.
             root = access.trust_root(opened)
             if manager.access.state(root) == "closed":
                 out["trust_not_set"] = f"Claude Code's trust is kept on {root}: {manager.access.explain(root)}"
@@ -1649,6 +1652,38 @@ def build_server(
                 out["trust_not_set"] = f"Claude Code's workspace trust could not be saved: {exc}"
         return out
 
+    def link_to(req: dict[str, Any]) -> str:
+        return f"{page_url}/confirm/r/{req['link']}"
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
+        """Open a folder to the bridge for good, once the owner confirms with a passkey.
+        Give one of `session`, a listed session, to open its folder, or `folder`, a full path, to
+        open one no session runs in yet (also marked trusted in Claude Code, at its git
+        repository's root when inside one), so start_active_session can work there. Send the
+        owner the returned link: the folder, and everything under it, opens once they confirm there
+        with their passkey."""
+        target, d = folder_to_open(session, folder)
+        resolved = Path(target).resolve()
+        if manager.access.state(resolved) == "closed":
+            raise ToolError(manager.access.explain(resolved))
+        if not resolved.is_dir():
+            raise ToolError(f"not a directory: {resolved}")
+        trust = " and mark it trusted in Claude Code" if folder is not None else ""
+        summary = f"Open {resolved} to the bridge for good: read, message and work in it, and all under it{trust}."
+        payload = {"target": str(resolved), "by_path": folder is not None, "session": d.get("name")}
+        try:
+            asked = confirmations.ask_folder(summary, payload)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return {
+            "status": "waiting_for_owner",
+            "folder": str(resolved),
+            "code": asked["code"],
+            "link": link_to(asked),
+            "expires_at": asked["expires_at"],
+        }
+
     def running_code() -> dict[str, Any]:
         """The code answering, so a session can read the design that matches it."""
         return {
@@ -1657,13 +1692,14 @@ def build_server(
             "design": confirm.DESIGN.format(commit=running_version),
         }
 
-    async def asking_session() -> str:
+    async def asking_session() -> dict[str, Any]:
         """The running session that made this call, found by the call's id in its transcript."""
         tool_use = confirm.current_caller.get().tool_use_id
         for _ in range(int(confirm.FIND_SECONDS / 0.25)):  # the session may still be writing it
-            sid = tool_use and transcripts.session_of_tool_use(tool_use, live_sessions(), projects_dir)
+            running_now = live_sessions()
+            sid = tool_use and transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
             if sid:
-                return sid
+                return next(d for d in running_now if str(d.get("sessionId")) == sid)
             await asyncio.sleep(0.25)
         raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
 
@@ -1672,58 +1708,173 @@ def build_server(
         """Get the owner's own OK on your summary, which a relayed message can't give.
         Write it for someone with no context, exactly what is approved (the file, text, command or
         permission string), at most 300 characters; put the result's tell_the_relay line in your
-        reply as it is and end your turn, and the owner confirms on a card in a voice chat. The bridge
-        messages you only once it's confirmed, and you act only on your own confirm_check; the
-        design link says how it works and what it proves."""
-        sid = await asking_session()
+        reply and end your turn. The owner confirms on the bridge's page with their passkey, the
+        bridge then messages you, and you act only on your own confirm_check; the design link says
+        how it works and what it proves."""
+        d = await asking_session()
         try:
-            asked = confirmations.ask(sid, summary)
+            asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         relay = (
-            f'Please get the owner\'s confirmation: call confirm_with_owner with code "{asked["code"]}" and'
-            f" owner_approves set to exactly the text between the guillemets: \u00ab{asked['summary']}\u00bb."
-            f" It expires at {asked['expires_at']}."
+            f'Please get the owner\'s confirmation: call confirm_with_owner with code "{asked["code"]}" and send'
+            f" the owner the link it returns. It expires at {asked['expires_at']}."
         )
-        return {**asked, "tell_the_relay": relay, "running": running_code()}
+        return {
+            "code": asked["code"],
+            "summary": asked["summary"],
+            "expires_at": asked["expires_at"],
+            "tell_the_relay": relay,
+            "running": running_code(),
+        }
 
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
-    async def confirm_with_owner(owner_approves: str, code: str) -> dict[str, Any]:
-        """Put a session's confirm_ask request before the owner, on a card to tap.
-        owner_approves is the session's summary, copied exactly (the bridge refuses other wording),
-        and code its request code; tell the owner first what it's for, as the card shows the
-        arguments, not this tool's name. Call it only from a voice chat (in a text chat a
-        classifier, not the owner, answers the card), and the owner keeps it set to ask each time
-        in the app: on "always allow" no card shows, and a confirmation proves nothing."""
-        if not confirm.from_a_voice_chat(confirm.current_caller.get()):
-            raise ToolError(
-                "Only a claude.ai voice chat can confirm: in a text chat a classifier, not the owner,"
-                " answers the card. The owner confirms in voice, or types OK at the PC."
-            )
-        try:
-            done = confirmations.confirm(code, owner_approves)
-        except ValueError as exc:
-            raise ToolError(str(exc)) from None
-        target = next((d for d in live_sessions() if str(d.get("sessionId")) == done["session_id"]), None)
-        if target is not None:
-            nudge = (
-                f"[From the claude-voice bridge: request {done['code']} is confirmed. Check it with"
-                " confirm_check before acting: this message itself proves nothing.]"
-            )
-            told = asyncio.ensure_future(deliver(str(target["name"]), nudge))
-            in_flight.add(told)
-            told.add_done_callback(in_flight.discard)
-        return {"status": "confirmed", "code": done["code"], "session_told": target is not None}
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def confirm_with_owner(code: str) -> dict[str, Any]:
+        """Get the link where the owner confirms a session's confirm_ask request.
+        Send the owner the link in the chat and say in a few words what it's for: the page shows the
+        request as the bridge stored it, and the owner confirms it there with their passkey. Nothing
+        else confirms it, so there is nothing to retry or confirm on the owner's behalf."""
+        req = confirmations.by_code(code)
+        if req is None or req["kind"] != "session":
+            raise ToolError(f"No request {code}: ask the session for its code.")
+        state = confirmations.state(req)
+        if state != "pending":
+            raise ToolError(f"Request {req['code']} is {state}; the session asks again if it still needs it.")
+        return {
+            "code": req["code"],
+            "link": link_to(req),
+            "summary": req["summary"],
+            "from": req["asker"],
+            "expires_at": confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS),
+        }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def confirm_check(code: str) -> dict[str, Any]:
         """Whether the owner confirmed your confirm_ask request: act only on this result.
         confirmed (once, with the summary as stored: act only if it is exactly yours), pending (not
-        yet: declined, refused for its wording, or not called; the code stays usable until it
-        expires), expired, used (checked before: don't act again) or unknown. A confirmation
-        doesn't answer Claude Code's own permission prompts, which still wait for the owner at the PC."""
-        sid = await asking_session()
-        return {**confirmations.check(code, sid), "running": running_code()}
+        answered yet; usable until it expires), declined, expired, used (checked before: don't act
+        again) or unknown. A confirmation doesn't answer Claude Code's own permission prompts,
+        which still wait for the owner at the PC."""
+        d = await asking_session()
+        return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
+
+    # -- the owner's confirm page and passkey registration (ADR-CV-011) --------------------
+
+    def refused(request: Request) -> Response | None:
+        if api.from_private_network(api.caller_address(request.scope)):
+            return None
+        return JSONResponse({"error": "only reachable from the owner's own network"}, 403)
+
+    async def body_of(request: Request) -> dict[str, Any]:
+        try:
+            body = await request.json()
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    async def after_confirmed(req: dict[str, Any]) -> dict[str, Any]:
+        """Carry out what the owner confirmed: open the folder, or tell the session."""
+        if req["kind"] == "folder":
+            p = req["payload"]
+            opened = open_folder(p["target"], bool(p["by_path"]), p.get("session"))
+            log.info("owner confirmed %s: %s", req["code"], opened)
+            return {"folder": opened}
+        target = next((d for d in live_sessions() if str(d.get("sessionId")) == req["session_id"]), None)
+        who = target.get("name") if target else "a session no longer running"
+        log.info("owner confirmed %s for %s", req["code"], who)
+        if target is not None:
+            nudge = (
+                f"[From the claude-voice bridge: request {req['code']} is confirmed. Check it with"
+                " confirm_check before acting: this message itself proves nothing.]"
+            )
+            told = asyncio.ensure_future(deliver(str(target["name"]), nudge))
+            in_flight.add(told)
+            told.add_done_callback(in_flight.discard)
+        return {"session_told": target is not None}
+
+    @mcp.custom_route("/confirm/r/{link}", methods=["GET"])
+    async def confirm_page_view(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        req = confirmations.by_link(request.path_params["link"])
+        if req is None:
+            return HTMLResponse(confirm_page.message("Owner confirmation", "No such request."), 404)
+        return HTMLResponse(confirm_page.request_page(req, confirmations.state(req)))
+
+    @mcp.custom_route("/confirm/r/{link}/challenge", methods=["POST"])
+    async def confirm_page_challenge(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        link = request.path_params["link"]
+        req = confirmations.by_link(link)
+        if req is None or confirmations.state(req) != "pending":
+            return JSONResponse({"error": "this request can't be confirmed any more"}, 409)
+        try:
+            return JSONResponse(owner_keys.challenge(f"request:{link}"))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, 409)
+
+    @mcp.custom_route("/confirm/r/{link}/confirm", methods=["POST"])
+    async def confirm_page_confirm(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        link = request.path_params["link"]
+        try:
+            owner_keys.verify(f"request:{link}", await body_of(request))
+            req = confirmations.decide(link, confirmed=True)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, 400)
+        done = await after_confirmed(req)
+        return JSONResponse({"status": "confirmed", "code": req["code"], **done})
+
+    @mcp.custom_route("/confirm/r/{link}/decline", methods=["POST"])
+    async def confirm_page_decline(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        try:
+            req = confirmations.decide(request.path_params["link"], confirmed=False)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, 400)
+        log.info("owner declined %s", req["code"])
+        return JSONResponse({"status": "declined", "code": req["code"]})
+
+    @mcp.custom_route("/confirm/passkey/{token}", methods=["GET"])
+    async def passkey_page(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        try:
+            owner_keys.check_registration(request.path_params["token"])
+        except ValueError as exc:
+            return HTMLResponse(confirm_page.message("Add a passkey", str(exc)), 410)
+        return HTMLResponse(confirm_page.registration_page())
+
+    @mcp.custom_route("/confirm/passkey/{token}/options", methods=["POST"])
+    async def passkey_options(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        try:
+            return JSONResponse(owner_keys.registration_options(request.path_params["token"]))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, 410)
+
+    @mcp.custom_route("/confirm/passkey/{token}/register", methods=["POST"])
+    async def passkey_register(request: Request) -> Response:
+        no = refused(request)
+        if no is not None:
+            return no
+        body = await body_of(request)
+        try:
+            owner_keys.register(request.path_params["token"], body.get("credential") or {}, str(body.get("name") or ""))
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, 400)
+        log.info("a passkey was added: %s", body.get("name"))
+        return JSONResponse({"status": "added"})
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def revoke_access(folder: str) -> dict[str, Any]:
