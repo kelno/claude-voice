@@ -65,8 +65,9 @@ COURIER_PREFIX = "claude-voice-msg-"
 # Added after every message the relay sends into a running session: the session can't know
 # otherwise that nobody reads its screen and that a SendMessage reply goes nowhere.
 RELAYED_MESSAGE_NOTE = (
-    "[From the claude-voice bridge: this message comes from the relay, the voice assistant the "
-    "owner is talking to. The owner sees neither this message nor your reply unless the relay "
+    "[From the claude-voice bridge: this message comes from the relay, the agent working with "
+    "this session through the bridge for the owner: a voice assistant, or another session. The "
+    "owner sees neither this message nor your reply unless the relay "
     "passes them on, and the relay has no inbox: answer in your reply text, not with SendMessage. "
     "Address the relay, not the owner, and make the reply self-contained: name things instead of "
     "pointing back to text it may not have. For the owner's own OK, which a relayed message "
@@ -134,9 +135,28 @@ LOG_KEPT = 3
 # and may never call guide, so the manual also comes with the first result of any MCP session that
 # hasn't read it (result_notes).
 INSTRUCTIONS = """\
+The claude-voice bridge: lets an assistant work with the Claude Code sessions on
+the owner's computer, for an owner who usually talks to it by voice.
+
+Who reads the guide
+- The relay, an assistant that starts, messages, asks or waits on sessions
+  through these tools, reads the whole guide: call guide before any other call,
+  and call it again after every compaction, even if it still seems to be there.
+  The bridge's rules (roles, what the owner sees, waiting, news) are in the
+  guide only.
+- A session that only answers relayed messages doesn't need the guide: the note
+  on each message says what it needs. A session that calls one of these tools for
+  itself, such as confirm_ask, needs only that tool's description.
+"""
+
+INSTRUCTIONS = """\
 Read this first, before any other call: how the claude-voice bridge is used.
 
 Roles
+- This guide is for the relay. A session that only answers relayed messages
+  needs only the note on each message, not this guide. A session that starts or
+  messages other sessions through the bridge is a relay for that work and reads
+  it.
 - Voice relay: the owner talks to you, a voice assistant, and sees no screen.
   You are the relay. The Claude Code session doing the work at the owner's
   machine is the desk session. A read-only fork of it, asked one question while
@@ -448,20 +468,38 @@ def mcp_session(ctx: Any) -> str | None:
     return headers.get(MCP_SESSION_HEADER) if headers is not None else None
 
 
-def result_notes(news: Callable[[str, str, dict[str, Any], dict[str, Any]], str | None] | None = None) -> Any:
-    """Middleware adding notes to results: the manual to the first result of an MCP session that
-    hasn't called guide, the `news` line for that MCP session, LATE_NOTE to a slow call's result,
-    and PENDING_NOTE to a call on a session that a wait is still running on."""
+def result_notes(
+    news: Callable[[str, str, dict[str, Any], dict[str, Any]], str | None] | None = None,
+    claude_code_transcript: Callable[[], Path | None] | None = None,
+) -> Any:
+    """Middleware adding notes to results: the manual to the first result of a conversation that
+    hasn't called guide (a Claude app conversation by its MCP session, a Claude Code session by
+    the transcript holding the call, given again after that transcript shows a compaction), the
+    `news` line for that MCP session, LATE_NOTE to a slow call's result, and PENDING_NOTE to a
+    call on a session that a wait is still running on."""
     waits: dict[str, int] = {}
-    # MCP sessions that read the manual or were handed it; the newest kept, oldest dropped.
-    guided: dict[str, None] = {}
+    # Conversations that read the manual or were handed it, each with how far its transcript was
+    # read (Claude Code sessions; 0 for an MCP session); the newest kept, oldest dropped.
+    guided: dict[str, int] = {}
+
+    def needs_manual(connection: str | None) -> str | None:
+        """The key to hand the manual over under, when this call's conversation needs it."""
+        if connection:
+            return None if connection in guided else connection
+        path = claude_code_transcript() if claude_code_transcript else None
+        if path is None:
+            return None
+        key = f"transcript:{path}"
+        size, compacted = transcripts.compacted_since(path, guided.get(key))
+        # RULE: a Claude Code session gets the guide on its first call, and again after a compaction
+        fresh = key not in guided or compacted
+        guided[key] = size
+        return key if fresh else None
 
     async def note(ctx, call_next):
         params = ctx.params if isinstance(ctx.params, dict) else {}
         args = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         connection = mcp_session(ctx) if ctx.method == "tools/call" else None
-        # A first call to guide itself gets the same manual under the same key: nothing changes.
-        unguided = bool(connection) and connection not in guided
         session = str(args.get("session") or "") if ctx.method == "tools/call" else ""
         pending = bool(session) and waits.get(session, 0) > 0
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
@@ -480,13 +518,16 @@ def result_notes(news: Callable[[str, str, dict[str, Any], dict[str, Any]], str 
             return result
         notes = {}
         manual = {}
+        # Looked up once the call is made, so a Claude Code session's transcript holds it; a first
+        # call to guide itself gets the same manual under the same key: nothing changes.
+        unguided = needs_manual(connection)
         if unguided:
             # Handed over first in the result, so it is read before the rest; a call to guide
             # itself needs no note that it could have been skipped.
             if params.get("name") != "guide":
                 manual["guide_note"] = GUIDE_NOTE
             manual["guide"] = INSTRUCTIONS
-            guided[str(connection)] = None
+            guided.setdefault(unguided, 0)
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
         if news is not None and connection:
@@ -840,7 +881,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests, result_notes(news_line)],
+        middleware=[log_requests, result_notes(news_line, lambda: calling_transcript())],
         lifespan=lifespan,
     )
     titled = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
@@ -1692,6 +1733,12 @@ def build_server(
             "uncommitted_changes": running_uncommitted,
             "design": confirm.DESIGN.format(commit=running_version),
         }
+
+    def calling_transcript() -> Path | None:
+        """The transcript of the Claude Code session on this PC that made this call, if one did."""
+        tool_use = confirm.current_caller.get().tool_use_id
+        found = tool_use and transcripts.transcript_of_tool_use(tool_use, live_sessions(), projects_dir)
+        return found[1] if found else None
 
     async def asking_session() -> dict[str, Any]:
         """The running session that made this call, found by the call's id in its transcript."""
