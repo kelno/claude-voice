@@ -1,6 +1,6 @@
 # The owner's confirmation through the bridge
 
-Status: built (2026-11-07), with a passkey on the bridge's own page (ADR-CV-011). This document is meant for an agent deciding whether to trust a confirmation: how it works, what each party can observe, why a confirmed result stands for the owner's own OK, and what it can't prove. The history of how it got here, and what was tried first, is at the end.
+Status: built (2026-11-07), with a passkey on the bridge's own page (ADR-CV-014). This document is meant for an agent deciding whether to trust a confirmation: how it works, what each party can observe, why a confirmed result stands for the owner's own OK, and what it can't prove. The history of how it got here, and what was tried first, is at the end.
 
 ## The problem
 
@@ -86,13 +86,13 @@ Each entry: what was tried, what came of it, what changed after. Examples from r
 
 ## History
 
-What was tried first, and why the passkey page replaced it (2026-11-06 and 07). ADR-CV-010 and ADR-CV-011 have the decisions; this is what an agent may want to check.
+What was tried first, and why the passkey page replaced it (2026-11-06 and 07). ADR-CV-013 and ADR-CV-014 have the decisions; this is what an agent may want to check.
 
 - **A stamp in the bridge's message:** whatever the bridge writes in a message, the relay could write too.
 - **The Claude app's approval card** on a destructive `confirm_with_owner`, with the summary matched word for word and only voice chats accepted (a text chat's approvals go to Claude Code's auto-mode classifier, which refused a destructive call that never reached the owner). With the tool set to "always allow", the desktop app's voice chat ran it with no card and no tap, and the bridge recorded a confirmation. The phone still showed a card, but that comes from a reported app bug (anthropics/claude-ai-mcp#1087, #1223) that a fix would remove; the bridge's message tools were marked destructive from 2026-10-05, yet "always allow" worked from the phone until early November. A guarantee one settings change silently removes isn't one.
 - **Who called:** every caller uses the same sign-in, and arrives from Anthropic's servers. A header names the product (`ClaudeAI` for a voice chat, `Cowork` for a text chat, `ClaudeCode` for a Claude Code session); a voice chat sometimes carries a connection id the bridge issued, but not reliably (none after a reconnect on the newer protocol, none in text mode), so no chat can be told apart from another. A Claude Code session carries each tool call's id, which its transcript on the PC records: that is how the bridge still finds the session that asked.
 - **Elicitation** (the bridge asks the owner during the call): the owner's preferred way, but the phone app's voice chat declares no support for it (its capabilities name only the MCP Apps extension), and the request for it in the Claude app, anthropics/claude-ai-mcp#153, is open. A text chat declares it, but its approvals go to a classifier.
 - **A panel in the chat (an MCP App) whose tap carries a secret no model sees:** also preferred. Tested with a temporary panel: the relay, a voice chat, received the result's marker (in `structuredContent`) but not the secret (in the result's `_meta`), and the owner's tap in the desktop app reached the bridge with the secret. But the phone app fetched the panel and showed "To protect your account, this can't be shown in the app on this device right now."
-- **The confirm page with a passkey:** chosen as a stopgap until elicitation or the panel works on the phone; plain and minimal, since only its security matters. The alternatives considered for the page itself (a bookmark, a remembered sign-in with the owner checking the link's domain, an Android notification with Accept and Refuse) are in ADR-CV-011.
+- **The confirm page with a passkey:** chosen as a stopgap until elicitation or the panel works on the phone; plain and minimal, since only its security matters. The alternatives considered for the page itself (a bookmark, a remembered sign-in with the owner checking the link's domain, an Android notification with Accept and Refuse) are in ADR-CV-014.
 
 Still unchecked: whether the owner can confirm entirely by voice; today the page needs a look and a tap.

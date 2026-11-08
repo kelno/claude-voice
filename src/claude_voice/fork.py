@@ -4,7 +4,7 @@ The Agent SDK can resume a conversation as a fork: a copy holding the whole conv
 that moment, which then goes its own way while the original carries on untouched. A new fork
 per question answers from the freshest state, and can read the project's files as the session
 itself would. Nothing it does may change anything: a hook refuses every tool that could,
-whatever the owner's own permission rules allow. See decisions/ADR-CV-008.
+whatever the owner's own permission rules allow. See decisions/ADR-CV-011.
 """
 
 from __future__ import annotations

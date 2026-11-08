@@ -1,8 +1,8 @@
-# ADR-CV-009: The side session works on past the caller's time budget
+# ADR-CV-012: The side session works on past the caller's time budget
 
 ## Status
 
-Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-008. Rebuilt on upstream's per-client time budgets at the resync of 2026-11-06.
+Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-011. Rebuilt on upstream's per-client time budgets at the resync of 2026-11-06.
 
 ## Context
 
@@ -45,4 +45,4 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-
 
 ## Related
 
-`src/claude_voice/server.py`, `src/claude_voice/fork.py`, `src/claude_voice/config.py` (the budgets), ADR-CV-008.
+`src/claude_voice/server.py`, `src/claude_voice/fork.py`, `src/claude_voice/config.py` (the budgets), ADR-CV-011.

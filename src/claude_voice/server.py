@@ -1797,7 +1797,7 @@ def build_server(
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 
-    # -- the owner's confirm page and passkey registration (ADR-CV-011) --------------------
+    # -- the owner's confirm page and passkey registration (ADR-CV-014) --------------------
 
     def refused(request: Request) -> Response | None:
         if api.from_private_network(api.caller_address(request.scope)):

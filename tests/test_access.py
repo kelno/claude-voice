@@ -1,4 +1,4 @@
-"""Folders outside the root are listed, and opened one at a time by the owner (ADR-CV-006)."""
+"""Folders outside the root are listed, and opened one at a time by the owner (ADR-CV-009)."""
 
 import json
 

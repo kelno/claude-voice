@@ -1,6 +1,6 @@
 """The owner's confirmation: a session asks, the owner confirms with a passkey on the bridge's page, the session checks.
 
-Design and reasoning: docs/owner-confirmation.md, ADR-CV-011.
+Design and reasoning: docs/owner-confirmation.md, ADR-CV-014.
 """
 
 import asyncio

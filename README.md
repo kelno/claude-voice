@@ -190,7 +190,7 @@ and `/api/v1/doctor` say whether such a port is there.
   - One exception: a scratch folder the Claude desktop app made for a quick
     session (`…\Claude-Data\…\scratch-workspaces\…\scratch-*`) can be opened,
     one at a time; nothing above it opens.
-  - Why, and what it costs: [ADR-CV-006](decisions/ADR-CV-006-folders-outside-the-root-are-opened-by-the-owner.md), [ADR-CV-007](decisions/ADR-CV-007-desktop-scratch-folders-open-and-clearer-access-names.md).
+  - Why, and what it costs: [ADR-CV-009](decisions/ADR-CV-009-folders-outside-the-root-are-opened-by-the-owner.md), [ADR-CV-010](decisions/ADR-CV-010-desktop-scratch-folders-open-and-clearer-access-names.md).
 
 > **Know the trust boundary.** Signing in proves that the caller is *your*
 > assistant. It cannot prove that *you* said yes to a particular action. The

@@ -1,4 +1,4 @@
-"""The owner's confirm page and passkey registration page: plain, minimal, a stopgap (ADR-CV-011).
+"""The owner's confirm page and passkey registration page: plain, minimal, a stopgap (ADR-CV-014).
 
 Both pages talk to the bridge with relative addresses, so they work under any path prefix the
 proxy publishes them at. The passkey itself does the security: see docs/owner-confirmation.md.
