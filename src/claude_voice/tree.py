@@ -21,7 +21,7 @@ from typing import Any
 
 from claude_agent_sdk import list_subagents, project_key_for_directory
 
-from . import procs
+from . import procs, renames
 from .transcripts import PROJECTS_DIR
 
 BRIDGE_NODE = "claude-voice"
@@ -112,6 +112,7 @@ class SessionTree:
         subagents: Callable[[str, str], list[str]] = lambda sid, directory: list_subagents(sid, directory=directory),
         alive: Callable[[int], bool] = _pid_alive,
         project_of: Callable[[str | None], str | None] | None = None,
+        rename: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] = lambda rows: rows,
     ) -> None:
         self.project_of = project_of  # the bridge's own rule, granted folders included
         self.live_dir = live_dir
@@ -120,6 +121,7 @@ class SessionTree:
         self.clock = clock
         self.subagents = subagents
         self.alive = alive
+        self.rename = rename
         self._transcripts: dict[Path, _Transcript] = {}
         self._couriers: tuple[set[int], set[str]] = (set(), set())  # pids, names
 
@@ -154,7 +156,7 @@ class SessionTree:
                 continue
             out.append(d)
         self._couriers = (pids, names)
-        return out
+        return self.rename(out)
 
     def _transcript(self, sid: str, cwd: str) -> _Transcript:
         path = self.projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
@@ -185,7 +187,7 @@ class SessionTree:
                 "talks_to": set(),
             }
         }
-        by_name = {str(d.get("name")): str(d["sessionId"]) for d in live}
+        by_name = renames.by_name(live)
         by_pid = {int(d["pid"]): str(d["sessionId"]) for d in live}
 
         for d in live:

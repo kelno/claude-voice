@@ -316,14 +316,6 @@ find = 'if session_id and SESSION_ID\.fullmatch\(session_id\):'
 replace = 'if False:'
 
 [[rule]]
-name = "only a session the bridge started is ever renamed"
-file = "src/claude_voice/server.py"
-find = 'if own is None:'
-replace = 'if False:'
-
-
-
-[[rule]]
 name = "only the session that asked can check its request"
 file = "src/claude_voice/confirm.py"
 find = 'return req if req\["session_id"\] == session_id else None'
@@ -370,3 +362,105 @@ name = "a Claude Code session gets the guide on its first call, and again after 
 file = "src/claude_voice/server.py"
 find = 'fresh = key not in guided or compacted'
 replace = 'fresh = key not in guided'
+
+[[rule]]
+name = "a session name is letters, digits, dots, underscores and dashes"
+file = "src/claude_voice/renames.py"
+find = 'return NAME.fullmatch\(name\) is not None'
+replace = 'return True'
+
+[[rule]]
+name = "a message to an old name reaches the renamed session"
+file = "src/claude_voice/renames.py"
+find = 'return old_names and \(session in d.get\("aliases", \[\]\) or session == d.get\("deliver_to"\)\)'
+replace = 'return False'
+
+[[rule]]
+name = "a new name already in use is refused"
+file = "src/claude_voice/server.py"
+find = 'if new_name in renames.taken\(rows, but=sid\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a busy session is never typed into"
+file = "src/claude_voice/server.py"
+find = 'if d.get\("status"\) != "idle":'
+replace = 'if False:'
+
+[[rule]]
+name = "the agent listens on its tailnet address only"
+file = "src/claude_voice/agent.py"
+find = 'if address is None or address not in tailnet.TAILNET:'
+replace = 'if address is None:'
+
+[[rule]]
+name = "a pairing code works once, for ten minutes"
+file = "src/claude_voice/agent.py"
+find = 'if not open_ or self.clock\(\) > float\(open_.get\("until", 0\)\):'
+replace = 'if not open_:'
+
+[[rule]]
+name = "five wrong pairing codes end the pairing"
+file = "src/claude_voice/agent.py"
+find = 'self._write\("pairing.json", None if tries >= CODE_TRIES else \{\*\*open_, "tries": tries\}\)'
+replace = 'self._write("pairing.json", {**open_, "tries": tries})'
+
+[[rule]]
+name = "a call needs the key and the tailnet identity of the paired hub"
+file = "src/claude_voice/agent.py"
+find = 'right_key = hmac.compare_digest\(_hash\(key\), str\(found\["key"\]\)\)'
+replace = 'right_key = True'
+
+[[rule]]
+name = "a machine without a tailnet address is refused"
+file = "src/claude_voice/config.py"
+find = 'and tailnet.on_tailnet\(str\(body.get\("address", ""\)\)\)'
+replace = 'if not (MACHINE_NAME.fullmatch(str(name)) and whole):'
+
+[[rule]]
+name = "a machine is approved by typing its pairing code and then its name"
+file = "src/claude_voice/machines.py"
+find = 'if ask\(f"Type \{spec.name\} to approve it, anything else to stop: "\).strip\(\) != spec.name:'
+replace = 'if False:'
+
+[[rule]]
+name = "the hub talks only to the machine Tailscale says it approved"
+file = "src/claude_voice/machines.py"
+find = 'if node is None or node\[0\] != self.approval\["node"\]:'
+replace = 'if False:'
+
+[[rule]]
+name = "a machine whose tools changed is not called until approved again"
+file = "src/claude_voice/machines.py"
+find = 'if tools_fingerprint\(await _listing\(client\)\) != tools_fingerprint\(self.approval\["listing"\]\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a machine that does not answer in two seconds is reported, not waited for"
+file = "src/claude_voice/machines.py"
+find = 'start_seconds = CONNECT_SECONDS'
+replace = 'start_seconds = 30.0'
+
+[[rule]]
+name = "an agent offers only the session tools on its list"
+file = "src/claude_voice/agent.py"
+find = 'if name not in SESSION_TOOLS and "plugin" not in \(tools\[name\].meta or \{\}\):'
+replace = 'if False:'
+
+[[rule]]
+name = "looking across machines never waits long for one"
+file = "src/claude_voice/fleet.py"
+find = 'asyncio.gather\(machine.call\("fleet_recap", \{\}\), self._approvals\(machine\)\), ASK_SECONDS'
+replace = 'asyncio.gather(machine.call("fleet_recap", {}), self._approvals(machine)), None'
+
+[[rule]]
+name = "a session on another machine is reached by the machine name in front"
+file = "src/claude_voice/fleet.py"
+find = 'target = fleet.split\(arguments.get\(key\)\) if key else None'
+replace = 'target = None'
+
+[[rule]]
+name = "an answer from the page reaches the machine the question is on"
+file = "src/claude_voice/fleet.py"
+find = 'answer = await machine.call\("approve" if decision == "allow" else "deny", arguments\)'
+replace = 'answer = await machine.call("approve", arguments)'

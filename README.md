@@ -105,7 +105,7 @@ the bridge says which are missing, with the exact fix, through its
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new project folder by a plain name under the root, only when asked |
 | `start_role` | start a session for a role, such as `contribute`: say what to change in claude-voice and get a pull request |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
-| `rename_session` | rename such a session once its turn has ended, through Claude Code's job record for it: the session renames itself within seconds, and keeps the name when woken again |
+| `rename_session` | give a running session a new name; messages to the old name still reach it, and in tmux an idle session is renamed in Claude Code too |
 | `hand_to_desktop` | move such a session, once its turn has ended, into the Claude desktop app's sidebar, through a terminal tab on the PC named after it (Windows) |
 | `message_active_session` | send a message into a session that is open in a terminal; answered `sending` when delivery outlasts the caller's time budget, and finished in the background; returns `next_after` to read the answer from |
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
@@ -330,6 +330,23 @@ only this computer and the tailnet, behind the login, and every answer is
 logged. Anyone signed in to the app can approve commands on this computer, so
 sign in only on your own devices.
 
+Only a prompt reaches the phone. In Claude Code's auto mode, most actions are
+decided without asking, and an action its safety check refuses is simply
+refused: there is nothing to answer, on the phone or anywhere else. To have such
+an action asked about instead, list it under `ask` in your settings. That is a
+choice for each owner. For example, to be asked before a force push rather than
+have it refused:
+
+<!-- not run: a settings example, not commands -->
+```json
+{ "permissions": { "ask": ["Bash(git push --force-with-lease *)"] } }
+```
+
+Keep the patterns narrow. An `ask` rule is a door the phone can open, and
+anyone signed in to the app holds the key. Put a rule meant only for you in a
+project's `.claude/settings.local.json`, which stays out of git, rather than in
+its shared `.claude/settings.json`.
+
 ## Where your clones are
 
 The bridge works out where the project's repositories are, on GitHub and on
@@ -435,6 +452,35 @@ each plugin's state. To list them:
 ```console
 $ claude-voice plugins
 No plugins in the settings file.
+```
+
+## Another machine
+
+Any other computer you own can be reached through this one. It runs a small
+claude-voice of its own, the agent, which this bridge calls over Tailscale; its
+tools, and with sessions turned on its Claude Code sessions, reach the voice with
+the machine's name in front. The agent listens on its Tailscale address only,
+answers only the bridge it was paired with, and offers nothing about the bridge
+itself. Setting one up, pairing it and what to do when it fails are in
+[docs/other-machines.md](docs/other-machines.md).
+
+```console
+$ claude-voice agent --help
+usage: claude-voice agent [-h] [--sessions] [{serve,pair,install}]
+
+positional arguments:
+  {serve,pair,install}  serve (the default), pair, or install as a service
+
+options:
+  -h, --help            show this help message and exit
+  --sessions            with install: offer this machine's sessions
+```
+
+To list the machines this bridge knows:
+
+```console
+$ claude-voice machines
+No machines in the settings file.
 ```
 
 ## Acknowledgements

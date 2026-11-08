@@ -1,104 +1,177 @@
-"""Renaming a session the bridge started: the new name goes into its job record, which a running
-background session watches and takes its name from at once, and which waking it again reads."""
+"""rename_session: a running session gets a new name, and its old one still reaches it."""
 
 import json
+import logging
 import os
 
 import pytest
-from fakes import FakeClaude
 from mcp.client import Client
 
-from claude_voice.server import build_server
+from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
-PID = os.getpid()
-SID = "89bb4528-3840-4006-864a-5aa9930e26e0"
-FLAGS = ["--name", "Old name", "--remote-control", "--effort", "low"]
+
+def words(sent):
+    """What was sent, without the note the fork's bridge adds after a relayed message."""
+    return [(name, text.split("\n\n" + RELAYED_MESSAGE_NOTE)[0]) for name, text in sent]
 
 
-class World:
-    """The live registry, the bridge's record of what it started, and Claude Code's job record."""
+class Recorder:
+    def __init__(self):
+        self.sent = []
 
-    def __init__(self, tmp_path):
-        self.root = tmp_path / "home"
-        (self.root / "billing").mkdir(parents=True)
-        self.cwd = str(self.root / "billing")
-        self.live = tmp_path / "live"
-        self.live.mkdir()
-        self.jobs = tmp_path / "jobs"
-        self.job = self.jobs / SID[:8] / "state.json"
-        self.job.parent.mkdir(parents=True)
-        record = {"state": "idle", "name": "Old name", "nameSource": "user", "respawnFlags": FLAGS, "sessionId": SID}
-        self.job.write_text(json.dumps(record, indent=2), encoding="utf-8")
-        self.db = tmp_path / "b.db"
+    async def __call__(self, name, text):
+        self.sent.append((name, text))
+        return {"delivered": True}
 
-    def running(self, name="Old name", status="idle"):
-        entry = {"pid": PID, "sessionId": SID, "cwd": self.cwd, "name": name, "kind": "bg", "status": status}
-        (self.live / f"{PID}.json").write_text(json.dumps(entry), encoding="utf-8")
 
-    def started(self, name="Old name", status="idle"):
-        self.running(name, status)
-        Store(self.db).record_started(SID, name, self.cwd)
+class FakeTmux:
+    """A tmux with one pane per process id given, typing into which renames like Claude Code."""
 
-    def record(self):
-        return json.loads(self.job.read_text(encoding="utf-8"))
+    def __init__(self, live, panes=None):
+        self.live, self.panes, self.typed, self.renamed = live, panes or {}, [], []
 
-    def bridge(self):
-        m = SessionManager(Store(self.db), project_root=self.root, client_factory=FakeClaude())
-        return build_server(m, conversations=lambda **k: [], live_dir=self.live, jobs_dir=self.jobs)
+    def pane(self, pid):
+        return self.panes.get(pid)
+
+    def type(self, pane, text):
+        self.typed.append((pane, text))
+        for f in self.live.glob("*.json"):
+            d = json.loads(f.read_text())
+            if self.panes.get(d["pid"], (None, None))[1] == pane and text.startswith("/rename "):
+                f.write_text(json.dumps({**d, "name": text.removeprefix("/rename ")}))
+
+    def rename(self, old, new):
+        self.renamed.append((old, new))
 
 
 @pytest.fixture
-def world(tmp_path):
-    return World(tmp_path)
+def root(tmp_path):
+    (tmp_path / "src" / "math-quest").mkdir(parents=True)
+    return tmp_path / "src"
 
 
-async def rename(world, session, name):
-    async with Client(world.bridge()) as c:
-        return await c.call_tool("rename_session", {"session": session, "name": name})
+def write(live, pid, sid, name, root, status="idle"):
+    record = {"pid": pid, "sessionId": sid, "cwd": str(root / "math-quest"), "name": name, "status": status}
+    (live / f"{pid}.json").write_text(json.dumps({**record, "kind": "interactive", "updatedAt": 0}))
 
 
-async def test_a_session_the_bridge_started_gets_its_new_name_in_its_job_record(world):
-    world.started()
-    res = await rename(world, "Old name", "Switchboard: bridge fixes")
+@pytest.fixture
+def live(tmp_path, root):
+    d = tmp_path / "live"
+    d.mkdir()
+    write(d, os.getpid(), "mq-id", "math-quest", root)
+    return d
+
+
+def server(tmp_path, root, live, tmux=None, deliver=None):
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root)
+    srv = build_server(
+        m,
+        conversations=lambda directory=None, limit=None: [],
+        live_dir=live,
+        deliver=deliver or Recorder(),
+        read_transcript=lambda sid, directory: [],
+        tmux=tmux or FakeTmux(live),
+    )
+    return srv
+
+
+async def call(c, name, **args):
+    res = await c.call_tool(name, args)
     assert not res.is_error, res.content
-    assert res.structured_content["status"] == "renamed"
-    record = world.record()
-    assert (record["name"], record["nameSource"]) == ("Switchboard: bridge fixes", "user")
-    # Waking the session again starts it with these flags, so the name lasts past a stop.
-    assert record["respawnFlags"] == ["--name", "Switchboard: bridge fixes", "--remote-control", "--effort", "low"]
-    assert record["state"] == "idle" and record["sessionId"] == SID
-    assert Store(world.db).started_session("Switchboard: bridge fixes")["claude_session_id"] == SID
+    return res.structured_content
 
 
-async def test_only_a_session_the_bridge_started_is_ever_renamed(world):
-    world.running()
-    res = await rename(world, "Old name", "Mine now")
-    assert not res.is_error, res.content
-    assert res.structured_content["status"] == "not_started_here"
-    assert world.record()["name"] == "Old name"
+async def names(c):
+    return [s["name"] for s in (await call(c, "list_active_sessions"))["sessions"]]
 
 
-async def test_a_session_mid_turn_is_not_renamed(world):
-    # Claude Code rewrites the job record often during a turn; a change then could be lost.
-    world.started(status="busy")
-    res = await rename(world, SID, "Later")
-    assert res.structured_content["status"] == "busy"
-    assert world.record()["name"] == "Old name"
+async def test_a_renamed_session_is_listed_by_its_new_name(tmp_path, root, live):
+    async with Client(server(tmp_path, root, live)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        assert await names(c) == ["math-quest-curriculum"]
+        fleet = await call(c, "fleet_recap")
+        tree = await call(c, "session_tree")
+    assert out["name"] == "math-quest-curriculum" and out["was"] == "math-quest"
+    assert [s["name"] for s in fleet["sessions"]] == ["math-quest-curriculum"]
+    assert "math-quest-curriculum" in [n["name"] for n in tree["nodes"]]
 
 
-async def test_a_new_name_is_cleaned_and_kept_short(world):
-    world.started()
-    res = await rename(world, "Old name", "  Two\nlines\t" + "x" * 100)
-    name = res.structured_content["name"]
-    assert name.startswith("Two lines x") and len(name) == 60
-    blank = await rename(world, name, " \n ")
-    assert blank.is_error and world.record()["name"] == name
+async def test_a_message_to_an_old_name_reaches_the_renamed_session(tmp_path, root, live):
+    deliver = Recorder()
+    async with Client(server(tmp_path, root, live, deliver=deliver)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        await call(c, "message_active_session", session="math-quest", message="old")
+        await call(c, "message_active_session", session="math-quest-curriculum", message="new")
+    # Outside tmux Claude Code still answers to the old name, so that is where it goes.
+    assert words(deliver.sent) == [("math-quest", "old"), ("math-quest", "new")]
 
 
-async def test_a_session_without_a_job_record_is_reported_not_renamed(world):
-    world.started()
-    world.job.unlink()
-    res = await rename(world, "Old name", "New")
-    assert res.is_error and "job record" in res.content[0].text
+async def test_a_message_to_an_old_name_arrives_once_claude_code_has_the_new_one(tmp_path, root, live):
+    deliver = Recorder()
+    tmux = FakeTmux(live, {os.getpid(): ("math-quest", "%1")})
+    async with Client(server(tmp_path, root, live, tmux=tmux, deliver=deliver)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        await call(c, "message_active_session", session="math-quest", message="old")
+        assert await names(c) == ["math-quest-curriculum"]
+    assert out["claude_code"] == "renamed"
+    assert tmux.typed == [("%1", "/rename math-quest-curriculum")]
+    assert tmux.renamed == [("math-quest", "math-quest-curriculum")]
+    assert words(deliver.sent) == [("math-quest-curriculum", "old")]
+
+
+@pytest.mark.parametrize("bad", ["", "math quest", "-flag", "mq/x", "æøå", "a" * 65, "mq;rm"])
+async def test_a_session_name_is_letters_digits_dots_underscores_and_dashes(tmp_path, root, live, bad):
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "math-quest", "new_name": bad})
+        assert res.is_error and "letters" in res.content[0].text
+        assert await names(c) == ["math-quest"]
+
+
+async def test_a_new_name_already_in_use_is_refused(tmp_path, root, live):
+    write(live, os.getppid(), "other-id", "math-quest-manager", root)  # a process that is alive everywhere
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "math-quest", "new_name": "math-quest-manager"})
+        assert res.is_error and "in use" in res.content[0].text
+        await call(c, "rename_session", session="math-quest-manager", new_name="mq-manager")
+        # An old name still answers, so it is taken too.
+        res = await c.call_tool("rename_session", {"session": "math-quest", "new_name": "math-quest-manager"})
+        assert res.is_error and "in use" in res.content[0].text
+
+
+async def test_a_busy_session_is_never_typed_into(tmp_path, root, live):
+    write(live, os.getpid(), "mq-id", "math-quest", root, status="busy")
+    tmux = FakeTmux(live, {os.getpid(): ("math-quest", "%1")})
+    async with Client(server(tmp_path, root, live, tmux=tmux)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        assert await names(c) == ["math-quest-curriculum"]
+        assert tmux.typed == []
+        assert out["claude_code"] == "busy" and "again" in out["note"]
+        # Asked again once it is idle, Claude Code gets the name too.
+        write(live, os.getpid(), "mq-id", "math-quest", root, status="idle")
+        out = await call(c, "rename_session", session="math-quest-curriculum", new_name="math-quest-curriculum")
+    assert out["claude_code"] == "renamed"
+    assert tmux.typed == [("%1", "/rename math-quest-curriculum")]
+
+
+async def test_a_session_outside_tmux_is_renamed_in_the_bridge_only(tmp_path, root, live, caplog):
+    caplog.set_level(logging.INFO, logger="claude_voice")
+    async with Client(server(tmp_path, root, live)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="mq")
+    assert out["claude_code"] == "not_in_tmux" and "/rename mq" in out["note"]
+    assert any("renamed math-quest -> mq" in r.getMessage() for r in caplog.records)
+
+
+async def test_renaming_an_unknown_session_is_refused(tmp_path, root, live):
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "nope", "new_name": "x"})
+    assert res.is_error and "list_active_sessions" in res.content[0].text
+
+
+async def test_a_name_set_in_claude_code_afterwards_wins(tmp_path, root, live):
+    async with Client(server(tmp_path, root, live)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="mq")
+        write(live, os.getpid(), "mq-id", "typed-by-roy", root)
+        assert await names(c) == ["typed-by-roy"]

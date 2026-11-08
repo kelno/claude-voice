@@ -13,8 +13,8 @@ def env(tmp_path, **extra):
     return {"CLAUDE_VOICE_ROOT": str(tmp_path), **extra}
 
 
-def test_the_command_has_serve_check_plugins_and_passkey():
-    assert COMMANDS == ("serve", "check", "plugins", "passkey")
+def test_the_command_has_serve_check_plugins_passkey_agent_and_machines():
+    assert COMMANDS == ("serve", "check", "plugins", "passkey", "agent", "machines")
 
 
 def test_serve_starts_the_bridge_with_the_chosen_transport(tmp_path):

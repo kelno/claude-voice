@@ -107,6 +107,42 @@ def _plugins(raw: Any, home: str) -> list[PluginSpec]:
     return out
 
 
+MACHINE_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
+
+
+@dataclass
+class MachineSpec:
+    """Another of Roy's machines, running `claude-voice agent`, reached over the tailnet."""
+
+    name: str
+    address: str
+    port: int = 8812
+    timeout: float = 30.0
+
+
+def _machines(raw: Any) -> list[MachineSpec]:
+    from . import tailnet
+
+    out = []
+    for name, body in (raw or {}).items():
+        body = body if isinstance(body, dict) else {}
+        port = body.get("port", 8812)
+        whole = isinstance(port, int) and not isinstance(port, bool)
+        # RULE: a machine without a tailnet address is refused
+        if not (MACHINE_NAME.fullmatch(str(name)) and tailnet.on_tailnet(str(body.get("address", ""))) and whole):
+            raise ConfigError(f"[machines.{name}] needs a lowercase name and a tailnet address, such as 100.86.231.118")
+        out.append(MachineSpec(str(name), str(body["address"]), port, float(body.get("timeout", 30.0))))
+    return out
+
+
+def _agent(raw: dict[str, Any] | None, home: str) -> tuple[bool, Path]:
+    raw = raw or {}
+    sessions = raw.get("sessions", False)
+    if not isinstance(sessions, bool):
+        raise ConfigError(f"[agent] sessions = {sessions!r} is not true or false")
+    return sessions, _path(raw.get("root"), home) or Path(home)
+
+
 BUDGETS = {"claude_app": 20.0, "voice_app": 120.0, "default": 60.0}
 
 
@@ -138,6 +174,9 @@ class Config:
     sessions: Sessions = field(default_factory=Sessions)
     budgets: Budgets = field(default_factory=Budgets)
     plugins: list[PluginSpec] = field(default_factory=list)
+    machines: list[MachineSpec] = field(default_factory=list)
+    agent_sessions: bool = False  # on another machine: whether its agent offers its sessions
+    agent_root: Path = field(default_factory=Path.home)  # where that agent starts sessions
 
 
 def _repo(value: Any, key: str) -> str:
@@ -185,6 +224,8 @@ def load(path: Path | None = FILE, own_clone: Path | None = None, env: Mapping[s
         _sessions(raw.get("sessions") or {}),
         _budgets(raw.get("budgets")),
         _plugins(raw.get("plugins"), home),
+        _machines(raw.get("machines")),
+        *_agent(raw.get("agent"), home),
     )
 
 

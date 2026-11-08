@@ -16,7 +16,7 @@ from .server import Config, ConfigError, load_config, serve_forever
 
 #: Every verb this command has. The documentation test requires each one to
 #: appear in a worked example, so a verb cannot be added without one.
-COMMANDS: tuple[str, ...] = ("serve", "check", "plugins", "passkey")
+COMMANDS: tuple[str, ...] = ("serve", "check", "plugins", "passkey", "agent", "machines")
 
 SIGN_IN = (
     "Run `claude`, type /login and sign in with your Claude account, then check again. If `claude` "
@@ -119,7 +119,25 @@ def main(
     key_cmd = sub.add_parser("passkey", help="add the owner's passkey from a one-time link, list or remove them")
     key_cmd.add_argument("action", nargs="?", choices=["add", "list", "remove"], default="list")
     key_cmd.add_argument("id", nargs="?")
+    agent_cmd = sub.add_parser("agent", help="on another machine: answer the paired hub, or pair with one")
+    agent_cmd.add_argument(
+        "action",
+        nargs="?",
+        choices=["serve", "pair", "install"],
+        default="serve",
+        help="serve (the default), pair, or install as a service",
+    )
+    agent_cmd.add_argument("--sessions", action="store_true", help="with install: offer this machine's sessions")
+    machine_cmd = sub.add_parser("machines", help="list other machines, or pair with one by typing its code")
+    machine_cmd.add_argument("action", nargs="?", choices=["list", "approve"], default="list")
+    machine_cmd.add_argument("name", nargs="?")
     parsed = parser.parse_args(args)
+
+    if parsed.command == "machines":
+        return machines_command(parsed.action, parsed.name, env)
+
+    if parsed.command == "agent":
+        return agent_command(parsed.action, env, parsed.sessions)
 
     if parsed.command == "plugins":
         return plugins_command(parsed.action, parsed.name, env)
@@ -230,6 +248,64 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> in
         sys.stdout.write(f"  {tool} takes: {plugins.takes(found['schema'])}\n" if found else f"  {tool}: not in it\n")
     sys.stdout.write(f"Approved. Restart the bridge to offer {spec.name}'s tools.\n")
     return 0
+
+
+def agent_command(action: str, env: Mapping[str, str], sessions: bool = False) -> int:
+    """On another machine: show a pairing code for the hub, or serve it over the tailnet."""
+    import socket
+
+    from . import agent
+    from . import config as settings
+
+    home = Path(env.get("HOME") or Path.home())
+    pairing = agent.Pairing(home / ".config/claude-voice/agent")
+    machine = socket.gethostname().split(".")[0]
+    if action == "install":
+        command = [sys.executable, "-m", "claude_voice.cli", "agent"]
+        return agent.install(home, command, sessions, run=_systemctl, login=claude_code_login, machine=machine)
+    if action == "pair":
+        code = pairing.start()
+        sys.stdout.write(
+            f"Pairing code: {code}\n  open for {agent.CODE_SECONDS // 60} minutes, once.\n"
+            f"  On the hub, run: claude-voice machines approve {machine}\n"
+        )
+        return 0
+    try:
+        agent.serve(machine, settings.load(settings.FILE, env=env), pairing)
+    except (agent.AgentError, settings.ConfigError) as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    return 0
+
+
+def machines_command(action: str, name: str | None, env: Mapping[str, str]) -> int:
+    """List the machines in the settings file, or pair with one: Roy types its code and name."""
+    import asyncio
+
+    from . import config as settings
+    from . import machines
+
+    try:
+        specs = settings.load(settings.FILE, env=env).machines
+    except settings.ConfigError as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    folder = Path(env.get("HOME") or Path.home()) / ".config/claude-voice"
+    if action == "list":
+        if not specs:
+            sys.stdout.write("No machines in the settings file.\n")
+        for spec in specs:
+            sys.stdout.write(f"{spec.name} at {spec.address}: {machines.state(spec, folder)}\n")
+        return 0
+    chosen = next((s for s in specs if s.name == name), None)
+    if chosen is None:
+        sys.stderr.write(f"claude-voice: no machine {name!r} in the settings file\n")
+        return 1
+    return 0 if asyncio.run(machines.pair(chosen, folder=folder))["approved"] else 1
+
+
+def _systemctl(command: list[str]) -> None:
+    subprocess.run(command, check=True, timeout=30)
 
 
 def entry() -> None:

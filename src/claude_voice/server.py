@@ -38,16 +38,20 @@ from . import (
     detail,
     doctor,
     events,
+    fleet,
     fork,
     gitstatus,
     launch,
+    machines,
     metrics,
     passkeys,
     permissions,
     plugins,
     procs,
+    renames,
     roles,
     software,
+    tailnet,
     titles,
     transcripts,
     updater,
@@ -603,6 +607,9 @@ def build_server(
     plugin_approvals: Path | None = None,
     plugin_client: Callable[[Any], Any] | None = None,
     open_in_desktop: Callable[[str, str, str], Awaitable[None]] = transcripts.open_in_desktop,
+    machine_folder: Path = machines.FOLDER,
+    machine_http: machines.Http = machines.http_client,
+    machine_whois: machines.Whois = tailnet.whois,
     start_seconds: float = 20.0,
     list_prs: Callable[[str], list[dict[str, Any]]] | None = None,
     ui_origins: list[str] | None = None,
@@ -629,6 +636,7 @@ def build_server(
     ci_status: Callable[[str], dict[str, Any] | None] = software.latest_run,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
+    tmux: Any = None,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -651,12 +659,18 @@ def build_server(
     watcher = events.LiveWatcher(
         manager.store, live_dir, manager.root, clock=manager.clock, project_of=lambda cwd: under_root(cwd)
     )
+    tmux = tmux or renames.Tmux()
+
+    def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
+
     tree = SessionTree(
         live_dir,
         manager.root,
         projects_dir=projects_dir,
         clock=manager.clock,
         project_of=lambda cwd: under_root(cwd),
+        rename=renamed,
     )
     side_answer = side_answer or transcripts.shared_reader()
     host: doctor.Host = doctor_host or doctor.RealHost()
@@ -728,6 +742,8 @@ def build_server(
                 while True:
                     with contextlib.suppress(Exception):
                         check()
+                    with contextlib.suppress(Exception):
+                        await across.refresh()  # the other machines, asked every ten seconds
                     await asyncio.sleep(watch_interval)
 
             # What ran at the last look, read before the watcher's first look replaces it.
@@ -876,6 +892,8 @@ def build_server(
             )
         return "idle" if d.get("status") == "idle" else "busy"
 
+    across = fleet.Fleet()  # the other machines, filled in once they are started below
+    across.publish = api.HUB.publish
     mcp = MCPServer(
         "claude-voice",
         title="Claude voice bridge",
@@ -883,7 +901,7 @@ def build_server(
         instructions=INSTRUCTIONS,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests, result_notes(news_line, lambda: calling_transcript())],
+        middleware=[log_requests, result_notes(news_line, lambda: calling_transcript()), fleet.middleware(across)],
         lifespan=lifespan,
     )
     titled = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
@@ -1016,19 +1034,10 @@ def build_server(
     sending: dict[str, list[dict[str, Any]]] = {}  # messages still being delivered, by session id
     in_flight: set[asyncio.Future[Any]] = set()
 
-    active_plugins: list[plugins.Plugin] = []
-    for spec in repos.plugins:
-        if not plugins.approved(spec, plugin_approvals):
-            log.info("plugin %s is not approved; run: claude-voice plugins approve %s", spec.name, spec.name)
-            continue
-        plugin = plugins.Plugin(spec, plugin_client or plugins.CLIENT)
-        listing = plugin.listing()
-        if not plugins.inputs_approved(spec, listing, plugin_approvals):
-            log.info("plugin %s's tools take new inputs; run: claude-voice plugins approve %s", spec.name, spec.name)
-            continue
-        names = plugins.offer(mcp, plugin, listing)
-        active_plugins.append(plugin)
-        log.info("plugin %s offers %s", spec.name, ", ".join(names))
+    active_plugins = plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client)
+    across.machines = machines.start_approved(
+        mcp, repos.machines, machine_folder, http=machine_http, whois=machine_whois
+    )
 
     @tool(annotations=READ_ONLY)
     def fleet_recap() -> dict[str, Any]:
@@ -1149,7 +1158,7 @@ def build_server(
         found by its id instead.
         """
         wake = options.get("wake")
-        taken = {str(d.get("name")) for d in live_sessions()}
+        taken = renames.taken(live_sessions())
         wanted = "" if wake else (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
         while wanted in taken:
             wanted = f"{wanted}-{secrets.token_hex(2)}"
@@ -1190,7 +1199,7 @@ def build_server(
         raise ToolError(f"{wanted or name} was started but did not appear among the running sessions")
 
     def unused_name(wanted: str) -> str:
-        taken = {str(d.get("name")) for d in live_sessions()}
+        taken = renames.taken(live_sessions())
         while wanted in taken:
             wanted = f"{wanted}-{secrets.token_hex(2)}"
         return wanted
@@ -1378,7 +1387,7 @@ def build_server(
         """Stop a session the bridge started; any other session is refused.
         One start_active_session started; another, such as one open in a terminal, gets status
         not_started_here."""
-        target = next((d for d in live_sessions() if name in (d.get("name"), d.get("sessionId"))), None)
+        target = renames.find(live_sessions(), name)
         if target is None:
             return {"name": name, "status": "not_running"}
         sid = str(target.get("sessionId"))
@@ -1417,30 +1426,6 @@ def build_server(
         watch_live(d)
         store.set_setting(WATCHED_SETTING, watched)
         return {"session": d.get("name"), "watched": True}
-
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def rename_session(session: str, name: str) -> dict[str, Any]:
-        """Rename a session the bridge started, once its turn has ended.
-        Shows within seconds in the session lists, and the name stays when it is woken again.
-        status: "renamed", "busy" (mid-turn; nothing done) or "not_started_here"."""
-        new = transcripts.clean_name(name)
-        if not new:
-            raise ToolError("A name needs at least one visible character.")
-        live = next((d for d in live_sessions() if session in (d.get("name"), d.get("sessionId"))), None)
-        own = store.started_session(str(live.get("sessionId")) if live else session)
-        # RULE: only a session the bridge started is ever renamed
-        if own is None:
-            return {"session": session, "status": "not_started_here"}
-        sid, cwd = own["claude_session_id"], own["cwd"]
-        # Claude Code rewrites the job record often during a turn; a change made then could be lost.
-        if live and live.get("status") != "idle":
-            return {"session": own["name"], "claude_session_id": sid, "status": "busy"}
-        try:
-            transcripts.rename_job(sid, new, jobs_dir)
-        except OSError as exc:
-            raise ToolError(f"Could not rename {own['name']}: {exc}") from None
-        store.record_started(sid, new, cwd)
-        return {"session": own["name"], "name": new, "claude_session_id": sid, "status": "renamed"}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def hand_to_desktop(name: str) -> dict[str, Any]:
@@ -1491,7 +1476,7 @@ def build_server(
         )
 
     def live_sessions() -> list[dict[str, Any]]:
-        return events.read_live(live_dir)
+        return renamed(events.read_live(live_dir))
 
     @tool(annotations=READ_ONLY)
     def list_active_sessions() -> dict[str, Any]:
@@ -1646,9 +1631,9 @@ def build_server(
 
     def find_any_live(session: str) -> dict[str, Any]:
         session = by_number(session)
-        for d in live_sessions():
-            if not is_courier(d) and session in (d.get("name"), d.get("sessionId")):
-                return d
+        found = renames.find([d for d in live_sessions() if not is_courier(d)], session)
+        if found is not None:
+            return found
         raise ToolError(f"No running session called {session!r}; see list_active_sessions")
 
     def find_live(session: str) -> dict[str, Any]:
@@ -1941,6 +1926,59 @@ def build_server(
             raise ToolError(str(exc)) from None
         return {"folder": str(closed), "granted": False}
 
+    def address(d: dict[str, Any]) -> str:
+        """The name Claude Code itself answers to, which a rename may not have reached yet."""
+        return str(d.get("deliver_to") or d["name"])
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def rename_session(session: str, new_name: str) -> dict[str, Any]:
+        """Give a running session a new name; its old name still reaches it.
+        A name is letters, digits, '.', '_' and '-'. Claude Code itself is renamed too when the
+        session is idle in tmux; otherwise `note` says what to do (claude_code: renamed, sent, busy,
+        not_in_tmux, already)."""
+        new_name = new_name.strip()
+        if not renames.valid(new_name):
+            raise ToolError(
+                "A session name is letters, digits, '.', '_' and '-', at most 64, starting with a letter or digit"
+            )
+        rows = [d for d in live_sessions() if under_root(d.get("cwd"))]
+        target = renames.find(rows, by_number(session))
+        if target is None:
+            raise ToolError(f"No running session called {session!r}; see list_active_sessions")
+        sid, old = str(target["sessionId"]), str(target["name"])
+        # RULE: a new name already in use is refused
+        if new_name in renames.taken(rows, but=sid):
+            raise ToolError(f"{new_name!r} is already in use by another session")
+        claude_name = address(target)
+        manager.store.rename(sid, claude_name, new_name, [old, claude_name, *target.get("aliases", [])])
+        claude_code, note = await rename_in_claude(target, claude_name, new_name)
+        log.info("renamed %s -> %s (%s); Claude Code: %s", old, new_name, sid, claude_code)
+        return {"name": new_name, "was": old, "claude_session_id": sid, "claude_code": claude_code, "note": note}
+
+    async def rename_in_claude(d: dict[str, Any], claude_name: str, new: str) -> tuple[str, str]:
+        """Type /rename into the session's own tmux pane, only while it waits idle."""
+        if claude_name == new:
+            return "already", "Claude Code already has this name."
+        pane = tmux.pane(int(d.get("pid") or 0))
+        if pane is None:
+            where = "background" if d.get("kind") == "bg" else "not in tmux"
+            return "not_in_tmux", (
+                f"Renamed in the bridge only: the session is {where}, so nothing can type into it. "
+                f"Type /rename {new} in it to rename it in Claude Code too."
+            )
+        # RULE: a busy session is never typed into
+        if d.get("status") != "idle":
+            return "busy", "Renamed in the bridge; Claude Code is mid-turn, so rename it again once it is idle."
+        tmux.type(pane[1], f"/rename {new}")
+        if pane[0] == claude_name:
+            tmux.rename(claude_name, new)
+        for _ in range(25):
+            now = next((x for x in events.read_live(live_dir) if x.get("sessionId") == d.get("sessionId")), {})
+            if now.get("name") == new:
+                return "renamed", "Renamed in Claude Code too."
+            await asyncio.sleep(0.2)
+        return "sent", f"/rename {new} was typed into the session; Claude Code has not shown the new name yet."
+
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
@@ -1957,7 +1995,7 @@ def build_server(
         sid = str(target["sessionId"])
         before = len(numbered_turns(target))
         budget = repos.budgets.seconds(transcripts.current_client.get())
-        delivery = asyncio.ensure_future(deliver(target["name"], f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
+        delivery = asyncio.ensure_future(deliver(address(target), f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -2122,7 +2160,7 @@ def build_server(
             }
         before = len(numbered_turns(target))
         was_busy = target.get("status") in ("busy", "shell")
-        out = await deliver(target["name"], f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
+        out = await deliver(address(target), f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
@@ -2476,7 +2514,7 @@ def build_server(
         raise LookupError(f"No session called {session!r}")
 
     def set_active(session: str, by: str) -> dict[str, Any]:
-        found = resolve_session(session)
+        found = across.active_row(session) if across.split(session) else resolve_session(session)
         active = {**found, "set_by": by, "set_at": datetime.now(UTC).isoformat(timespec="seconds")}
         store.set_setting("active_session", active)
         api.HUB.publish("active", active)
@@ -2522,9 +2560,9 @@ def build_server(
     def lookup(session: str) -> dict[str, Any]:
         """The running session named `session` (name, id or number)."""
         session = by_number(session)
-        for d in live_sessions():
-            if session in (d.get("name"), str(d.get("sessionId"))) and under_root(d.get("cwd")):
-                return d
+        found = renames.find([d for d in live_sessions() if under_root(d.get("cwd"))], session)
+        if found is not None:
+            return found
         raise LookupError(f"No session called {session!r}")
 
     summaries = detail.Summaries(store, summarize, api.HUB.publish)
@@ -2551,6 +2589,8 @@ def build_server(
         return live, summaries.start(str(live.get("sessionId")), "\n".join(kept), language)
 
     async def request_summary(session: str, language: str | None) -> dict[str, Any]:
+        if across.split(session):
+            raise LookupError("summaries are made only for sessions on this computer")
         live, _ = summary_task(session, language)
         return {"session": str(live.get("sessionId")), "state": "generating"}
 
@@ -2592,6 +2632,9 @@ def build_server(
         live = lookup(session)
         return {"prs": await prs_for(str(live.get("cwd")))}
 
+    async def _no_prs() -> dict[str, Any]:
+        return {"prs": []}  # another machine's pull requests are not looked up from here
+
     if oauth is not None:
 
         async def check_token(token: str) -> bool:
@@ -2602,13 +2645,15 @@ def build_server(
             oauth.login_secret,
             oauth.public_url,
             check_token,
-            sessions=fleet_recap,
+            sessions=lambda: across.listing(fleet_recap()),
             get_active=lambda: store.get_setting("active_session"),
             set_active=set_active,
             clear_active=clear_active,
-            output=api_output,
-            pending=api_pending,
-            prs=api_prs,
+            output=lambda s, limit, after: (
+                across.output(s, limit, after) if across.split(s) else api_output(s, limit, after)
+            ),
+            pending=lambda s: across.pending(s) if across.split(s) else api_pending(s),
+            prs=lambda s: _no_prs() if across.split(s) else api_prs(s),
             news=event_feed,
             roles=roles_now,
             doctor=doctor_report,
@@ -2623,12 +2668,15 @@ def build_server(
             start_role=launch_role,
             settings=start_settings,
             software=software_now,
-            detail=session_detail,
+            detail=lambda s: across.detail_page(s) if across.split(s) else session_detail(s),
             summary=request_summary,
             update_changes=update_changes_now,
             ui_origins=ui_origins,
+            remote_prompts=across.prompts,
+            answer_remote=across.answer,
         ).routes(mcp)
 
+    mcp.fleet = across  # type: ignore[attr-defined]  # the other machines, for tests and the CLI
     return mcp
 
 

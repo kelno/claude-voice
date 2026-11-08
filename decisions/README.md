@@ -34,6 +34,9 @@ decision nobody writes down.
 | [ADR-CV-003](ADR-CV-003-risky-actions-wait-for-a-spoken-yes.md) | Risky actions wait for a spoken yes | Accepted |
 | [ADR-CV-004](ADR-CV-004-reach-open-sessions-by-messaging-not-takeover.md) | Reach sessions open elsewhere by messaging, never by taking them over | Accepted |
 | [ADR-CV-005](ADR-CV-005-how-a-change-is-made.md) | How a change is made: tests first, one pull request per change, landed by rebase | Accepted |
+| [ADR-CV-006](ADR-CV-006-other-machines-through-the-laptop.md) | Reach other machines through the laptop, with a small agent on each | Accepted |
+| [ADR-CV-007](ADR-CV-007-a-phone-agent-and-voice-calls.md) | A phone joins the hub as an agent, under privacy rules every machine keeps | Proposed |
+| [ADR-CV-008](ADR-CV-008-approvals-reach-the-phone-when-the-app-is-closed.md) | Approvals reach the phone when the app is closed | Accepted |
 | [ADR-CV-006](ADR-CV-006-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-007 |
 | [ADR-CV-007](ADR-CV-007-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-008](ADR-CV-008-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-009 |
