@@ -1932,9 +1932,10 @@ def build_server(
     async def rename_session(session: str, new_name: str) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
         A name is letters, digits, '.', '_' and '-'. A session the bridge started is renamed in
-        Claude Code too once its turn has ended, and the session lists, the phone and the desktop
-        app show it within seconds; for any other, the new name is the bridge's only. claude_code:
-        renamed, busy (mid-turn: rename it again once idle), bridge_only or already; note says more."""
+        Claude Code too when it is idle, and the phone and the desktop app show it within seconds;
+        for any other, only the bridge's lists know the new name. claude_code: renamed, busy
+        (mid-turn: renamed in the bridge only; rename it again once idle), bridge_only, or already
+        (Claude Code had that name); note says more."""
         new_name = new_name.strip()
         if not renames.valid(new_name):
             raise ToolError(
@@ -2073,11 +2074,13 @@ def build_server(
         5 s by default: the Claude app sends a call past about 10 s to the background.
         Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
         that turn, so a session that hasn't picked the message up yet is still waited for; without
-        it, it gives all you haven't read of that session (from where you last read it, or from this
-        call if you never did), and an idle session returns at once; at most 30 turns come back
-        (read on from next_after while turns_left is above 0), reply is the newest message either
-        way. status: "idle" (its turn has ended; reply is empty if it wrote nothing), "needs_input"
-        or "needs_choice" (it waits for its user; prompt or question says what for),
+        it, it gives all you haven't read of that session (from where you last read it, in any
+        conversation, or from this call if you never did), and an idle session returns at once.
+        reply is the newest message among those, so it is empty when the session wrote nothing
+        new (with `after`, its turn ended with nothing written; without, nothing was unread).
+        At most 30 turns come back; read the rest with read_session_output(after=next_after) while
+        turns_left is above 0; status: "idle" (its turn has ended), "needs_input" or
+        "needs_choice" (it waits for its user; prompt or question says what for),
         "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
         conversation now lives in moved_to); when reply_final is true, reply is whole up to 12,000
         characters (reply_cut past that), while max_chars cuts each message in turns."""
