@@ -305,3 +305,36 @@ async def test_nothing_watched_and_no_prompt_means_no_news_field(served):
     async with http, client as c:
         out = await call(c, "list_projects")
     assert "news" not in out
+
+
+async def test_a_reply_stays_news_when_the_relay_sends_again_before_reading_it(served):
+    # Seen live (F36): the relay sent several messages in a row without reading; a report ended
+    # between two of them, and every send said "nothing new", since a send marked all before it
+    # read. Only a read marks a reply read, and a reply followed by a later message has ended.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        first = await call(c, "message_active_session", session="billing-ab", message="How big is it?")
+        desk.transcript.append(turn("assistant", "Round 5 done; three items wait on the owner."))
+        desk.set("busy")
+        again = await call(c, "message_active_session", session="billing-ab", message="Move it to Archive.")
+        later = await call(c, "list_projects")
+    assert again["next_after"] == 3  # the report is turn 3, before the new message
+    news = f"billing-ab (busy): reply to you, read with after={first['next_after']}"
+    assert again["news"] == later["news"] == news
+
+
+async def test_after_a_read_a_new_send_waits_only_for_its_own_reply(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        first = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=first["next_after"])
+        desk.set("busy")
+        again = await call(c, "message_active_session", session="billing-ab", message="Now the invoices.")
+        desk.transcript.append(turn("assistant", "Invoices done."))
+        desk.set("idle")
+        done = await call(c, "list_projects")
+    assert again["news"] == "billing-ab (busy): nothing new"
+    assert done["news"] == f"billing-ab (idle): reply to you, read with after={again['next_after']}"

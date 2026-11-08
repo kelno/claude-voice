@@ -841,7 +841,13 @@ def build_server(
             watch_live(target)  # a session started or resumed: its history so far isn't news
         elif target is not None and isinstance(reached, int):
             if tool == "message_active_session":
-                watch_live(target, seen=reached, sent=reached)
+                # A send reads nothing: what came before stays unread, and while an earlier
+                # message's reply is unread, the wait for a reply starts from that message.
+                mark = watched.get(str(target.get("sessionId")))
+                if mark is None:
+                    watch_live(target, seen=reached, sent=reached)  # its history so far isn't news
+                elif mark.get("sent") is None:
+                    watch_live(target, seen=mark["seen"], sent=reached)
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
                 watch_live(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
@@ -864,8 +870,11 @@ def build_server(
         news, read_from = [], []
         if mark.get("sent") is not None:
             answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
-            # Its turn has ended once it rests, or asks its user something; not mid-turn on a prompt.
-            ended = session_state(d) in ("idle", "waiting for an answer")
+            # Its turn has ended once it rests, or asks its user something (not mid-turn on a
+            # prompt), or once a later message came in after its reply.
+            ended = session_state(d) in ("idle", "waiting for an answer") or any(
+                t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
+            )
             mark["replied"] = mark["replied"] or (bool(answer) and ended)
             if mark["replied"] and any(i > mark["seen"] for i in answer):
                 news.append("reply to you")
