@@ -137,6 +137,31 @@ async def test_a_reply_to_the_relays_message_is_news_until_it_is_read(served):
     assert read["news"] == after["news"] == "billing-ab (idle): nothing new"
 
 
+async def test_a_wait_without_after_gives_the_relay_all_it_has_not_read(served):
+    # The owner's call: a wait never skips what the relay hasn't seen, so without `after` it
+    # starts where the relay last read the session, not where the transcript ends.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Starting the export."))
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "wait_for_session", session="billing-ab")
+    assert [t["text"] for t in out["turns"]] == ["Starting the export.", "Export done."]
+    assert out["reply"] == "Export done." and out["reply_final"] is True
+
+
+async def test_a_wait_without_after_on_a_session_already_read_brings_nothing_old(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        out = await call(c, "wait_for_session", session="billing-ab")
+    assert out["status"] == "idle" and out["reply"] == "" and out["turns"] == []
+
+
 async def test_progress_while_the_session_works_is_not_news(served):
     url, desk = served
     http, client = conversation(url)

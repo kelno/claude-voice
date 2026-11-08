@@ -2073,26 +2073,42 @@ def build_server(
         5 s by default: the Claude app sends a call past about 10 s to the background.
         Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
         that turn, so a session that hasn't picked the message up yet is still waited for; without
-        it an idle session returns at once. status: "idle" (its turn has ended; reply is its last
-        words, turns what it said since `after`), "needs_input" or "needs_choice" (it waits for its
-        user; prompt or question says what for), "still_working" (the wait ran out; call again),
-        "session_ended" or "moved" (the conversation now lives in moved_to); when reply_final is
-        true, reply is whole up to 12,000 characters (reply_cut past that), while max_chars cuts
-        each message in turns."""
+        it, it gives all you haven't read of that session (from where you last read it, or from this
+        call if you never did), and an idle session returns at once; at most 30 turns come back
+        (read on from next_after while turns_left is above 0), reply is the newest message either
+        way. status: "idle" (its turn has ended; reply is empty if it wrote nothing), "needs_input"
+        or "needs_choice" (it waits for its user; prompt or question says what for),
+        "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
+        conversation now lives in moved_to); when reply_final is true, reply is whole up to 12,000
+        characters (reply_cut past that), while max_chars cuts each message in turns."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
             return {"session": target["name"], "status": "moved", "moved_to": moved, "session_ended": False}
+        # Without `after`, the wait starts where the relay last read this session, so it never skips
+        # anything unread; a session never read starts where its transcript ends now.
+        mark = watched.get(str(target.get("sessionId")))
+        if after is not None:
+            start = after
+        elif mark is not None:
+            start = int(mark["seen"])
+        else:
+            start = len(numbered_turns(target)) - 1
 
-        def said(d: dict[str, Any]) -> list[dict[str, Any]]:
-            """What the session has written, past `after` when one is given."""
-            return [t for t in numbered_turns(d) if t["role"] == "assistant" and (after is None or t["index"] > after)]
+        def past(d: dict[str, Any], role: str) -> list[dict[str, Any]]:
+            """The session's turns in this role after `start`."""
+            return [t for t in numbered_turns(d) if t["role"] == role and t["index"] > start]
 
-        pid, blocked, done = target.get("pid"), None, False
+        pid, blocked, done, taken = target.get("pid"), None, False, False
         deadline = asyncio.get_running_loop().time() + within_budget(wait_seconds)
         while (now := live_by_pid(pid)) is not None:
             target, blocked = now, waiting(now)
-            done = blocked is not None or (now.get("status") == "idle" and (after is None or bool(said(now))))
+            idle = now.get("status") == "idle"
+            # A message is in the transcript and the session idle on two looks running, or after
+            # it was seen busy: its turn has ended, even if it wrote nothing.
+            ended_silent = idle and taken and bool(past(now, "user"))
+            taken = not idle or bool(past(now, "user"))
+            done = blocked is not None or (idle and (after is None or bool(past(now, "assistant")) or ended_silent))
             if done or asyncio.get_running_loop().time() >= deadline:
                 break
             await asyncio.sleep(poll_seconds)
@@ -2101,10 +2117,13 @@ def build_server(
         else:
             status = blocked["status"] if blocked else ("idle" if done else "still_working")
         # A session that ended keeps its transcript, so what it wrote before it went is still read.
-        written = said(target)
-        new = [dict(t) for t in (written if after is not None else written[-1:])]
-        final = reply_is_final(status, new)
-        reply = reply_of(new, max_chars, final)
+        written = past(target, "assistant")
+        final = reply_is_final(status, written)
+        reply = reply_of([dict(t) for t in written[-1:]], max_chars, final)
+        new = [dict(t) for t in written[:30]]
+        reply_of(new, max_chars, False)  # cuts each message in turns to max_chars
+        left = len(written) - len(new)
+        latest = {"index": written[-1]["index"], "role": "assistant", "text": reply["reply"]} if left else None
         return {
             "status": status,
             "session": target["name"],
@@ -2112,7 +2131,9 @@ def build_server(
             "reply_final": final,
             "session_ended": now is None,
             "turns": new,
-            "next_after": new[-1]["index"] if new else (after if after is not None else -1),
+            "turns_left": left,
+            **({"latest": latest} if latest else {}),
+            "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
         }
 
