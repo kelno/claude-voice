@@ -636,7 +636,6 @@ def build_server(
     ci_status: Callable[[str], dict[str, Any] | None] = software.latest_run,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
-    tmux: Any = None,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -659,7 +658,6 @@ def build_server(
     watcher = events.LiveWatcher(
         manager.store, live_dir, manager.root, clock=manager.clock, project_of=lambda cwd: under_root(cwd)
     )
-    tmux = tmux or renames.Tmux()
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
@@ -1933,9 +1931,10 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def rename_session(session: str, new_name: str) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
-        A name is letters, digits, '.', '_' and '-'. Claude Code itself is renamed too when the
-        session is idle in tmux; otherwise `note` says what to do (claude_code: renamed, sent, busy,
-        not_in_tmux, already)."""
+        A name is letters, digits, '.', '_' and '-'. A session the bridge started is renamed in
+        Claude Code too once its turn has ended, and the session lists, the phone and the desktop
+        app show it within seconds; for any other, the new name is the bridge's only. claude_code:
+        renamed, busy (mid-turn: rename it again once idle), bridge_only or already; note says more."""
         new_name = new_name.strip()
         if not renames.valid(new_name):
             raise ToolError(
@@ -1951,33 +1950,35 @@ def build_server(
             raise ToolError(f"{new_name!r} is already in use by another session")
         claude_name = address(target)
         manager.store.rename(sid, claude_name, new_name, [old, claude_name, *target.get("aliases", [])])
-        claude_code, note = await rename_in_claude(target, claude_name, new_name)
+        claude_code, note = rename_in_claude(target, claude_name, new_name)
         log.info("renamed %s -> %s (%s); Claude Code: %s", old, new_name, sid, claude_code)
         return {"name": new_name, "was": old, "claude_session_id": sid, "claude_code": claude_code, "note": note}
 
-    async def rename_in_claude(d: dict[str, Any], claude_name: str, new: str) -> tuple[str, str]:
-        """Type /rename into the session's own tmux pane, only while it waits idle."""
+    def rename_in_claude(d: dict[str, Any], claude_name: str, new: str) -> tuple[str, str]:
+        """Write the new name into Claude Code's job record for a session the bridge started,
+        only while it waits idle. Claude Code renames a running background session from it at once,
+        and a wake reads it, so the name stays. Any other session keeps Claude Code's own name."""
         if claude_name == new:
             return "already", "Claude Code already has this name."
-        pane = tmux.pane(int(d.get("pid") or 0))
-        if pane is None:
-            where = "background" if d.get("kind") == "bg" else "not in tmux"
-            return "not_in_tmux", (
-                f"Renamed in the bridge only: the session is {where}, so nothing can type into it. "
-                f"Type /rename {new} in it to rename it in Claude Code too."
+        sid = str(d.get("sessionId"))
+        # RULE: only a session the bridge started is renamed in Claude Code itself
+        if store.started_session(sid) is None:
+            return "bridge_only", (
+                f"The new name is the bridge's only: the bridge didn't start this session, so Claude Code"
+                f" and the desktop app keep the name {claude_name}. Type /rename {new} in it to rename it"
+                " there too; messages to either name reach it."
             )
-        # RULE: a busy session is never typed into
+        # RULE: the job record of a busy session is never written
         if d.get("status") != "idle":
             return "busy", "Renamed in the bridge; Claude Code is mid-turn, so rename it again once it is idle."
-        tmux.type(pane[1], f"/rename {new}")
-        if pane[0] == claude_name:
-            tmux.rename(claude_name, new)
-        for _ in range(25):
-            now = next((x for x in events.read_live(live_dir) if x.get("sessionId") == d.get("sessionId")), {})
-            if now.get("name") == new:
-                return "renamed", "Renamed in Claude Code too."
-            await asyncio.sleep(0.2)
-        return "sent", f"/rename {new} was typed into the session; Claude Code has not shown the new name yet."
+        try:
+            transcripts.rename_job(sid, new, jobs_dir)
+        except OSError as exc:
+            return "bridge_only", (
+                f"The new name is the bridge's only: Claude Code's job record for it couldn't be written ({exc}),"
+                f" so Claude Code and the desktop app keep the name {claude_name}."
+            )
+        return "renamed", "Renamed in Claude Code too; the session lists show it within seconds."
 
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),

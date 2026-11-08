@@ -36,8 +36,8 @@ machine that does not answer within two seconds is reported, not waited for.
 ## What you need
 
 On the other machine: Tailscale, signed in to the same account as the hub, and
-for sessions, Claude Code signed in (`claude`, then `/login`). tmux lets the voice
-rename a session in Claude Code itself, but is not required.
+for sessions, Claude Code signed in (`claude`, then `/login`). A session the
+bridge there started is renamed in Claude Code itself too; any other only in the bridge.
 
 ## Set it up
 

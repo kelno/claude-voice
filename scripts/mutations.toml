@@ -370,6 +370,12 @@ find = 'return NAME.fullmatch\(name\) is not None'
 replace = 'return True'
 
 [[rule]]
+name = "only a session the bridge started is renamed in Claude Code itself"
+file = "src/claude_voice/server.py"
+find = 'if store.started_session\(sid\) is None:'
+replace = 'if False:'
+
+[[rule]]
 name = "a message to an old name reaches the renamed session"
 file = "src/claude_voice/renames.py"
 find = 'return old_names and \(session in d.get\("aliases", \[\]\) or session == d.get\("deliver_to"\)\)'
@@ -382,7 +388,7 @@ find = 'if new_name in renames.taken\(rows, but=sid\):'
 replace = 'if False:'
 
 [[rule]]
-name = "a busy session is never typed into"
+name = "the job record of a busy session is never written"
 file = "src/claude_voice/server.py"
 find = 'if d.get\("status"\) != "idle":'
 replace = 'if False:'

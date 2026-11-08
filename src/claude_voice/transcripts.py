@@ -371,11 +371,6 @@ def doing_line(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> 
     return ""
 
 
-def clean_name(name: str, limit: int = 60) -> str:
-    """A session name on one line: control characters become spaces, runs of spaces one."""
-    return " ".join("".join(" " if not ch.isprintable() else ch for ch in name).split())[:limit].strip()
-
-
 def rename_job(session_id: str, name: str, jobs_dir: Path = JOBS_DIR) -> None:
     """Give a background session a new name through its job record, as Claude Code allows.
 
