@@ -1934,16 +1934,14 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def rename_session(session: str, new_name: str) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
-        A name is letters, digits, '.', '_' and '-'. A session the bridge started is renamed in
+        A name is any text on one line, up to 64 characters. A session the bridge started is renamed in
         Claude Code too when it is idle, and the phone and the desktop app show it within seconds;
         for any other, only the bridge's lists know the new name. claude_code: renamed, busy
         (mid-turn: renamed in the bridge only; rename it again once idle), bridge_only, or already
         (Claude Code had that name); note says more."""
-        new_name = new_name.strip()
+        new_name = renames.clean(new_name)
         if not renames.valid(new_name):
-            raise ToolError(
-                "A session name is letters, digits, '.', '_' and '-', at most 64, starting with a letter or digit"
-            )
+            raise ToolError("A session name needs at least one visible character.")
         rows = [d for d in live_sessions() if under_root(d.get("cwd"))]
         target = renames.find(rows, by_number(session))
         if target is None:

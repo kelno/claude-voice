@@ -9,17 +9,23 @@ old one, dropped once Claude Code has the new one or someone renames it another 
 
 from __future__ import annotations
 
-import re
 import subprocess
 from collections.abc import Callable, Iterable
 from typing import Any
 
-NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+LONGEST = 64
+
+
+def clean(name: str) -> str:
+    """A session name on one line: control characters become spaces, runs of spaces one, at most
+    LONGEST characters. The fork takes any visible text, as a start does: upstream's narrower names
+    were for typing into tmux, which the fork never does."""
+    return " ".join("".join(" " if not ch.isprintable() else ch for ch in name).split())[:LONGEST].strip()
 
 
 def valid(name: str) -> bool:
-    # RULE: a session name is letters, digits, dots, underscores and dashes
-    return NAME.fullmatch(name) is not None
+    # RULE: a session name needs at least one visible character
+    return bool(name.strip())
 
 
 def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], aliases: dict[str, list[str]]):

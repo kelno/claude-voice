@@ -364,9 +364,9 @@ find = 'fresh = key not in guided or compacted'
 replace = 'fresh = key not in guided'
 
 [[rule]]
-name = "a session name is letters, digits, dots, underscores and dashes"
+name = "a session name needs at least one visible character"
 file = "src/claude_voice/renames.py"
-find = 'return NAME.fullmatch\(name\) is not None'
+find = 'return bool\(name.strip\(\)\)'
 replace = 'return True'
 
 [[rule]]

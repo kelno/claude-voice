@@ -152,11 +152,22 @@ async def test_only_a_session_the_bridge_started_is_renamed_in_claude_code_itsel
     assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest"
 
 
-@pytest.mark.parametrize("bad", ["", "math quest", "-flag", "mq/x", "æøå", "a" * 65, "mq;rm"])
-async def test_a_session_name_is_letters_digits_dots_underscores_and_dashes(tmp_path, root, live, jobs, bad):
+async def test_a_session_name_may_be_any_text_on_one_line(tmp_path, root, live, jobs):
+    # The owner's call: renames take what starts take, spaces and colons included; upstream's
+    # narrower names were for typing into tmux, which the fork never does.
+    record = started(tmp_path, live, root, jobs)
+    async with Client(server(tmp_path, root, live, jobs)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="  Billing:\n export  fix ")
+        assert await names(c) == ["Billing: export fix"]
+    assert out["name"] == "Billing: export fix" and out["claude_code"] == "renamed"
+    assert json.loads(record.read_text(encoding="utf-8"))["name"] == "Billing: export fix"
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "\n\t"])
+async def test_a_session_name_needs_at_least_one_visible_character(tmp_path, root, live, jobs, bad):
     async with Client(server(tmp_path, root, live, jobs)) as c:
         res = await c.call_tool("rename_session", {"session": "math-quest", "new_name": bad})
-        assert res.is_error and "letters" in res.content[0].text
+        assert res.is_error and "visible" in res.content[0].text
         assert await names(c) == ["math-quest"]
 
 
