@@ -265,7 +265,7 @@ Missing tools
   owner the tool list needs a refresh in claude.ai Settings → Connectors.
 - This bridge is the owner's own project, kept up by their agents: when a
   tool gets in your way or lacks something, proposing a change to the bridge
-  is a fair suggestion, and feedback you log can name that change as the fix.
+  is a fair suggestion, and feedback you log can name that change as a lead.
 """
 
 
