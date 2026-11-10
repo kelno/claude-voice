@@ -18,7 +18,7 @@ Beyond the open pull request (candidate 9), the fork features most likely to hel
 
 ## Candidates
 
-In the order they'd best be offered. Each fork commit already follows upstream's rules in `UPSTREAM.md` (test first, gates green, message style), so each is a starting point, not a finished pull request.
+In the order they'd best be offered. Each fork commit already follows upstream's rules (test first, gates green, message style), so each is a starting point, not a finished pull request.
 
 ### 5. Side chats marked — fork "Mark the desktop app's side chats in the session lists"
 
