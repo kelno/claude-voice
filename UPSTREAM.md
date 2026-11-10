@@ -411,6 +411,8 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 
 ### 9. Every mutation row checked to compile — fork "Check that every mutation row leaves code that compiles"
 
+- Offered 2026-11-10 as draft [#129](https://github.com/roykollensvendsen/claude-voice/pull/129) (branch `pr/check-mutation-rows`), as two commits: the test, then "Call a mutation row that breaks the code a broken row". Upstream's rows all compile, so the test was shown red with a row broken on purpose. Waiting for the owner to review it and mark it ready.
+
 - What: `scripts/mutate.py` gains `switched_off` (the row applied, as the run applies it) and `broken` (why a mutated Python file no longer compiles). A run reports such a row as `BROKEN` and fails without running its tests, instead of reporting the rule as killed by another test. `tests/test_rules_have_evidence.py` applies every row and requires the result to compile, so a broken row shows on any run of the suite, not only in the mutation job.
 - Why: the runner replaces the whole matched line, keeping only its indentation. A row written as if it swapped part of the line leaves the line cut off: the module stops importing, every test in its files errors, and the run gives the wrong diagnosis. That happened on #109 (found by the author), and the new test found two more rows on the fork's main: the same one, and "an update runs the tests only when asked", whose `find` had unescaped parentheses and matched no line.
 - Upstream relevance: medium, small and independent. Upstream's table may have no broken row today, so the test can't be shown red on its main as it stands: show it red by breaking a row on purpose, or offer it as a check on future rows.
