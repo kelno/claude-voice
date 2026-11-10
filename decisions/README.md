@@ -21,6 +21,9 @@ this order:
 Numbers are one sequence and never reused. A record is superseded by a later
 one, never edited into a different decision.
 
+In the kelno/claude-voice fork, the fork's own records are numbered from 101,
+so upstream's next records never take a number the fork already uses.
+
 Record the process choices too, not only the artefact ones. How a change is
 made, and why, is what costs time on every future contribution, and it is the
 decision nobody writes down.
@@ -38,12 +41,12 @@ decision nobody writes down.
 | [ADR-CV-007](ADR-CV-007-a-phone-agent-and-voice-calls.md) | A phone joins the hub as an agent, under privacy rules every machine keeps | Proposed |
 | [ADR-CV-008](ADR-CV-008-approvals-reach-the-phone-when-the-app-is-closed.md) | Approvals reach the phone when the app is closed | Accepted |
 | [ADR-CV-009](ADR-CV-009-main-keeps-the-quality-levels.md) | Main keeps the quality levels, so a pull request never records them | Accepted |
-| [ADR-CV-009](ADR-CV-009-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-010 |
-| [ADR-CV-010](ADR-CV-010-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
-| [ADR-CV-011](ADR-CV-011-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-012 |
-| [ADR-CV-012](ADR-CV-012-the-side-session-works-on-past-the-callers-time-budget.md) | The side session works on past the caller's time budget | Accepted |
-| [ADR-CV-013](ADR-CV-013-the-owner-confirms-on-the-apps-card-in-voice.md) | The owner confirms a session's request on the app's card, in a voice chat | Accepted, amended by ADR-CV-014 |
-| [ADR-CV-014](ADR-CV-014-the-owner-confirms-with-a-passkey-on-the-bridges-page.md) | The owner confirms with a passkey on the bridge's own page | Accepted |
+| [ADR-CV-101](ADR-CV-101-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-102 |
+| [ADR-CV-102](ADR-CV-102-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
+| [ADR-CV-103](ADR-CV-103-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-104 |
+| [ADR-CV-104](ADR-CV-104-the-side-session-works-on-past-the-callers-time-budget.md) | The side session works on past the caller's time budget | Accepted |
+| [ADR-CV-105](ADR-CV-105-the-owner-confirms-on-the-apps-card-in-voice.md) | The owner confirms a session's request on the app's card, in a voice chat | Accepted, amended by ADR-CV-106 |
+| [ADR-CV-106](ADR-CV-106-the-owner-confirms-with-a-passkey-on-the-bridges-page.md) | The owner confirms with a passkey on the bridge's own page | Accepted |
 
 What is deliberately left undone, and what would make each worth doing, is
 [`deferred.md`](deferred.md). A thing left undone with no trigger is a thing

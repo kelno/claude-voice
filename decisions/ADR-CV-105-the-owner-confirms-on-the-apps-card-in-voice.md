@@ -1,4 +1,4 @@
-# ADR-CV-013: The owner confirms on the app's card, in a voice chat
+# ADR-CV-105: The owner confirms on the app's card, in a voice chat
 
 ## Status
 

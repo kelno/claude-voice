@@ -66,16 +66,16 @@ Every way the fork differs from upstream's `main`, by what an agent calling the 
 
 ### Decision records renumbered
 
-Upstream's ADR-CV-006 to 008 (other machines, a phone as an agent, approvals on the phone) came after the fork had used those numbers; at the resync of 2026-11-08 the fork's records moved up by three ("Renumber the fork's decision records after upstream's").
+Upstream's records came after the fork had used their numbers, twice: ADR-CV-006 to 008 (other machines, a phone as an agent, approvals on the phone), at the resync of 2026-11-08, when the fork's records moved up by three; and ADR-CV-009 (main keeps the quality levels), at the resync of 2026-11-10. Since then the fork's own records are numbered from 101 (the owner's call, 2026-11-10), so upstream's next ones never collide again; `decisions/README.md` says so ("Number the fork's decision records from 101"). A fork record offered upstream takes upstream's next number there.
 
-| Old fork number | Fork number now | Record |
-| --- | --- | --- |
-| ADR-CV-006 | ADR-CV-009 | Folders outside the root are opened one at a time, by the owner |
-| ADR-CV-007 | ADR-CV-010 | Desktop scratch folders can be opened, and access is named for what is missing |
-| ADR-CV-008 | ADR-CV-011 | The side session is a read-only fork |
-| ADR-CV-009 | ADR-CV-012 | The side session works on past the caller's time budget |
-| ADR-CV-010 | ADR-CV-013 | The owner confirms on the app's card, in a voice chat |
-| ADR-CV-011 | ADR-CV-014 | The owner confirms with a passkey on the bridge's page |
+| Until 2026-11-08 | Until 2026-11-10 | Fork number now | Record |
+| --- | --- | --- | --- |
+| ADR-CV-006 | ADR-CV-009 | ADR-CV-101 | Folders outside the root are opened one at a time, by the owner |
+| ADR-CV-007 | ADR-CV-010 | ADR-CV-102 | Desktop scratch folders can be opened, and access is named for what is missing |
+| ADR-CV-008 | ADR-CV-011 | ADR-CV-103 | The side session is a read-only fork |
+| ADR-CV-009 | ADR-CV-012 | ADR-CV-104 | The side session works on past the caller's time budget |
+| ADR-CV-010 | ADR-CV-013 | ADR-CV-105 | The owner confirms on the app's card, in a voice chat |
+| ADR-CV-011 | ADR-CV-014 | ADR-CV-106 | The owner confirms with a passkey on the bridge's page |
 
 ### Renamed
 
@@ -92,7 +92,7 @@ Upstream's ADR-CV-006 to 008 (other machines, a phone as an agent, approvals on 
 | `guide` | The manual for the calling agent; also handed to a conversation that never read it | The Claude app doesn't pass the server's instructions to the model | "Give the bridge a manual, sent at connection and kept in a guide tool", "Keep in the manual only the rules that span tools", "Hand the manual to a conversation that never read it", "Move the bridge's delegation rules from memory into the guide" |
 | `hand_to_desktop` | Hands a session the bridge started to the desktop app | Carry on at the PC | "Hand a session the bridge started to the desktop app" |
 | `watch_session` | Adds a session to the news line on every result, or takes it out; the sessions the relay starts, resumes, messages or reads are added by themselves | The relay's own set of sessions to follow, one set across its voice calls, kept over a bridge restart. Upstream's chosen session (`get_active_session`, `set_active_session`, switched off here) is one session, the one the companion page talks to; the owner wanted the idea in this form instead: several sessions, for the relay's news | "Watch sessions for the news line, and name only what needs the relay" |
-| `confirm_ask`, `confirm_with_owner`, `confirm_check`, and the `claude-voice passkey` command | A session asks for the owner's own OK; the owner confirms it with a passkey on the bridge's own page (ADR-CV-014); the session checks the result itself. Design and reasoning: `docs/owner-confirmation.md` | Sessions rightly refuse an approval relayed by message, so the owner had to type OK at the PC; this lets the owner confirm from the phone in a way the session can verify | "Describe the owner's confirmation through the bridge", "Settle who may confirm and how exactly the words must match", "Pin the confirmation to the running commit", "Let the owner confirm a session's request from a voice chat", "Confirm with the owner's passkey on the bridge's page" |
+| `confirm_ask`, `confirm_with_owner`, `confirm_check`, and the `claude-voice passkey` command | A session asks for the owner's own OK; the owner confirms it with a passkey on the bridge's own page (ADR-CV-106); the session checks the result itself. Design and reasoning: `docs/owner-confirmation.md` | Sessions rightly refuse an approval relayed by message, so the owner had to type OK at the PC; this lets the owner confirm from the phone in a way the session can verify | "Describe the owner's confirmation through the bridge", "Settle who may confirm and how exactly the words must match", "Pin the confirmation to the running commit", "Let the owner confirm a session's request from a voice chat", "Confirm with the owner's passkey on the bridge's page" |
 | `request_access`, `revoke_access` | Open a folder outside the root, by session or by path, once the owner confirms it with a passkey, and close it again; a folder opened by path is also trusted by Claude Code | Work anywhere on the PC, one folder at a time, with the owner's approval; the app's approval card can be skipped by a setting, so the passkey carries it | "Let the owner open folders outside the root, one at a time", "Name access states plainly and open desktop scratch folders", "Open a folder by its path with request_access", "Trust a folder in Claude Code when the owner opens it by path", "Confirm with the owner's passkey on the bridge's page" |
 
 ### Upstream tools the fork removed or switched off
@@ -196,10 +196,10 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 
 ### 6. Folders outside the root, opened by the owner — fork "Let the owner open folders outside the root, one at a time"
 
-- Follow-up, fork "Name access states plainly and open desktop scratch folders" (ADR-CV-010): values renamed `folder_not_open` / `folder_closed` (the first collided with tool-call approvals), refusals name the closed folder and the relation (inside / holds), and an exact-depth exception opens the Claude desktop app's scratch folders under `AppData` (`# RULE` "only a Desktop scratch folder is opened inside a denied folder"). The exception is Windows-desktop specific; upstream may want it behind a setting.
+- Follow-up, fork "Name access states plainly and open desktop scratch folders" (ADR-CV-102): values renamed `folder_not_open` / `folder_closed` (the first collided with tool-call approvals), refusals name the closed folder and the relation (inside / holds), and an exact-depth exception opens the Claude desktop app's scratch folders under `AppData` (`# RULE` "only a Desktop scratch folder is opened inside a denied folder"). The exception is Windows-desktop specific; upstream may want it behind a setting.
 - What: every running session is listed; one outside the root and the granted folders shows only name, folder, status, kind and `access` (`folder_not_open` or `folder_closed`), and can't be read or messaged. `request_access(session)` grants that session's working folder and everything under it, stored for good; `revoke_access(folder)` closes it; `health` lists grants. A built-in deny list (home `.ssh`, `.gnupg`, `.claude`, `.config/claude-voice`, `AppData`, and system folders) is never opened, nor any folder holding one, even inside the root.
 - Why: an owner's sessions aren't all under one folder, and the assistant couldn't even tell a session existed. The approval is meant to come from the Claude app's own "ask each time" prompt on `request_access`, which only the person can answer, unlike `approve`, which the assistant calls itself.
-- Already shaped for upstream: decision record `decisions/ADR-CV-009-…`, README "How it behaves" and tool table, a `# RULE` ("a folder holding or inside a denied folder is never granted") with its `mutations.toml` row, `tests/test_access.py`, mutation run 5/5.
+- Already shaped for upstream: decision record `decisions/ADR-CV-101-…`, README "How it behaves" and tool table, a `# RULE` ("a folder holding or inside a denied folder is never granted") with its `mutations.toml` row, `tests/test_access.py`, mutation run 5/5.
 - Expect discussion: listing names of sessions outside the root shares more with the assistant than today (a side chat's name is the owner's own words); the deny list's contents; upstream's "few tools" principle (two new tools). `SessionManager` takes the deny list as a parameter (empty by default) so tests elsewhere don't hit it; the served bridge passes `default_denied()`.
 - Known gap: a side chat outside the open folders isn't marked `side_chat` (the mark is only added to full rows). Grouping side chats under their parent session is deferred.
 
@@ -221,16 +221,16 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 - What: `side_question` renamed `peek_session` (too close to the desktop app's side chats); descriptions of `peek_session`, `digest_session` and `list_sessions` say what each reads (8,000 vs 150,000 characters of the conversation's words, never tool results or files), how fast, and why an idle bridge session isn't "running".
 - Expect pushback: renaming a tool breaks clients that remember it. The description part is uncontroversial on its own.
 
-### 6d. The side session, a read-only fork — fork "Ask a read-only fork of a busy session while it keeps working" (ADR-CV-011)
+### 6d. The side session, a read-only fork — fork "Ask a read-only fork of a busy session while it keeps working" (ADR-CV-103)
 
 - What: `ask_forked_session(session, question)` forks a running session's conversation through the Agent SDK (`resume` + `fork_session`), one new fork per question, with the owner's settings; a PreToolUse hook refuses every tool outside a reading list (and a matching permission callback), so it changes nothing; returns the answer and tools used.
 - Why: keeps a voice conversation going while a session works for a long time, with answers that can draw on the code.
 - Follow-up fix, fork "Read past a resumed session's leftover turn, and never call silence an answer": resuming a desktop session first closes a turn left pending in its history (background-task notifications), reported as a result with no turns and no text; the first version took that as the answer. It now skips up to three such turns, and an empty answer or an error result comes back as `status: "error"` with a `detail`. Fold into the same pull request.
 - Points to raise: cost per question (each fork carries the whole conversation; the first fork of a desktop session likely misses the prompt cache); forks' conversations stay in Claude Code's history. `# RULE` "the side session never runs a tool that can change anything", `tests/test_fork.py`.
 
-### 6d'. A 20-second cap on every waiting call (ADR-CV-012)
+### 6d'. A 20-second cap on every waiting call (ADR-CV-104)
 
-- Since the resync, rebuilt on upstream's per-client time budgets ("Let the side session work on past the caller's time budget", ADR-CV-012 rewritten): the limit is the caller's budget, not a fixed 20 s. What's left to offer is the side session working on past the budget, `next_after` on a send, and the log line for a call the client abandons.
+- Since the resync, rebuilt on upstream's per-client time budgets ("Let the side session work on past the caller's time budget", ADR-CV-104 rewritten): the limit is the caller's budget, not a fixed 20 s. What's left to offer is the side session working on past the budget, `next_after` on a send, and the log line for a call the client abandons.
 - What: `MAX_WAIT_SECONDS = 20`, applied through one helper (`# RULE` "no tool call waits longer than the cap") to `wait_for_session`, `ask_active_session` and the fork tools; past it `still_working` / `still_running` with a way to read on. Side session as background forks with the same three ways in as open sessions (`message_forked_session`, `read_forked_session`, `ask_forked_session`); `message_active_session` returns `next_after`; a call the client abandons is logged with its duration.
 - Why: the Claude app drops a tool call at about 30 s (measured: 28.6 s came back, ~35 s and ~76 s dropped), and the assistant only sees "MCP tool call failed".
 - Upstream relevance: high for any claude.ai client. Upstream allows waits of up to 300 s today. The cap value should be a setting; the side-session parts depend on 6d.
@@ -309,7 +309,7 @@ In the order they'd best be offered. Each fork commit already follows the rules 
 
 ### 6o. request_access by folder path — fork "Open a folder by its path with request_access"
 
-- What: `request_access(session=None, folder=None)`, exactly one; `folder` is a full path, opened with the same grant, deny list and destructive marker as a session's folder. README and ADR-CV-009 updated.
+- What: `request_access(session=None, folder=None)`, exactly one; `folder` is a full path, opened with the same grant, deny list and destructive marker as a session's folder. README and ADR-CV-101 updated.
 - Why: to start work remotely in a folder no session runs in, which the session-only form could never open. Depends on 6.
 - Expect pushback: a path typed by the assistant rather than a folder the owner already works in; the answer is the app's own prompt on the destructive tool, which shows the path and offers no "Always allow". Test first: `tests/test_access.py`, seen failing before the change.
 

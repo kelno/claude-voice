@@ -176,7 +176,7 @@ def check_command(env: Mapping[str, str], transport: str, as_json: bool, login: 
 
 
 def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> int:
-    """The owner's passkeys, which confirm requests on the bridge's page (ADR-CV-014)."""
+    """The owner's passkeys, which confirm requests on the bridge's page (ADR-CV-106)."""
     from . import passkeys
     from .store import Store
 

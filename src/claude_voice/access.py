@@ -1,6 +1,6 @@
 """Which folders the bridge may reach: the root, folders the owner opened, never the closed ones.
 
-See decisions/ADR-CV-009. A folder is "open" when it is the root or a granted folder, or
+See decisions/ADR-CV-101. A folder is "open" when it is the root or a granted folder, or
 under one; "closed" when it is inside a closed folder, or holds one; otherwise it is
 "not_open", and the owner can open it with request_access. One exception: a scratch folder
 the Claude desktop app makes for a session opens even though it sits inside AppData.

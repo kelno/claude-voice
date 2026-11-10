@@ -1,14 +1,14 @@
-# ADR-CV-014: The owner confirms with a passkey on the bridge's own page
+# ADR-CV-106: The owner confirms with a passkey on the bridge's own page
 
 ## Status
 
 Accepted by the owner of the kelno fork, 2026-11-07, after a live test with the owner's passkey passed; with the plan for the page: the page shows the
-request behind its long random link, and one passkey prompt confirms it. Amends ADR-CV-013, whose card
+request behind its long random link, and one passkey prompt confirms it. Amends ADR-CV-105, whose card
 can't carry the proof. The page's path is open to the owner's VPN only.
 
 ## Context
 
-ADR-CV-013 rested the owner's confirmation on the Claude app's approval card. Tests on 2026-11-06 showed
+ADR-CV-105 rested the owner's confirmation on the Claude app's approval card. Tests on 2026-11-06 showed
 the card can be skipped without the bridge seeing it: in the desktop app's voice chat, a tool set to
 "always allow" ran with no card, and the phone's card on "always allow" comes from a reported app bug
 (anthropics/claude-ai-mcp#1087, #1223) that a fix could remove. A guarantee that a settings mistake or an
@@ -17,7 +17,7 @@ bridge by a path no model can produce.
 
 ## Options considered
 
-- **The app's approval card** (ADR-CV-013). Skipped silently by "always allow" in the desktop app; on the
+- **The app's approval card** (ADR-CV-105). Skipped silently by "always allow" in the desktop app; on the
   phone it holds only through a bug. Dropped.
 - **Elicitation: the bridge asks the owner during the call.** The owner's preferred way, but the Claude
   app's voice chat declares no support for it (anthropics/claude-ai-mcp#153, open). Not available today.
@@ -57,4 +57,4 @@ bridge by a path no model can produce.
 
 ## Related
 
-`docs/owner-confirmation.md`, ADR-CV-013.
+`docs/owner-confirmation.md`, ADR-CV-105.

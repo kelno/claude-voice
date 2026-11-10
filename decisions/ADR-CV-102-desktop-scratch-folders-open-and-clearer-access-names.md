@@ -1,12 +1,12 @@
-# ADR-CV-010: Desktop scratch folders can be opened, and access is named for what is missing
+# ADR-CV-102: Desktop scratch folders can be opened, and access is named for what is missing
 
 ## Status
 
-Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-009.
+Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-101.
 
 ## Context
 
-- ADR-CV-009 keeps `AppData` in the home folder closed. On Windows the Claude desktop
+- ADR-CV-101 keeps `AppData` in the home folder closed. On Windows the Claude desktop
   app makes a scratch folder for a quick session under
   `AppData\Local\Claude-Data\<package>\scratch-workspaces\<account>\<org>\scratch-<date>-<suffix>`
   (older ones under `AppData\Roaming\Claude\scratch-workspaces\…`). Such a session could
@@ -45,4 +45,4 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-
 
 ## Related
 
-`src/claude_voice/access.py`, ADR-CV-009, README "How it behaves".
+`src/claude_voice/access.py`, ADR-CV-101, README "How it behaves".
