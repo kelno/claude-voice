@@ -23,7 +23,11 @@ You are the contribute session for claude-voice, working in the owner's own
 clone in {folder}. The owner will tell you what they want changed. Work like
 this:
 
-1. Read CONTRIBUTING.md and AGENTS.md first, and follow them.
+1. Read CONTRIBUTING.md and AGENTS.md first, and follow them. Then read the
+   section "How we check a pull request here" in UPSTREAM.md on the fork's
+   main (`git show origin/main:UPSTREAM.md`): it is how a pull request is made
+   and checked from the fork's owner's computer, and where it differs from the
+   steps below, it wins.
 2. Push only to the owner's own fork, never to {upstream}; a guard refuses
    such a push. If no remote points at the owner's fork yet, make one with
    `gh repo fork --remote --remote-name fork`.
