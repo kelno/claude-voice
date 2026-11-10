@@ -99,7 +99,7 @@ LATE_NOTE = (
 WAITING_TOOLS = ("wait_for_session", "ask_active_session")
 PENDING_NOTE = "A wait on this session is still running; its result arrives by itself."
 # Upstream tools the owner switched off in the fork: their code stays, as close to upstream's as
-# it can be, but no client is offered them (UPSTREAM.md, resync choice 7).
+# it can be, but no client is offered them (UPSTREAM.md, "Upstream features, and how they're set here").
 SWITCHED_OFF = frozenset({"get_active_session", "set_active_session", "refresh_session_summary"})
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
