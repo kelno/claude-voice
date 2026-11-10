@@ -37,6 +37,7 @@ decision nobody writes down.
 | [ADR-CV-006](ADR-CV-006-other-machines-through-the-laptop.md) | Reach other machines through the laptop, with a small agent on each | Accepted |
 | [ADR-CV-007](ADR-CV-007-a-phone-agent-and-voice-calls.md) | A phone joins the hub as an agent, under privacy rules every machine keeps | Proposed |
 | [ADR-CV-008](ADR-CV-008-approvals-reach-the-phone-when-the-app-is-closed.md) | Approvals reach the phone when the app is closed | Accepted |
+| [ADR-CV-009](ADR-CV-009-main-keeps-the-quality-levels.md) | Main keeps the quality levels, so a pull request never records them | Accepted |
 | [ADR-CV-009](ADR-CV-009-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-010 |
 | [ADR-CV-010](ADR-CV-010-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-011](ADR-CV-011-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-012 |

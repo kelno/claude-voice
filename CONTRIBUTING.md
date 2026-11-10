@@ -40,8 +40,7 @@ Docker and about two minutes. Run it when you touch the README's first steps,
 the setup check or the packaging.
 
 The ratchet takes about ten minutes, because it switches every rule off in
-turn; `--skip-mutation` gives a quick look that keeps the recorded mutation
-figures.
+turn; `--skip-mutation` gives a quick look that keeps main's mutation figures.
 
 Run them after the last edit, not before it. A file edited after the format
 gate ran will fail in continuous integration, which is the cheapest possible
@@ -50,7 +49,7 @@ way to learn that the gates are not a ritual performed once.
 ## The quality ratchet
 
 The gates above pass or fail. None of them notices the code slowly getting
-worse, so `quality.json` at the root records the levels it has reached:
+worse, so the ratchet compares these levels with the ones main has reached:
 
 | Measure | Better is |
 | --- | --- |
@@ -71,20 +70,21 @@ The layers, from the bottom: foundations (`procs`, `config`, `store`, `metrics`,
 given its layer in `LAYERS`. When code is needed twice, it goes into a function both
 places call, rather than being copied.
 
-`scripts/ratchet.py check` fails a change that makes any of them worse than the
-base branch, and a change whose `quality.json` does not record the levels it
-reached. So a change that improves something runs
-`uv run python scripts/ratchet.py update` and commits `quality.json` with it,
-and the level can never slip back. A change that must make a measure worse
-says so in its pull request, on a line of its own:
+`scripts/ratchet.py check` fails a change that makes any of them worse than
+main. Main's levels are measured by continuous integration after every merge
+and kept with that run, so a pull request never records them, and merging one
+never makes another stale ([ADR-CV-009](decisions/ADR-CV-009-main-keeps-the-quality-levels.md)).
+When main's levels for that commit are missing, the check measures the commit
+itself, which takes about ten minutes more. A change that must make a measure
+worse says so in its pull request, on a line of its own:
 
 <!-- not run: an example line in a pull request -->
 ```
 Ratchet-Exception: coverage - the module it covered was deleted
 ```
 
-and records the new level with `update` like any other change. The time budget
-is a limit, not a level: it changes only by hand, in `quality.json`.
+The time budget is a limit, not a level: it is the one thing in `quality.json`,
+and it changes only by hand.
 
 ## How a change is made
 
@@ -131,7 +131,7 @@ cannot be tidied at the end by squashing it, which is why `committed.toml`
 refuses a fixup and a work-in-progress commit rather than trusting you to clean
 up later.
 
-## Three more rules for every change
+## Five more rules for every change
 
 - **One pull request per topic.** Several small changes on one subject go
   together; changes on different subjects go apart, so each can be reviewed,
@@ -148,6 +148,44 @@ up later.
 - **Credit the people whose work a change builds on.** A commit that takes in
   someone else's work keeps them as author, or names them with a
   `Co-Authored-By:` line.
+- **Say why a test or a mutation row is removed or weakened.** The tests and
+  the mutation rows are what stop a later change from quietly breaking a rule,
+  whoever wrote it. A pull request that deletes one, loosens what it checks, or
+  points a row at something easier says why in its description, so the reviewer
+  decides it on purpose.
+- **Ask the person who wrote the lines you change.** When a pull request
+  changes code or tests a contributor outside the project wrote, mention them
+  in it, so they can say if something they relied on breaks. They are asked,
+  not given a veto; the maintainer decides.
+
+## When someone else's change comes in
+
+A contribution from outside the project is reviewed as it is. Questions and
+wishes go in a comment on the pull request. Nobody pushes to the contributor's
+branch, except a small fix they have agreed to, and their commits keep them as
+author.
+
+**When it lands, thank them in the pull request, and say what was good.** Name
+what made it easy to review or to trust, and why it helped, so they know what
+to do again. Add a tip if there is one worth having. A bare "merged, thanks"
+tells them nothing they can use.
+
+**Then learn from it.** When a contribution does something better than our own
+changes do, it goes in the list below, and our own pull requests are held to it
+from then on. The `review-contribution` skill walks an assistant through all
+of it in order, with a sandbox for running the contributor's code.
+
+What contributions have taught us:
+
+- **Measure it in the real product before writing a rule about it.** The rule
+  for tools' first lines rests on what the Claude app was seen to show, not on
+  what its documentation says (#108).
+- **A new rule comes with the check that enforces it.** A note asks to be
+  remembered; a test cannot be forgotten (#108).
+- **Turn a slip into a check, once.** A mutation row that broke the code was
+  found by hand; now a test refuses any such row (#129).
+- **Say what was not checked.** A pull request that names the part with no test
+  of its own saves the reviewer from finding it (#129).
 
 ## Sending a change from your own clone
 

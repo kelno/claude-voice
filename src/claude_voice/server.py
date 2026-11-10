@@ -637,6 +637,7 @@ def build_server(
     find_program: Callable[[str], str | None] = procs.find,
     desktop_env: Mapping[str, str] | None = None,
     ci_status: Callable[[str], dict[str, Any] | None] = software.latest_run,
+    kept_levels: Callable[[str], list[dict[str, Any]]] = software.kept_levels,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
 ) -> MCPServer:
@@ -1355,7 +1356,7 @@ def build_server(
         report = {
             "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
             "repos": [
-                software.repo_report(name, f"https://github.com/{repo}", folder, ci_status(repo))
+                software.repo_report(name, f"https://github.com/{repo}", folder, ci_status(repo), kept_levels(repo))
                 for name, repo, folder in listed
             ],
         }

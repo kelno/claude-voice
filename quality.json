@@ -1,55 +1,6 @@
 {
-  "complexity": {
-    "claude_voice/access.py": 10,
-    "claude_voice/agent.py": 9,
-    "claude_voice/api.py": 13,
-    "claude_voice/cli.py": 14,
-    "claude_voice/config.py": 17,
-    "claude_voice/confirm.py": 5,
-    "claude_voice/confirm_page.py": 4,
-    "claude_voice/detail.py": 40,
-    "claude_voice/doctor.py": 19,
-    "claude_voice/events.py": 15,
-    "claude_voice/fleet.py": 13,
-    "claude_voice/fork.py": 10,
-    "claude_voice/gitstatus.py": 13,
-    "claude_voice/guard.py": 10,
-    "claude_voice/launch.py": 10,
-    "claude_voice/machines.py": 6,
-    "claude_voice/metrics.py": 7,
-    "claude_voice/oauth.py": 7,
-    "claude_voice/passkeys.py": 7,
-    "claude_voice/permissions.py": 12,
-    "claude_voice/phone_hook.py": 17,
-    "claude_voice/plugins.py": 9,
-    "claude_voice/procs.py": 2,
-    "claude_voice/renames.py": 5,
-    "claude_voice/roles.py": 12,
-    "claude_voice/server.py": 47,
-    "claude_voice/sessions.py": 4,
-    "claude_voice/software.py": 11,
-    "claude_voice/store.py": 13,
-    "claude_voice/tailnet.py": 4,
-    "claude_voice/titles.py": 4,
-    "claude_voice/transcripts.py": 19,
-    "claude_voice/tree.py": 17,
-    "claude_voice/updater.py": 13,
-    "claude_voice/usage.py": 11
-  },
-  "coverage": 92.96,
-  "cycles": 0,
-  "duplication": 1.55,
-  "layer_violations": 0,
-  "lint_errors": 0,
-  "mutation": {
-    "killed": 0,
-    "total": 1
-  },
   "test_budget": {
     "seconds": 180,
     "tolerance": 0.25
-  },
-  "test_seconds": 133.5,
-  "tests": 704,
-  "type_errors": 0
+  }
 }
