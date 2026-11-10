@@ -227,3 +227,10 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - The fork's `CLAUDE.md` (fork "Check how far behind upstream the fork is at each session start"): each session fetches upstream and offers the owner a resync when the fork is behind, the last sync being the merge base of `main` and `upstream/main`. It sits after upstream's own pointers, under "The owner's fork". The same section (fork "Say the fork is AI-managed") says the fork is AI-managed, maintained by kelno's own agents under kelno's private rules, and that for those agents the gates and the ratchet run as slow checks rather than before every push.
 - The guide's line saying the bridge is the owner's own project, so a change to it is a fair suggestion when a tool gets in the way (fork "Tell the relay the bridge is the owner's own project", then "Call the change feedback names a lead, not the fix"): true only of this fork.
 - The commit-msg hook calls `python3`, which the python.org installer doesn't create on Windows (only `python.exe`), so the hook fails there unless something else provides `python3`. Fixed on this PC outside the repo, with a `python3.exe` link. Worth a one-line issue at most, not a fork change.
+
+## Merged upstream
+
+Our pull requests upstream merged, newest first.
+
+- [#109](https://github.com/roykollensvendsen/claude-voice/pull/109), `wait_for_session` (2026-11-10, `08fe40c`): a caller waits for a session's turn to end, or for it to need its user, without sending anything. Three rounds of review; the fork's version goes further without `after` (`UPSTREAM.md`, "Same tools, different behaviour").
+- [#108](https://github.com/roykollensvendsen/claude-voice/pull/108), each tool says what it is for in its first line (2026-11-10, `a3fa2ce`): every description opens with one whole sentence of at most 78 characters, since the Claude app shows only that much until a tool is loaded. Upstream keeps its own words for the lines; the author plans a follow-up for the connector-name prefix the app later put inside that cut.
