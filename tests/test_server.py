@@ -385,7 +385,7 @@ async def test_active_sessions_are_the_running_claude_code_processes(tmp_path, r
             "name": "app-fix",
             "folder": "app",
             "status": "busy",
-            "kind": "interactive",
+            "kind": "terminal",
             "minutes_since_update": 2,
         }
     ]
