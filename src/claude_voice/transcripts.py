@@ -61,27 +61,37 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool 
     for m in messages:
         content = m.message.get("content")
         if m.type == "user":
-            texts = (
-                [content]
-                if isinstance(content, str)
-                else [b.get("text", "") for b in content or [] if b.get("type") == "text"]
-            )
-            text = "\n".join(t for t in texts if t.strip())
+            text = _prompt_text(content)
             if text:
                 turns.append(
                     {"role": "user", "text": text, **({"origin": getattr(m, "origin", None)} if origins else {})}
                 )
         elif m.type == "assistant" and isinstance(content, list):
-            for b in content:
-                if b.get("type") == "tool_use":
-                    pending_tools.append(b.get("name", "?"))
-                elif b.get("type") == "text" and b.get("text", "").strip():
-                    text = b["text"]
-                    if getattr(m, "error", None) == "model_not_found":
-                        text += MODEL_NOT_FOUND_NOTE
-                    turns.append({"role": "assistant", "text": text, "tools": pending_tools})
-                    pending_tools = []
+            pending_tools = _assistant_turns(content, pending_tools, turns, getattr(m, "error", None))
     return turns if limit is None else turns[-limit:]
+
+
+def _prompt_text(content: Any) -> str:
+    """A prompt's words: the string itself, or its text blocks joined, leaving out blank ones."""
+    texts = (
+        [content] if isinstance(content, str) else [b.get("text", "") for b in content or [] if b.get("type") == "text"]
+    )
+    return "\n".join(t for t in texts if t.strip())
+
+
+def _assistant_turns(
+    content: list[Any], pending_tools: list[str], turns: list[dict[str, Any]], error: str | None = None
+) -> list[str]:
+    """Add each of Claude's texts to turns, with the tools used since the last; return the tools still waiting.
+    A text Claude Code wrote for a model it doesn't know says what the caller can do about it."""
+    for b in content:
+        if b.get("type") == "tool_use":
+            pending_tools.append(b.get("name", "?"))
+        elif b.get("type") == "text" and b.get("text", "").strip():
+            text = b["text"] + (MODEL_NOT_FOUND_NOTE if error == "model_not_found" else "")
+            turns.append({"role": "assistant", "text": text, "tools": pending_tools})
+            pending_tools = []
+    return pending_tools
 
 
 def search_turns(
@@ -274,16 +284,26 @@ def open_question(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) 
             entry = json.loads(line)
         except ValueError:
             continue
-        for block in (entry.get("message") or {}).get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_use" and block.get("name") == "AskUserQuestion":
-                asked[str(block.get("id"))] = block.get("input") or {}
-            elif block.get("type") == "tool_result":
-                asked.pop(str(block.get("tool_use_id")), None)
+        _track_questions(entry, asked)
     if not asked:
         return None
-    questions = list(asked.values())[-1].get("questions") or [{}]
+    return _first_question(list(asked.values())[-1])
+
+
+def _track_questions(entry: dict[str, Any], asked: dict[str, Any]) -> None:
+    """Note each question one transcript line asks, and forget each one it answers."""
+    for block in (entry.get("message") or {}).get("content") or []:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "tool_use" and block.get("name") == "AskUserQuestion":
+            asked[str(block.get("id"))] = block.get("input") or {}
+        elif block.get("type") == "tool_result":
+            asked.pop(str(block.get("tool_use_id")), None)
+
+
+def _first_question(asked: dict[str, Any]) -> dict[str, Any]:
+    """The text and the option labels of the first question in one AskUserQuestion call."""
+    questions = asked.get("questions") or [{}]
     first = questions[0] if isinstance(questions[0], dict) else {}
     return {
         "text": str(first.get("question", "")),

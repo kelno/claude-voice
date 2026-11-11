@@ -13,6 +13,11 @@ and `fix`. Run it after each step, do the `fix` of the first required check that
 fails, and stop when `ready` is `true`. Add `--transport http` once the person
 wants to reach the bridge from a phone.
 
+A check named `env_file` is a warning about one line of
+`~/.config/claude-voice/env`. It names the line and its KEY, and its `fix` says
+how to quote the value. Ask the person to make that edit; never open the file
+yourself, because it holds the login secret.
+
 ## What only the person can do
 
 - **Sign in to Claude.** `/login` inside `claude` opens a browser for their own
@@ -50,6 +55,16 @@ what to add on the hub. Then:
 - **Ask before installing** the agent on a machine, before `sudo` of any kind
   there, and before keeping a shell login on it once the agent is set up.
 
+## Talking to the person
+
+- **When a tool's answer says what to do next, say that step.** Read it out or
+  pass it on as it is; never swallow it into "it failed". The same holds for
+  errors you write: name what is wrong and the next step (the `write-plugin`
+  skill, through [the plugin standard](docs/plugin-standard.md), A.4).
+- **A command that asks for input is the person's to type.** Give it to them to
+  run in a plain terminal, such as `claude-voice plugins approve <name>`. Never
+  run it for them, and never pipe an answer into it.
+
 ## When something fails
 
 - **`check` is not ready:** do its `fix`.
@@ -86,6 +101,13 @@ If you are a session working on this repository, rather than installing it:
   levels, and the file holds only the time budget.
 - Push only to your owner's fork; a pull request goes to
   `roykollensvendsen/claude-voice` with `gh pr create --repo`.
+- You may rebase your own pull-request branch and push it again, with
+  `git push --force-with-lease` only. You may also run
+  `gh pr update-branch <n> --rebase` on your own pull request. Never use plain
+  `--force` or `-f`. Never force-push `main`, `master`, another protected
+  branch, or anyone else's branch. The permission rules refuse the main and
+  master forms, and GitHub's branch protection refuses them too
+  ([docs/permissions.md](docs/permissions.md)).
 - Never rename or remove a tool or field that Hermes or the voice app uses.
 - When an outside contributor's pull request lands, thank them in it and say
   concretely what was good. Hold your own pull requests to what contributions

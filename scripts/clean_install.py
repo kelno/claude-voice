@@ -17,10 +17,10 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-IMAGE = "ubuntu:24.04"
+IMAGE = "buildpack-deps:noble-scm"  # Ubuntu 24.04 with curl, certificates and git already in it
 SOURCE = "git+https://github.com/roykollensvendsen/claude-voice"
 # What any desktop already has; the README assumes these and nothing more.
-BASE = "apt-get update -qq && apt-get install -y -qq curl ca-certificates git >/dev/null"
+BASE = "command -v curl git >/dev/null"  # no package download, so a package-server outage cannot fail the check
 
 
 def steps() -> str:

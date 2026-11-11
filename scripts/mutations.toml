@@ -184,6 +184,12 @@ find = 'if current is not None and not current\.done\(\):'
 replace = 'if False:'
 
 [[rule]]
+name = "a failed summary says what to do next"
+file = "src/claude_voice/detail.py"
+find = 'self\.errors\[sid\] = f"\{reason\}\. \{RETRY\}"'
+replace = 'self.errors[sid] = reason'
+
+[[rule]]
 name = "starting the same session twice gives back the one already running"
 file = "src/claude_voice/server.py"
 find = 'if same is not None:  # a retry after an answer lost on the way must not open a second window'
@@ -276,7 +282,7 @@ replace = 'if False:'
 [[rule]]
 name = "a plugins own instructions reach the voice"
 file = "src/claude_voice/plugins.py"
-find = 'if plugin\.instructions and plugin\.instructions not in'
+find = 'if rules and rules not in'
 replace = 'if False:'
 
 [[rule]]
@@ -286,9 +292,21 @@ find = 'if found\.get\("inputs"\) != input_fingerprint\(spec, listing\):'
 replace = 'if False:'
 
 [[rule]]
+name = "what the voice reads is covered by the approval"
+file = "src/claude_voice/plugins.py"
+find = 'if found\.get\("reads"\) != reads_fingerprint\(spec, listing\):'
+replace = 'if False:'
+
+[[rule]]
+name = "plugins list says approved only when a restart would offer it"
+file = "src/claude_voice/cli.py"
+find = 'if why == "started":'
+replace = 'if True:'
+
+[[rule]]
 name = "a changed read only mark needs approving again"
 file = "src/claude_voice/plugins.py"
-find = 'return found\.get\("marks"\) in \(None, mark_fingerprint\(spec, listing\)\)'
+find = 'return found\.get\("marks"\) == mark_fingerprint\(spec, listing\)'
 replace = 'return True'
 
 [[rule]]
@@ -296,12 +314,6 @@ name = "a new command or folder is never approved by voice"
 file = "src/claude_voice/plugins.py"
 find = 'return found\.get\("place"\) == place_fingerprint\(spec\) or'
 replace = 'return True'
-
-[[rule]]
-name = "an approval from before developer mode is upgraded only when nothing differs"
-file = "src/claude_voice/plugins.py"
-find = 'if found\.get\("runs"\) != fingerprint\(spec\) or found\.get\("inputs"\) != input_fingerprint'
-replace = 'if False:'
 
 [[rule]]
 name = "only a clean checkout level with its followed branch is approved by voice"
@@ -622,6 +634,12 @@ find = 'if file.exists\(\) and not backup.exists\(\):'
 replace = 'if file.exists():'
 
 [[rule]]
+name = "a retired allow rule is removed"
+file = "src/claude_voice/permissions.py"
+find = 'kept = \[rule for rule in kept if rule not in rules\.retired\]'
+replace = 'kept = kept'
+
+[[rule]]
 name = "a plugin that could not be listed is reported as not started never as changed tools"
 file = "src/claude_voice/plugins.py"
 find = 'if plugin\.unlisted is not None:'
@@ -752,4 +770,210 @@ replace = 'return a is not None and a == session'
 name = "names that differ only by capitals are all refused unless one is exact"
 file = "src/claude_voice/renames.py"
 find = 'if len\(found\) > 1:'
+replace = 'if False:'
+
+[[rule]]
+name = "a folder in an org file must be relative"
+file = "src/claude_voice/org.py"
+find = 'if not _relative\(text\):'
+replace = 'if False:'
+
+[[rule]]
+name = "an org file that cannot be reached is a problem not a crash"
+file = "src/claude_voice/org.py"
+find = 'except PermissionError:'
+replace = 'except ZeroDivisionError:'
+
+[[rule]]
+name = "the deepest matching folder places a session"
+file = "src/claude_voice/org.py"
+find = 'if _under\(folder, cwd\) and \(best is None or len\(folder.parts\) > best\[0\]\):'
+replace = 'if _under(folder, cwd) and best is None:'
+
+[[rule]]
+name = "an address that fits several sessions is answered with the choices"
+file = "src/claude_voice/org.py"
+find = 'if len\(hits\) > 1:'
+replace = 'if False:'
+
+[[rule]]
+name = "a role naming a session that is not running is warned about"
+file = "src/claude_voice/org.py"
+find = 'if name not in running:'
+replace = 'if False:'
+
+[[rule]]
+name = "a forced push can never reach main or master"
+file = "src/claude_voice/permissions.py"
+find = 'deny \+= \[f"Bash\(\{push\}\)" for push in pushes\]'
+replace = 'deny += []'
+
+[[rule]]
+name = "the bridge answers as soon as it has started, while its first look runs behind"
+file = "src/claude_voice/server.py"
+find = 'await asyncio\.to_thread\(check\)'
+replace = 'check()'
+
+[[rule]]
+name = "a question about news does not wait for a look already under way"
+file = "src/claude_voice/server.py"
+find = 'if not looking\.acquire\(blocking=False\):'
+replace = 'if not looking.acquire():'
+
+[[rule]]
+name = "the tree is built by one caller at a time"
+file = "src/claude_voice/tree.py"
+find = 'with self\._building:'
+replace = 'if True:'
+
+[[rule]]
+name = "an event published from another thread reaches a waiting stream at once"
+file = "src/claude_voice/api.py"
+find = 'loop\.call_soon_threadsafe\(self\._put, q, \(event, data\)\)'
+replace = 'self._put(q, (event, data))'
+
+[[rule]]
+name = "without an owners rules file the voice gets the general rules only"
+file = "src/claude_voice/server.py"
+find = 'if file is None:'
+replace = 'if False:'
+
+[[rule]]
+name = "an owners rules file that cannot be read is logged and the bridge runs on"
+file = "src/claude_voice/server.py"
+find = 'except OSError as exc:'
+replace = 'except ZeroDivisionError as exc:'
+
+[[rule]]
+name = "an owners rules file over eight kilobytes is cut"
+file = "src/claude_voice/server.py"
+find = 'if len\(raw\) > OWN_RULES_BYTES:'
+replace = 'if False:'
+
+[[rule]]
+name = "the owners own rules file reaches the voice"
+file = "src/claude_voice/server.py"
+find = 'return f"\{INSTRUCTIONS\}\\n\{OWN_RULES_HEADING\}\\n\{own\}\\n"'
+replace = 'return INSTRUCTIONS'
+
+[[rule]]
+name = "the software page answers at once from the report it keeps"
+file = "src/claude_voice/software.py"
+find = 'report = self\._report$'
+replace = 'report = self._build()'
+
+[[rule]]
+name = "before the first build the software page is empty and says it is refreshing"
+file = "src/claude_voice/software.py"
+find = 'self\._refreshing = True$'
+replace = 'self._refreshing = False'
+
+[[rule]]
+name = "a failed refresh keeps the report it had"
+file = "src/claude_voice/software.py"
+find = 'report = self\._report$'
+occurrence = 2
+replace = 'report = {"repos": []}'
+
+[[rule]]
+name = "only one software build runs at a time"
+file = "src/claude_voice/software.py"
+find = 'if not self\._building\.acquire\(blocking=False\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a moved main starts a new build"
+file = "src/claude_voice/software.py"
+find = 'if self\._due\(\) or self\._moved\(heads\):'
+replace = 'if self._due():'
+
+[[rule]]
+name = "a quote that is never closed is flagged"
+file = "src/claude_voice/envfile.py"
+find = 'if end < 0:'
+replace = 'if False:'
+
+[[rule]]
+name = "an unquoted value with a space is flagged"
+file = "src/claude_voice/envfile.py"
+find = 'if any\(c\.isspace\(\) for c in value\):'
+replace = 'if False:'
+
+[[rule]]
+name = "an unquoted value with a shell character is flagged"
+file = "src/claude_voice/envfile.py"
+find = 'if _SPECIAL\.search\(value\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a line that is not key equals value is flagged"
+file = "src/claude_voice/envfile.py"
+find = 'if match is None:'
+replace = 'if False:'
+
+[[rule]]
+name = "a misread env file line is a warning and never stops the check"
+file = "src/claude_voice/cli.py"
+find = 'add\("env_file", False, problem\.detail, problem\.fix, required=False\)'
+replace = 'add("env_file", False, problem.detail, problem.fix, required=True)'
+
+[[rule]]
+name = "the same sessions always get the same hint id"
+file = "src/claude_voice/hints.py"
+find = 'joined = ",".join\(sorted\(sessions\)\)'
+replace = 'joined = ",".join(sessions)'
+
+[[rule]]
+name = "a hint holds two sessions or more"
+file = "src/claude_voice/hints.py"
+find = 'return len\(sessions\) >= 2'
+replace = 'return len(sessions) >= 1'
+
+[[rule]]
+name = "a worktree is grouped with its repository"
+file = "src/claude_voice/hints.py"
+find = 'path = PurePath\(\*parts\[:i\]\)'
+replace = 'pass'
+
+[[rule]]
+name = "the project root is no shared folder"
+file = "src/claude_voice/hints.py"
+find = 'if path == top:'
+replace = 'if False:'
+
+[[rule]]
+name = "a name prefix ends in a dash and is at least four characters"
+file = "src/claude_voice/hints.py"
+find = 'return \[text\[: i \+ 1\] for i in range'
+replace = 'return [text[: i + 1] for i in range(len(text) - 1, -1, -1) if text[i] == "-"]'
+
+[[rule]]
+name = "only sessions in no programme are hinted"
+file = "src/claude_voice/hints.py"
+find = 'left = \{str\(r\["id"\]\): r for r in rows if r.get\("programme"\) is None\}'
+replace = 'left = {str(r["id"]): r for r in rows}'
+
+[[rule]]
+name = "the strongest reason places a session first"
+file = "src/claude_voice/hints.py"
+find = 'reasons: tuple\[Reason, \.\.\.\] = \(_by_messages, _by_folder, _by_prefix\)'
+replace = 'reasons: tuple[Reason, ...] = (_by_prefix, _by_folder, _by_messages)'
+
+[[rule]]
+name = "a session is in one hint at most"
+file = "src/claude_voice/hints.py"
+find = 'left\.pop\(sid\)'
+replace = 'left.get(sid)'
+
+[[rule]]
+name = "a message is counted once, where it was read"
+file = "src/claude_voice/tree.py"
+find = 'if kind != "received":'
+replace = 'if False:'
+
+[[rule]]
+name = "only messages inside the window are counted"
+file = "src/claude_voice/tree.py"
+find = 'if when is not None and when < cutoff:'
+occurrence = 2
 replace = 'if False:'

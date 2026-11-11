@@ -259,6 +259,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "search_session_history",
         "update_changes",
         "session_tree",
+        "org_chart",
         "health",
         "check_dependencies",
         "digest_session",
@@ -510,6 +511,82 @@ async def test_a_switched_off_upstream_tool_is_offered_to_no_one_but_keeps_its_p
         "developer_mode_off",
         "plugin_approve_request",
         "plugin_approve_confirm",
+        "org_chart",
     }
     assert not SWITCHED_OFF & names
     assert all(titles.load().get(name) for name in SWITCHED_OFF)
+
+
+def slow_first_look(monkeypatch, seconds=2.5):
+    """Make every tree build take `seconds`, as the first one does on a busy machine, where it
+    reads each running session's whole conversation. Returns an event set once one has begun."""
+    import threading
+    import time
+
+    from claude_voice import transcripts
+    from claude_voice.tree import SessionTree
+
+    began = threading.Event()
+    build = SessionTree.build
+
+    def slow(self):
+        began.set()
+        time.sleep(seconds)
+        return build(self)
+
+    async def warm():
+        return None
+
+    monkeypatch.setattr(SessionTree, "build", slow)
+    monkeypatch.setattr(transcripts.shared_reader(), "warm", warm)
+    return began
+
+
+def watched(tmp_path, root, **extra):
+    m = SessionManager(Store(tmp_path / "bridge.db"), project_root=root, client_factory=FakeClaude())
+    return build_server(m, live_dir=tmp_path / "live", projects_dir=tmp_path / "projects", watch_interval=60, **extra)
+
+
+async def test_the_bridge_answers_as_soon_as_it_has_started_while_its_first_look_runs_behind(
+    tmp_path, root, monkeypatch
+):
+    import time
+
+    slow_first_look(monkeypatch)
+    started = time.monotonic()
+    async with Client(watched(tmp_path, root)) as client:
+        await call(client, "guide")
+        answered = time.monotonic() - started
+        for _ in range(100):  # the first look still happens, behind
+            looked = (await call(client, "health"))["watcher"]["last_check_at"]
+            if looked:
+                break
+            await asyncio.sleep(0.05)
+    assert answered < 1.5  # well under the 2.5 s look, with room for a slow Windows runner
+    assert looked
+
+
+async def test_a_question_about_news_does_not_wait_for_a_look_already_under_way(tmp_path, root, monkeypatch):
+    import time
+
+    from claude_voice import api
+
+    # The fork has no whats_new: the news stream of the companion API is what asks for news.
+    began = slow_first_look(monkeypatch)
+    secret = "s3cret-token-for-the-news-stream"
+    store = Store(tmp_path / "bridge.db")
+    oauth = OAuthProvider(store, secret, "http://127.0.0.1:8811", static_token=secret)
+    server = watched(tmp_path, root, oauth=oauth)
+    app = build_app(server)
+    transport = httpx.ASGITransport(app=app)
+    async with Client(server), httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8811") as web:
+        await asyncio.to_thread(began.wait, 5)
+        asked = time.monotonic()
+        headers = {"Authorization": f"Bearer {secret}"}
+        stream = asyncio.create_task(web.get("/api/v1/events?max_events=1", headers=headers))
+        await asyncio.sleep(0.2)
+        api.HUB.publish("ping", {})
+        reply = await asyncio.wait_for(stream, 10)
+        answered = time.monotonic() - asked
+    assert reply.status_code == 200 and "event: ping" in reply.text
+    assert answered < 1.5  # well under the 2.5 s look, with room for a slow Windows runner

@@ -211,6 +211,22 @@ $ env -u CLAUDE_VOICE_ALLOW_API_KEY CLAUDE_VOICE_ROOT=src ANTHROPIC_API_KEY=sk-a
 claude-voice: ANTHROPIC_API_KEY is set, so Claude would bill the API instead of your subscription. Unset it, or set CLAUDE_VOICE_ALLOW_API_KEY=1 if that is intended.
 ```
 
+`check` also reads the environment file the service loads,
+`~/.config/claude-voice/env`, when it exists. systemd reads that file, and so
+does a shell that runs `set -a; . ~/.config/claude-voice/env`. A line the two
+would read differently is a warning, not a stop. An unquoted value with a space
+is one: the shell runs its second word as a command. So is an unquoted shell
+character (`` $ ` ; & | < > ( ) `` and quotes, a backslash, or `#` after a
+space), an unclosed quote, or a line that is not `KEY=value`. Each warning names
+the line and its KEY, never the value:
+
+<!-- not run: needs an environment file with a mistake in it -->
+```
+claude-voice: note: env line 4 (SOME_KEY): the value has a space and no quotes. Put the value in double quotes: SOME_KEY="…"
+```
+
+The bridge logs the same lines as warnings when it starts, and starts anyway.
+
 `serve` runs it. Over HTTP it refuses to start without a login secret:
 
 ```console
@@ -242,6 +258,7 @@ also the default.
 | `CLAUDE_VOICE_UI_DIR` | — | a folder with a companion app's built files, served at `/ui/` |
 | `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
+| `CLAUDE_VOICE_ENV_FILE` | `~/.config/claude-voice/env` | the environment file `check` and the bridge look over for lines a shell would misread |
 | `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` | `3600` | how long a sign-in's access token lasts before the app must refresh it; set it to a week (`604800`) on a computer that sleeps, since the Claude app gives a connector up after about an hour of failed refreshes |
 
 ### Signing in
@@ -358,6 +375,8 @@ or to keep the clones elsewhere, write `~/.config/claude-voice/config.toml`
 
 <!-- not run: a configuration example, not commands -->
 ```toml
+voice_instructions_file = "~/.config/claude-voice/voice-instructions.md"  # your own rules for the voice
+
 [repos]
 claude_voice = "roykollensvendsen/claude-voice"        # the project, on GitHub
 claude_voice_ui = "roykollensvendsen/claude-voice-ui"
@@ -395,6 +414,17 @@ section: the Claude app drops a tool call after about 30 seconds, so it gets 20
 else gets `default`, 60. A message that takes Claude Code longer to deliver is
 answered "sending" and delivered in the background, and a wait for a session's
 answer ends at the budget with "still working".
+
+Your own rules for the voice go in the file `voice_instructions_file` names,
+outside this repository: which session takes your proposals, which role answers
+small questions, how you like to be spoken to. The bridge adds its text to the
+voice's instructions under "The owner's own rules:". Keep the setting at the top
+of the file, before any `[section]`, or TOML reads it as part of that section.
+Without it the voice gets the general rules only. A file that cannot be read
+never stops the bridge: the log names the path and what to do. Only the first
+8 KB is used, and the log says when a file was cut. A starting point, with
+placeholders, is [docs/examples/voice-instructions.md](docs/examples/voice-instructions.md).
+The file is read when the bridge starts, so restart it after a change.
 
 The update works in `claude_voice`. The contribute session works in
 `contribute`, and sends its pull request to `repos.claude_voice`; it may push
@@ -444,11 +474,14 @@ clients are told the tool list changed:
 claude-voice plugins approve garage
 ```
 
-The approval covers exactly that command, folder and list of tools, and what each
-tool takes as the plugin describes it then; once approved, the command starts the
-plugin and prints those inputs. Change any of them, or let the plugin give a tool a
-new input, and it must be approved again: until then the bridge offers none of its
-tools and logs why. The bridge never holds a plugin's secrets:
+The approval covers exactly that command, folder and list of tools, what each tool
+takes as the plugin describes it then, and every word the voice reads from the plugin:
+each tool's description and the plugin's own instructions. Once approved, the command
+starts the plugin and prints those inputs and words. Change any of them, or let the
+plugin give a tool a new input or rewrite what a tool or its instructions say, and it
+must be approved again: until then the bridge offers none of its tools and logs why.
+`claude-voice plugins list` starts each plugin and checks it the same way, so it says
+`approved` only when a restart would offer the plugin's tools. The bridge never holds a plugin's secrets:
 the plugin reads its own, and starts with only a small default environment. Each
 plugin runs as a process of its own, started again after a failure, and a call
 that runs past `timeout` is cut off. Its tools reach the voice named after it
@@ -464,7 +497,8 @@ Once a plugin is approved, three things can happen to it
   its tools within 60 seconds, or its own `timeout` when that is longer. If it does
   not, it counts as not started, never as changed: the one running stays offered,
   and the voice says to try again.
-- **A tool added, removed, taking new inputs, or with a changed read-only mark.** You
+- **A tool added, removed, taking new inputs, with a changed read-only mark, or with
+  new words for the voice in its description or the plugin's instructions.** You
   can type the approval as above, or approve it by voice in **developer mode**. You
   switch that on by voice: the voice asks, you say yes. It ends by itself after eight
   hours, can be switched off at once from anywhere, and `health` and the work page
@@ -475,10 +509,10 @@ Once a plugin is approved, three things can happen to it
   files out of the plugin's folder or list them in its `.git/info/exclude`.
 - **A new plugin, or a new command or folder.** Always typed, as above.
 
-An approval typed before developer mode existed recorded less about the plugin. The
-first time the bridge finds the plugin exactly as that approval allowed, it completes
-the approval by itself and logs `plugin <name> approval upgraded`; from then on a
-changed tool can be approved by voice. Nothing more is allowed than before.
+An approval written by an older version of the bridge did not cover the words the
+voice reads. So after upgrading, every plugin waits for one more approval, typed as
+above or by voice in developer mode, because its command and folder are still known.
+Until then its tools are not offered, and `claude-voice plugins list` says `tools changed`.
 
 To list them:
 

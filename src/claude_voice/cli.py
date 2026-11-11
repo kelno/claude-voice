@@ -9,14 +9,17 @@ import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from . import procs
+from . import envfile, procs
 from .server import Config, ConfigError, load_config, serve_forever
+
+if TYPE_CHECKING:
+    from .config import PluginSpec
 
 #: Every verb this command has. The documentation test requires each one to
 #: appear in a worked example, so a verb cannot be added without one.
-COMMANDS: tuple[str, ...] = ("serve", "check", "plugins", "passkey", "agent", "machines", "permissions")
+COMMANDS: tuple[str, ...] = ("serve", "check", "plugins", "passkey", "agent", "machines", "permissions", "org")
 
 SIGN_IN = (
     "Run `claude`, type /login and sign in with your Claude account, then check again. If `claude` "
@@ -42,6 +45,18 @@ def claude_code_login() -> tuple[bool, str]:
     return False, "Claude Code is not signed in"
 
 
+def _config_check_name(text: str) -> str:
+    """The check a configuration error belongs to, by the setting its message starts with."""
+    for prefix, name in (
+        ("ANTHROPIC_API_KEY", "api_key"),
+        ("CLAUDE_VOICE_ROOT", "project_root"),
+        ("CLAUDE_VOICE_TOKEN", "secret"),
+    ):
+        if text.startswith(prefix):
+            return name
+    return "configuration"
+
+
 def checks(
     env: Mapping[str, str], transport: str, login: Callable[[], tuple[bool, str]]
 ) -> tuple[Config | None, list[dict[str, Any]]]:
@@ -57,17 +72,8 @@ def checks(
         add("configuration", True, "the configuration is usable")
     except ConfigError as exc:
         text = str(exc)
-        name = (
-            "api_key"
-            if text.startswith("ANTHROPIC_API_KEY")
-            else "project_root"
-            if text.startswith("CLAUDE_VOICE_ROOT")
-            else "secret"
-            if text.startswith("CLAUDE_VOICE_TOKEN")
-            else "configuration"
-        )
         detail, _, fix = text.partition(". ")
-        add(name, False, detail, fix)
+        add(_config_check_name(text), False, detail, fix)
     names = {c["name"] for c in found}
     if "project_root" not in names:
         root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
@@ -89,6 +95,9 @@ def checks(
             "To reach it from a phone, set CLAUDE_VOICE_PUBLIC_HOSTS to the tunnel's hostname (see the README).",
             required=False,
         )
+    for problem in envfile.read(env):
+        # RULE: a misread env file line is a warning and never stops the check
+        add("env_file", False, problem.detail, problem.fix, required=False)
     return cfg, found
 
 
@@ -134,10 +143,15 @@ def main(
     permission_cmd = sub.add_parser("permissions", help="give Claude Code the voice repositories' permission rules")
     permission_cmd.add_argument("folders", nargs="*", type=Path, help="default: the clones in the settings file")
     permission_cmd.add_argument("--dry-run", action="store_true", help="say what would be added, and write nothing")
+    org_cmd = sub.add_parser("org", help="print the org chart, or check its files")
+    org_cmd.add_argument("action", nargs="?", choices=["show", "check"], default="show")
     parsed = parser.parse_args(args)
 
     if parsed.command == "permissions":
         return permissions_command(parsed.folders, parsed.dry_run, env)
+
+    if parsed.command == "org":
+        return org_command(parsed.action, env)
 
     if parsed.command == "machines":
         return machines_command(parsed.action, parsed.name, env)
@@ -222,6 +236,43 @@ def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> 
     return 0
 
 
+def _plugin_state(spec: PluginSpec) -> str:
+    """Whether a plugin is approved, checked the way a restart checks it: started, and its
+    tools and words for the voice compared with the approval."""
+    from . import plugins
+
+    _, _, why = plugins.check_one(spec)
+    # RULE: plugins list says approved only when a restart would offer it
+    if why == "started":
+        return "approved"
+    if why == "not started":
+        return "approved, but it did not start; check its command and folder"
+    return f"{why}; to approve it, run: claude-voice plugins approve {spec.name}"
+
+
+def _list_plugins(specs: list[PluginSpec]) -> int:
+    """Each plugin in the settings file, and whether a restart would offer it."""
+    if not specs:
+        sys.stdout.write("No plugins in the settings file.\n")
+    for spec in specs:
+        sys.stdout.write(f"{spec.name}: {_plugin_state(spec)}; tools {', '.join(spec.tools)}\n")
+    return 0
+
+
+def _show_approved(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> None:
+    """What the owner just approved: each tool's inputs and every word the voice reads."""
+    from . import plugins
+
+    for tool in spec.tools:
+        found = listing.get(tool)
+        sys.stdout.write(f"  {tool} takes: {plugins.takes(found['schema'])}\n" if found else f"  {tool}: not in it\n")
+        if found and found.get("description"):
+            sys.stdout.write(f"    the voice reads: {found['description']}\n")
+    rules = plugins.instructions(listing)
+    if rules:
+        sys.stdout.write(f"  {spec.name}'s rules for the voice: {rules}\n")
+
+
 def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> int:
     """List the plugins in the settings file, or approve one: the owner types its name."""
     from . import config as settings
@@ -233,12 +284,7 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> in
         sys.stderr.write(f"claude-voice: {exc}\n")
         return 1
     if action == "list":
-        if not specs:
-            sys.stdout.write("No plugins in the settings file.\n")
-        for spec in specs:
-            state = "approved" if plugins.approved(spec) else "not approved"
-            sys.stdout.write(f"{spec.name}: {state}; tools {', '.join(spec.tools)}\n")
-        return 0
+        return _list_plugins(specs)
     chosen = next((s for s in specs if s.name == name), None)
     if chosen is None:
         sys.stderr.write(f"claude-voice: no plugin {name!r} in the settings file\n")
@@ -262,9 +308,7 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> in
         sys.stdout.write(f"{spec.name} did not start, so nothing was approved. Check its command and folder.\n")
         return 1
     plugins.approve(spec, listing)
-    for tool in spec.tools:
-        found = listing.get(tool)
-        sys.stdout.write(f"  {tool} takes: {plugins.takes(found['schema'])}\n" if found else f"  {tool}: not in it\n")
+    _show_approved(spec, listing)
     sys.stdout.write(f"Approved. A running bridge offers {spec.name}'s tools within a few seconds.\n")
     return 0
 
@@ -345,6 +389,30 @@ def permissions_command(folders: list[Path], dry_run: bool, env: Mapping[str, st
             sys.stderr.write(f"claude-voice: {exc}\n")
             code = 1
     return code
+
+
+def org_command(action: str, env: Mapping[str, str]) -> int:
+    """Print the org chart as the voice hears it, or check its files (docs/org-chart.md)."""
+    from . import config as settings
+    from . import events, org, roles
+
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        cfg = settings.load(settings.FILE, own_clone=roles.own_clone(), env=env)
+    except settings.ConfigError as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
+    chart = org.load(org.known_folders(root, [cfg.paths.claude_voice, *(p.cwd for p in cfg.plugins)]))
+    live = events.read_live(home / ".claude" / "sessions")
+    if action == "show":
+        for line in org.overview(chart, live, chart.placer()) or ["No programme has an org file."]:
+            sys.stdout.write(line + "\n")
+        return 0
+    running = {str(d.get("name")) for d in live}
+    for line in org.check(chart, running):
+        sys.stdout.write(line + "\n")
+    return 1 if chart.problems else 0
 
 
 def _systemctl(command: list[str]) -> None:

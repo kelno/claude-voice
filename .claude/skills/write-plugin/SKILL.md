@@ -51,6 +51,13 @@ The owner approved this list. Each item is a lesson a plugin had to learn late.
 9. **Upstream work is public.** A pull request's text on a public fork is read
    by strangers. A security finding in someone else's code is held, unpushed,
    until the owner decides how to report it.
+10. **Every error says what is wrong and what to do next.** A refusal or failure names
+    the cause and the owner's next step, with the exact command when there is one: "The
+    SSH key is missing on the MiSTer; run ssh-copy-id again." A bare "not answering" with no
+    next step is a bug. This also applies when a quality session goes over an existing plugin.
+11. **A quality round once v1 works.** A separate quality session or helper takes the
+    plugin through the `code-quality` skill. It must be a fresh reader, not the session that
+    built it, as tv, dreame and garage had. Its findings land before the plugin counts as done.
 
 ## The plugin
 
@@ -68,7 +75,9 @@ The owner approved this list. Each item is a lesson a plugin had to learn late.
 
 1. `[plugins.<name>]` in `~/.config/claude-voice/config.toml`, with `branch` if
    its checkout follows a branch other than `main`.
-2. The owner runs `claude-voice plugins approve <name>` and types the name.
+2. The owner runs `claude-voice plugins approve <name>` and types the name. Hand it over as a
+   command for an ordinary terminal, one per plugin, never as a `!` line in Claude Code. The
+   `!` mode takes no typed answer. Say what to type when it asks: the plugin's name.
 3. A plugin newly in the settings file needs one bridge restart to be read; after
    that, the running bridge picks up each approval by itself. `health` shows the
    plugin `running` after its first call.

@@ -11,6 +11,7 @@ import logging.handlers
 import os
 import re
 import secrets
+import threading
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
@@ -43,13 +44,16 @@ from . import (
     detail,
     devmode,
     doctor,
+    envfile,
     events,
     fleet,
     fork,
     gitstatus,
+    hints,
     launch,
     machines,
     metrics,
+    org,
     passkeys,
     plugin_desk,
     plugins,
@@ -160,6 +164,8 @@ SWITCHED_OFF = frozenset(
         "developer_mode_off",
         "plugin_approve_request",
         "plugin_approve_confirm",
+        # Upstream's org chart, new at the 2026-11-12 resync: off until the owner decides.
+        "org_chart",
     }
 )
 # The states of a followed session that keep the relay waiting on it: still working on its
@@ -231,7 +237,7 @@ LOG_KEPT = 3
 # where it's needed, with a comment saying why (AGENTS.md). The app's agents load tools by search
 # and may never call guide, so the manual also comes with the first result of any MCP session that
 # hasn't read it (result_notes).
-INSTRUCTIONS = """\
+BASE_INSTRUCTIONS = """\
 Read this first, before any other call: how the claude-voice bridge is used.
 
 Roles
@@ -351,10 +357,74 @@ Missing tools
   tool gets in your way or lacks something, proposing a change to the bridge
   is a fair suggestion, and feedback you log can name that change as a lead.
 """
+# The voice's default behaviour, one named rule each, so each can later be switched on or off.
+DEFAULT_RULES: dict[str, str] = {
+    "read_next_step": "When a tool's answer says what to do next, read that step out to the user.",
+    "plain_terminal": (
+        "A command that asks the user to type something in is given to them to run in a "
+        "plain terminal; never run it for them."
+    ),
+    "delegate_unable": (
+        "When the user asks for something you cannot do yourself, such as opening a file "
+        "or running a command on the machine, never say you cannot. Send it at once to a "
+        "session that can, with send_task or message_active_session, and say briefly "
+        "that it was sent."
+    ),
+}
+
+
+def general_instructions(rules: Mapping[str, str] = DEFAULT_RULES) -> str:
+    """The instructions every owner gets: the base text, then each default rule on a line of its own."""
+    return BASE_INSTRUCTIONS + "".join(f"{sentence}\n" for sentence in rules.values())
+
+
+# Upstream's default rules are switched off here (UPSTREAM.md): the guide already says how the
+# relay treats next_step and what it passes on to a session, and one names send_task, retired here.
+# A rule the owner switches on is named in VOICE_RULES_ON.
+VOICE_RULES_ON: frozenset[str] = frozenset()
+INSTRUCTIONS = general_instructions({k: v for k, v in DEFAULT_RULES.items() if k in VOICE_RULES_ON})
+# The owner's own rules for the voice live in a file outside the repository, cut to this size.
+OWN_RULES_BYTES = 8 * 1024
+OWN_RULES_HEADING = "The owner's own rules:"
 
 
 class ConfigError(RuntimeError):
     pass
+
+
+def voice_instructions(file: Path | None) -> str:
+    """The instructions to the voice: the general ones, then the owner's own file when one is set.
+    A file that cannot be read never stops the bridge; the log says what to do."""
+    # RULE: without an owners rules file the voice gets the general rules only
+    if file is None:
+        return INSTRUCTIONS
+    try:
+        raw = file.read_bytes()
+    # RULE: an owners rules file that cannot be read is logged and the bridge runs on
+    except OSError as exc:
+        log.warning(
+            "voice_instructions_file %s could not be read (%s), so the voice has the general rules only. "
+            "Create the file, or fix or remove voice_instructions_file in config.toml.",
+            file,
+            exc.strerror or type(exc).__name__,
+        )
+        return INSTRUCTIONS
+    # RULE: an owners rules file over eight kilobytes is cut
+    if len(raw) > OWN_RULES_BYTES:
+        log.warning(
+            "voice_instructions_file %s is %d bytes, so it was cut to the first %d. "
+            "Shorten the file to keep all of it.",
+            file,
+            len(raw),
+            OWN_RULES_BYTES,
+        )
+        raw = raw[:OWN_RULES_BYTES]
+    # A file saved on Windows ends its lines with a carriage return too; the voice gets plain line ends.
+    own = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not own:
+        return INSTRUCTIONS
+    # RULE: the owners own rules file reaches the voice
+    return f"{INSTRUCTIONS}\n{OWN_RULES_HEADING}\n{own}\n"
 
 
 @dataclass
@@ -573,6 +643,7 @@ def mcp_session(ctx: Any) -> str | None:
 def result_notes(
     news: Callable[[str, str, dict[str, Any], dict[str, Any]], dict[str, str]] | None = None,
     claude_code_transcript: Callable[[], Path | None] | None = None,
+    guide: str = INSTRUCTIONS,
 ) -> Any:
     """Middleware adding notes to results: the manual to the first result of a conversation that
     hasn't called guide (a Claude app conversation by its MCP session, a Claude Code session by
@@ -628,7 +699,7 @@ def result_notes(
             # itself needs no note that it could have been skipped.
             if params.get("name") != "guide":
                 manual["guide_note"] = GUIDE_NOTE
-            manual["guide"] = INSTRUCTIONS
+            manual["guide"] = guide
             guided.setdefault(unguided, 0)
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
@@ -802,8 +873,10 @@ def build_server(
     kept_levels: Callable[..., list[dict[str, Any]]] = software.kept_levels,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
+    main_head: Callable[..., str | None] = software.head,
     work_board: work.Board | None = None,
     terminals: Terminals | None = None,
+    org_folders: list[Path] | None = None,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -885,18 +958,29 @@ def build_server(
     page_url = (oauth.public_url if oauth is not None else public_url).rstrip("/")
     owner_keys = passkeys.for_url(manager.store, page_url)
 
+    looking = threading.Lock()  # held while one look runs; the watcher and whats_new both look
+
     def check() -> None:
-        """Look at the running sessions and the tree's shape; record what changed."""
-        watcher.check()
-        version = tree.build()["version"]
-        if tree_version and tree_version[0] != version:
-            watcher.record("claude-voice", "tree_changed", version)
-        tree_version[:] = [version]
-        last_check[:] = [datetime.now(UTC).isoformat(timespec="seconds")]
-        if api.HUB.listening():
-            fleet_recap()  # notes each session's state, and announces the ones that changed
-            update_state()  # and each step of an update under way
-            announce_new_turns()
+        """Look at the running sessions and the tree's shape; record what changed.
+        Returns at once when a look is already under way, which records the same changes."""
+        # RULE: a question about news does not wait for a look already under way
+        if not looking.acquire(blocking=False):
+            return
+        try:
+            watcher.check()
+            version = tree.build()["version"]
+            if tree_version and tree_version[0] != version:
+                watcher.record("claude-voice", "tree_changed", version)
+            tree_version[:] = [version]
+            last_check[:] = [datetime.now(UTC).isoformat(timespec="seconds")]
+            if api.HUB.listening():
+                tell_programmes()
+                recap = fleet_recap()  # notes each session's state, and announces the ones that changed
+                tell_hints(recap)
+                update_state()  # and each step of an update under way
+                announce_new_turns()
+        finally:
+            looking.release()
 
     @contextlib.asynccontextmanager
     async def lifespan(_server):
@@ -907,7 +991,10 @@ def build_server(
             async def watch():
                 while True:
                     with contextlib.suppress(Exception):
-                        check()
+                        # The first look reads every running session's whole conversation, which
+                        # takes many seconds; on the event loop it held back startup and every call.
+                        # RULE: the bridge answers as soon as it has started, while its first look runs behind
+                        await asyncio.to_thread(check)
                     with contextlib.suppress(Exception):
                         await across.refresh()  # the other machines, asked every ten seconds
                     with contextlib.suppress(Exception):
@@ -928,6 +1015,8 @@ def build_server(
             waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         if channels is not None:
             await channels.start()
+        # The software report is built on a thread of its own, so the bridge listens at once.
+        stop_software = software_report.start() if watch_interval else None
         try:
             yield {}
         finally:
@@ -935,6 +1024,8 @@ def build_server(
                 task.cancel()
             if channels is not None:
                 await channels.stop()
+            if stop_software:
+                stop_software()
 
     # The relay's marks on each session it has touched, by Claude session id: the last turn it has
     # read (`seen`), its read mark, and, while it follows the session, the turn after which it
@@ -1163,16 +1254,23 @@ def build_server(
         sid = str(d.get("sessionId"))
         return bool(transcripts.background_tasks(read_transcript(sid, str(d.get("cwd"))), d.get("startedAt")))
 
+    # The guide, with the owner's own rules for the voice when a file holds them: the Claude app
+    # doesn't pass the server's instructions to the model, so they reach it through the guide.
+    told = voice_instructions(repos.voice_instructions_file)
     across = fleet.Fleet()  # the other machines, filled in once they are started below
     across.publish = api.HUB.publish
     mcp = MCPServer(
         "claude-voice",
         title="Claude voice bridge",
         version=running_version,
-        instructions=INSTRUCTIONS,
+        instructions=told,
         auth_server_provider=oauth,
         auth=auth,
-        middleware=[log_requests, result_notes(news_line, lambda: calling_transcript()), fleet.middleware(across)],
+        middleware=[
+            log_requests,
+            result_notes(news_line, lambda: calling_transcript(), told),
+            fleet.middleware(across),
+        ],
         lifespan=lifespan,
     )
     titled = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
@@ -1243,7 +1341,7 @@ def build_server(
         """Read this first: the relay's rules for using this bridge.
         If a result already carried the guide, skip the call: it is the same text. Read it again
         when unsure how a role or a rule works."""
-        return {"guide": INSTRUCTIONS}
+        return {"guide": told}
 
     @tool(annotations=READ_ONLY)
     def list_folders(
@@ -1350,6 +1448,59 @@ def build_server(
             return config.load(config.FILE, own_clone=roles.own_clone()).plugins
         except config.ConfigError:
             return repos.plugins
+
+    org_kept: list[Any] = []  # (when it was read, the chart)
+    programmes_seen: list[list[dict[str, Any]]] = []
+
+    def org_now() -> org.Chart:
+        """The org chart, read again from the files when it is ten seconds old."""
+        if org_kept and manager.clock() - org_kept[0] < 10:
+            return org_kept[1]
+        given = org_folders if org_folders is not None else [repos.paths.claude_voice, *(p.cwd for p in plugin_specs())]
+        chart = org.load(org.known_folders(manager.root, given))
+        org_kept[:] = [manager.clock(), chart]
+        return chart
+
+    def tell_programmes() -> None:
+        """Tell open streams when the programmes have changed since last looked at."""
+        now = org_now().listing()
+        if programmes_seen and programmes_seen[0] != now:
+            api.HUB.publish("programmes", {"programmes": now})
+        programmes_seen[:] = [now]
+
+    talk_kept: list[Any] = []  # (when it was counted, the messages between two sessions)
+    hints_seen: list[list[dict[str, Any]]] = []
+
+    def talk_now() -> dict[tuple[str, str], int]:
+        """The messages between running sessions in the last week, counted again when ten seconds old."""
+        if talk_kept and manager.clock() - talk_kept[0] < 10:
+            return talk_kept[1]
+        counts = tree.message_counts(hints.WINDOW_SECONDS)
+        talk_kept[:] = [manager.clock(), counts]
+        return counts
+
+    def with_org(listing: dict[str, Any]) -> dict[str, Any]:
+        """The page's session list, each session with its place in the org chart, and
+        the hints that some of the sessions in no programme belong together."""
+        chart = org_now()
+        live = {str(d.get("sessionId")): d for d in live_sessions()}
+        folders: dict[str, str] = {}
+        for row in listing.get("sessions", []):
+            # another machine's session is placed by its own name only: its folder is not known here
+            d = {"name": row.get("name")} if row.get("machine") else live.get(str(row["id"]), {})
+            row.update(chart.placer()(d).fields())
+            folder = hints.folder_key(d.get("cwd"), manager.root)
+            if folder:
+                folders[str(row["id"])] = folder
+        found = hints.hints(listing.get("sessions", []), folders, talk_now())
+        return {**listing, "programmes": chart.listing(), "programme_hints": found}
+
+    def tell_hints(recap: dict[str, Any]) -> None:
+        """Tell open streams when the programme hints have changed since last looked at."""
+        now = with_org(across.listing(recap))["programme_hints"]
+        if hints_seen and hints_seen[0] != now:
+            api.HUB.publish("programme_hints", {"programme_hints": now})
+        hints_seen[:] = [now]
 
     active_plugins = plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client, commit_of)
     developer_mode = devmode.DeveloperMode()
@@ -1679,7 +1830,6 @@ def build_server(
         except LookupError as exc:
             raise ToolError(str(exc)) from None
 
-    software_seen: dict[str, Any] = {}
     # Each plugin's own repository joins the two above, on the software panel and the work page.
     plugin_repos = work.plugin_repos(repos.plugins)
     board = work_board or work.Board(
@@ -1688,10 +1838,8 @@ def build_server(
         run=software._gh,
     )
 
-    def software_now() -> dict[str, Any]:
-        """Both repositories' measures and checks, kept for ten minutes: git and GitHub are slow."""
-        if software_seen and time.monotonic() - software_seen["at"] < 600:
-            return software_seen["report"]
+    def software_listed() -> list[tuple[str, str, Path | None, str]]:
+        """Each repository on the software panel: its name, its GitHub name, its clone and the branch followed."""
         # A plugin may follow another branch than main (dreame-mcp's voice plugin lives on "voice").
         followed = {str(Path(spec.cwd)): spec.branch for spec in repos.plugins}
         listed = (
@@ -1699,22 +1847,30 @@ def build_server(
             ("claude-voice-ui", repos.repos.claude_voice_ui, repos.paths.claude_voice_ui),
             *plugin_repos,
         )
-        report = {
+        return [(name, repo, folder, followed.get(str(folder), "main")) for name, repo, folder in listed]
+
+    def software_build() -> dict[str, Any]:
+        """Every repository's measures and checks, read afresh: git and GitHub are slow."""
+        return {
             "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
             "repos": [
                 software.repo_report(
                     name,
                     f"https://github.com/{repo}",
                     folder,
-                    ci_status(repo, branch=followed.get(str(folder), "main")),
-                    kept_levels(repo, branch=followed.get(str(folder), "main")),
-                    branch=followed.get(str(folder), "main"),
+                    ci_status(repo, branch=branch),
+                    kept_levels(repo, branch=branch),
+                    branch=branch,
                 )
-                for name, repo, folder in listed
+                for name, repo, folder, branch in software_listed()
             ],
         }
-        software_seen.update(at=time.monotonic(), report=report)
-        return report
+
+    # Built on a thread of its own at start and kept; the page reads the kept one at once.
+    software_report = software.Refresher(
+        software_build,
+        lambda: {repo: main_head(repo, branch=branch) for _, repo, _, branch in software_listed()},
+    )
 
     def bridge_now() -> dict[str, Any]:
         folder = bridge_folder or repos.paths.claude_voice
@@ -1750,7 +1906,7 @@ def build_server(
     async def stop_active_session(name: Annotated[str, Field(description=SESSION_PARAM)]) -> dict[str, Any]:
         """Stop a session the bridge started; any other session is refused.
         A refused one gets status not_started_here."""
-        target = renames.find(live_sessions(), name)
+        target = named_for_voice(live_sessions(), name)
         if target is None:
             return {"name": name, "status": "not_running"}
         sid = str(target.get("sessionId"))
@@ -1977,12 +2133,27 @@ def build_server(
             out["copied_from"] = claude_session_id
         return out
 
-    def find_any_live(session: str) -> dict[str, Any]:
-        session = by_number(session)
+    def reachable() -> list[dict[str, Any]]:
+        """The running sessions, leaving out the bridge's own messengers; find_live checks the folder."""
+        return [d for d in live_sessions() if not is_courier(d)]
+
+    def named(rows: list[dict[str, Any]], session: str) -> dict[str, Any] | None:
+        """The running session `session` names: by its name, id or a name it had, and
+        otherwise by its address in the org chart. Words that fit several raise
+        renames.Ambiguous or org.Ambiguous."""
+        found = renames.find(rows, session)
+        return found if found is not None else org.find(rows, session, org_now().placer())
+
+    def named_for_voice(rows: list[dict[str, Any]], session: str) -> dict[str, Any] | None:
         try:
-            found = renames.find([d for d in live_sessions() if not is_courier(d)], session)
+            return named(rows, by_number(session))
         except renames.Ambiguous as exc:
             raise ToolError(f"{exc}: give one exactly; see list_active_sessions") from exc
+        except org.Ambiguous as exc:
+            raise ToolError(str(exc)) from None
+
+    def find_any_live(session: str) -> dict[str, Any]:
+        found = named_for_voice(reachable(), session)
         if found is not None:
             return found
         raise ToolError(f"No running session called {session!r}; see list_active_sessions")
@@ -2326,7 +2497,7 @@ def build_server(
         if not renames.valid(new_name):
             raise ToolError("A session name needs at least one visible character.")
         rows = [d for d in live_sessions() if under_root(d.get("cwd"))]
-        target = renames.find(rows, by_number(session))
+        target = named_for_voice(rows, session)
         if target is None:
             raise ToolError(f"No running session called {session!r}; see list_active_sessions")
         sid, old = str(target["sessionId"]), str(target["name"])
@@ -2927,6 +3098,15 @@ def build_server(
             match["text"] = transcripts.clip(match["text"], size)
         return {"session": target["name"], "total_turns": len(turns), "matches": matches}
 
+    @tool(annotations=READ_ONLY)
+    def org_chart() -> dict[str, Any]:
+        """Who handles what: each programme's roles, and whether their sessions run.
+        Also what to send each role, and the sessions in no programme.
+        Name a session by its address (voice/manager) or its end (manager)."""
+        chart = org_now()
+        lines = org.overview(chart, reachable(), chart.placer())
+        return {"lines": lines or ["No programme has an org chart file."]}
+
     def event_feed(cursor: str | None = None) -> dict[str, Any]:
         """The watcher's events since `cursor`, and the cursor to pass next time; for the
         companion API's event stream, no longer a tool since every result carries the news."""
@@ -3025,6 +3205,9 @@ def build_server(
         found = renames.find([{**row, "sessionId": row["id"]} for row in rows], session)  # Ambiguous is a LookupError
         if found is not None:
             return {"id": found["id"], "number": found.get("number"), "name": found["name"], "kind": found["kind"]}
+        by_address = org.find(reachable(), session, org_now().placer())
+        if by_address is not None and by_address.get("sessionId") in {row["id"] for row in rows}:
+            return resolve_session(str(by_address.get("sessionId")))
         raise LookupError(f"No session called {session!r}")
 
     def set_active(session: str, by: str) -> dict[str, Any]:
@@ -3074,7 +3257,7 @@ def build_server(
     def lookup(session: str) -> dict[str, Any]:
         """The running session named `session` (name, id or number)."""
         session = by_number(session)
-        found = renames.find([d for d in live_sessions() if under_root(d.get("cwd"))], session)
+        found = named([d for d in live_sessions() if under_root(d.get("cwd"))], session)
         if found is not None:
             return found
         raise LookupError(f"No session called {session!r}")
@@ -3149,6 +3332,15 @@ def build_server(
     async def _no_prs() -> dict[str, Any]:
         return {"prs": []}  # another machine's pull requests are not looked up from here
 
+    def org_page(code: str | None) -> dict[str, Any] | None:
+        """The page's org view: every programme with its roles counted, or one in full."""
+        chart = org_now()
+        views = [org.view(p, reachable(), chart.placer()) for p in chart.programmes]
+        if code is None:
+            listed = zip(chart.listing(), views, strict=True)
+            return {"programmes": [{**i, "roles": len(v["roles"]), "unfilled": v["unfilled"]} for i, v in listed]}
+        return next((v for v in views if v["id"] == code), None)
+
     mcp.terminals = terminals or Terminals()  # type: ignore[attr-defined]  # the desktop, swapped in tests
 
     def focus_session(session_id: str) -> tuple[int, dict[str, str]]:
@@ -3168,7 +3360,7 @@ def build_server(
             oauth.login_secret,
             oauth.public_url,
             check_token,
-            sessions=lambda: across.listing(fleet_recap()),
+            sessions=lambda: with_org(across.listing(fleet_recap())),
             get_active=lambda: store.get_setting("active_session"),
             set_active=set_active,
             clear_active=clear_active,
@@ -3190,7 +3382,7 @@ def build_server(
             },
             start_role=launch_role,
             settings=start_settings,
-            software=software_now,
+            software=software_report.answer,
             work=lambda: {**board.report(), "developer_mode": developer_mode.state()},
             detail=lambda s: across.detail_page(s) if across.split(s) else session_detail(s),
             summary=request_summary,
@@ -3199,9 +3391,13 @@ def build_server(
             remote_prompts=across.prompts,
             answer_remote=across.answer,
             focus=focus_session,
+            org=org_page,
         ).routes(mcp)
 
     mcp.fleet = across  # type: ignore[attr-defined]  # the other machines, for tests and the CLI
+    mcp.org_check = tell_programmes  # type: ignore[attr-defined]  # for tests
+    mcp.hints_check = lambda: tell_hints(fleet_recap())  # type: ignore[attr-defined]  # for tests
+    mcp.software_report = software_report  # type: ignore[attr-defined]  # the kept report, for tests
     return mcp
 
 
@@ -3302,6 +3498,7 @@ def serve_forever(cfg: Config) -> None:
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)
     configure_logging(cfg.db.parent / LOG_FILE)
+    envfile.warn(log)
     web_server(app, cfg.host, cfg.port).run()
 
 

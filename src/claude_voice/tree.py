@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -124,6 +125,7 @@ class SessionTree:
         self.rename = rename
         self._transcripts: dict[Path, _Transcript] = {}
         self._couriers: tuple[set[int], set[str]] = (set(), set())  # pids, names
+        self._building = threading.Lock()
 
     def _folder(self, cwd: str | None) -> str | None:
         if self.folder_of is not None:
@@ -250,6 +252,13 @@ class SessionTree:
                     nodes[other]["talks_to"].add(sid)
 
     def build(self) -> dict[str, Any]:
+        # The watcher and the tools build it from different threads, and a transcript's
+        # place in its file must move on for one reader at a time.
+        # RULE: the tree is built by one caller at a time
+        with self._building:
+            return self._build()
+
+    def _build(self) -> dict[str, Any]:
         live = self._live()
         nodes = {BRIDGE_NODE: self._node(BRIDGE_NODE, "claude-voice", "bridge", None, "running", None)}
         self._live_nodes(live, nodes)
@@ -259,3 +268,28 @@ class SessionTree:
         shape = sorted((n["id"], n["parent_id"] or "", n["kind"], tuple(n["talks_to"])) for n in out)
         version = hashlib.sha1(json.dumps(shape).encode()).hexdigest()[:12]
         return {"version": version, "nodes": out}
+
+    def message_counts(self, seconds: float) -> dict[tuple[str, str], int]:
+        """How many messages each pair of running sessions exchanged in the last `seconds`,
+        keyed by the two ids in order. Each transcript is read on from where it stopped."""
+        with self._building:
+            live = self._live()
+            resolve = self._resolver(live)
+            cutoff = self.clock() - seconds
+            counts: dict[tuple[str, str], int] = {}
+            for d in live:
+                sid = str(d["sessionId"])
+                for when, kind, who, address in self._transcript(sid, str(d.get("cwd"))).seen:
+                    # A message shows twice, sent and read: the reader's copy names its sender.
+                    # RULE: a message is counted once, where it was read
+                    if kind != "received":
+                        continue
+                    # RULE: only messages inside the window are counted
+                    if when is not None and when < cutoff:
+                        continue
+                    other = resolve(who, address)
+                    if other in (None, sid, BRIDGE_NODE):
+                        continue
+                    pair = (min(sid, str(other)), max(sid, str(other)))
+                    counts[pair] = counts.get(pair, 0) + 1
+            return counts

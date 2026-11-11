@@ -163,14 +163,30 @@ class EventHub:
 
     def __init__(self, keep: int = 100) -> None:
         self.keep = keep
-        self._queues: set[asyncio.Queue[tuple[str, dict[str, Any] | None]]] = set()
+        # Each open stream's queue, with the event loop that reads it (None outside one).
+        self._queues: dict[asyncio.Queue[tuple[str, dict[str, Any] | None]], asyncio.AbstractEventLoop | None] = {}
+
+    @staticmethod
+    def _put(q: asyncio.Queue[tuple[str, dict[str, Any] | None]], item: tuple[str, dict[str, Any] | None]) -> None:
+        if q.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                q.get_nowait()
+        q.put_nowait(item)
 
     def publish(self, event: str, data: dict[str, Any] | None) -> None:
-        for q in list(self._queues):
-            if q.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    q.get_nowait()
-            q.put_nowait((event, data))
+        """Hand an event to every open stream. Safe from any thread: the watcher and the
+        tools publish from worker threads, and a queue may only be touched from its own loop."""
+        try:
+            here: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            here = None
+        for q, loop in list(self._queues.items()):
+            if loop is None or loop is here:
+                self._put(q, (event, data))
+                continue
+            with contextlib.suppress(RuntimeError):  # a loop already closed has no reader left
+                # RULE: an event published from another thread reaches a waiting stream at once
+                loop.call_soon_threadsafe(self._put, q, (event, data))
 
     def listening(self) -> bool:
         """Whether any stream is open, so work done only to tell someone can be skipped."""
@@ -179,11 +195,15 @@ class EventHub:
     @contextlib.contextmanager
     def subscribe(self) -> Any:
         q: asyncio.Queue[tuple[str, dict[str, Any] | None]] = asyncio.Queue(self.keep)
-        self._queues.add(q)
+        try:
+            loop: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        self._queues[q] = loop
         try:
             yield q
         finally:
-            self._queues.discard(q)
+            self._queues.pop(q, None)
 
 
 HUB = EventHub()
@@ -243,6 +263,7 @@ class EventApi:
         remote_prompts: Callable[[], list[dict[str, Any]]] | None = None,
         answer_remote: Callable[[str, dict[str, Any]], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
         focus: Callable[[str], tuple[int, dict[str, str]]] | None = None,
+        org: Callable[[str | None], dict[str, Any] | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = store
@@ -268,6 +289,8 @@ class EventApi:
         self.remote_prompts = remote_prompts or (lambda: [])
         self.answer_remote = answer_remote
         self.focus = focus  # bring a session's terminal to the front: terminals.Terminals, by id
+        # The org chart, read only: every programme with None, or one by its code (None if unknown).
+        self.org = org or (lambda code: None if code else {"programmes": []})
         self.clock = clock
         self._failures: list[float] = []
 
@@ -300,6 +323,8 @@ class EventApi:
         route("/api/v1/update/changes", methods=["GET"])(self.changes)
         route("/api/v1/bridge", methods=["GET"])(self.bridge_now)
         route("/api/v1/roles/{role}/start", methods=["POST"])(self.role_start)
+        route("/api/v1/org", methods=["GET"])(self.org_chart)
+        route("/api/v1/org/{programme}", methods=["GET"])(self.org_chart)
 
     # -- who is asking ---------------------------------------------------------------
 
@@ -490,12 +515,13 @@ class EventApi:
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
     async def software_health(self, request: Request) -> Response:
-        """How both repositories are doing: their quality measures, trends and checks."""
+        """How the repositories are doing: their quality measures, trends and checks.
+        The report kept from the last build, at once; the bridge builds it behind (`measured_at`)."""
         if not await self._allowed(request):
             return JSONResponse({"error": "sign in first"}, 401)
         if self.software is None:
             return JSONResponse({"error": "not available"}, 404)
-        out = await asyncio.to_thread(self.software)  # git history and GitHub take a moment
+        out = self.software()
         return JSONResponse(out, headers={"Cache-Control": "no-store"})
 
     async def work_now(self, request: Request) -> Response:
@@ -709,6 +735,19 @@ class EventApi:
             return JSONResponse({"error": str(exc)}, 404)
         except Exception as exc:  # the start failed; say why
             return JSONResponse({"error": str(getattr(exc, "message", exc))}, 502)
+
+    # -- the org chart ---------------------------------------------------------------
+
+    async def org_chart(self, request: Request) -> Response:
+        """Every programme, or one programme's roles and who fills them. Only read: the
+        chart changes in its file, never through the API."""
+        if not await self._allowed(request):
+            return JSONResponse({"error": "sign in first"}, 401)
+        wanted = request.path_params.get("programme")
+        found = self.org(wanted)
+        if found is None:
+            return JSONResponse({"error": f"no programme {wanted!r}"}, 404)
+        return JSONResponse(found, headers={"Cache-Control": "no-store"})
 
     # -- the live stream -------------------------------------------------------------
 

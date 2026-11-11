@@ -53,8 +53,12 @@ ran in the last day, with the session the owner talks to:
   "sessions": [
     {"id": "5f3c…", "name": "billing-ab", "kind": "terminal", "folder": "billing",
      "status": "idle", "doing": "Fixed the export totals.", "minutes_since_update": 2,
-     "question": {"text": "Which file?", "options": ["a.py", "b.py"]}}
+     "question": {"text": "Which file?", "options": ["a.py", "b.py"]},
+     "programme": {"id": "acme", "name": "Acme Robots"}, "component": {"id": "arm", "name": "Robot arm"},
+     "role": null, "programme_wide": false, "address": "acme/arm"}
   ],
+  "programmes": [{"id": "acme", "name": "Acme Robots", "order": 0}],
+  "programme_hints": [],
   "active": {"id": "5f3c…", "name": "billing-ab", "kind": "terminal",
              "set_by": "page", "set_at": "2026-11-02T13:05:00+00:00"}
 }
@@ -104,7 +108,24 @@ ran in the last day, with the session the owner talks to:
   and for a fork the `upstream` remote's main branch. Only local refs are read
   and nothing is fetched, so `behind` is as fresh as the folder's last fetch.
   The answer is kept for 45 seconds per folder.
+- `programme`, `component` and `role`: where the session sits in the
+  [org chart](org-chart.md), each `{"id", "name"}` or `null`. A session with no
+  `programme` belongs to no programme and is shown under "Other". A
+  programme-wide role, such as a manager, has `component` `null` and
+  `programme_wide` `true`. `address` is `"acme/arm/quality"`, `"acme/manager"`
+  or `"acme/arm"` for a worker, and `null` outside any programme. A session on
+  another machine is placed by its name only, so it can hold a role but has no
+  component. An older bridge sends none of these.
 - `active` is `null` until something has chosen a session.
+- `programmes`, next to `sessions`: every programme that has an org file, in the
+  order to show them, `[{"id": "acme", "name": "Acme Robots", "order": 0}]`.
+  The `programmes` event says when it changes.
+- `programme_hints`, next to `sessions`: groups of sessions in no programme that
+  seem to belong together, `[{"id": "h-…", "sessions": ["<id>", …], "reason":
+  "messages" | "folder" | "prefix", "detail": "acme-" or a folder's name or null,
+  "messages": <how many in the last 7 days> or null}]`. Empty when there are none.
+  [The org chart](org-chart.md#hints-for-the-sessions-in-no-programme) gives the
+  rules. The `programme_hints` event says when they change.
 
 ## The session the owner talks to
 
@@ -309,8 +330,9 @@ summary: only the POST does, with a small model. `context` is the same object as
 `prompt` (what the owner typed), `question`, `error` (a tool that failed),
 `commit`, `pr_opened` (with `url`), `pr_merged` and `compact`. A helper
 (`subagents`) runs until it has handed its result back. `summary_state` is
-`none`, `generating`, `ready` or `error` (then `summary_error` says why, and the
-last good `summary` is kept). The stream carries `summary` with
+`none`, `generating`, `ready` or `error` (then `summary_error` says why and what to
+do next: try again, and if it fails again run `claude-voice check`, which says what is
+missing; the last good `summary` is kept). The stream carries `summary` with
 `{"session", "summary", "summary_state"}` when one is ready or has failed.
 
 ## Opening a session's terminal
@@ -389,6 +411,46 @@ as pinned cards above the sessions.
 | `GET /api/v1/roles` | `{"roles": [{"name", "title", "description", "session": {"name", "id", "status"} or null}]}`; `session` is the running session last started for the role |
 | `POST /api/v1/roles/{name}/start` | with `{"task": "what to change"}` or `{}`: starts a session for the role and answers `{"role", "name", "claude_session_id", "status"}`. `404` for an unknown role, `502` when Claude Code could not start it. A change: with the cookie it needs an allowed `Origin` |
 
+## The org chart
+
+Which programme, component and role each session belongs to, read from each
+programme's own file ([the org chart](org-chart.md)). These calls only read:
+the chart changes in its file, never through the API. The page reads them when
+it shows the chart; they are not streamed, but the `programmes` event says when
+the list of programmes changed.
+
+| Call | Answer |
+| --- | --- |
+| `GET /api/v1/org` | every programme, in order: `{"programmes": [{"id", "name", "order", "roles": <how many>, "unfilled": ["<role id>"]}]}` |
+| `GET /api/v1/org/{programme}` | one programme by its `id`, as below; `404` for an unknown one |
+
+```json
+{
+  "id": "acme", "name": "Acme Robots", "aliases": ["robots"],
+  "components": [{"id": "arm", "name": "Robot arm", "aliases": ["the arm"]}],
+  "roles": [
+    {"id": "manager", "name": "Manager", "component": null, "programme_wide": true,
+     "address": "acme/manager", "purpose": "Keeps the overview and brings the owner's decisions to the others.",
+     "limits": "Never merges someone else's pull request without the owner.",
+     "routing": ["decisions", "proposals"], "session_names": ["acme-robots"],
+     "sessions": ["5f3c…"], "running": true},
+    {"id": "quality", "name": "Quality", "component": {"id": "arm", "name": "Robot arm"},
+     "programme_wide": false, "address": "acme/arm/quality", "purpose": "Watches the arm's tests and measurements.",
+     "limits": "Changes tests, never the arm's code.", "routing": ["quality", "facts"],
+     "session_names": ["arm-quality"], "sessions": [], "running": false}
+  ],
+  "unfilled": ["quality"]
+}
+```
+
+- `routing`: what to send the role, from `facts`, `proposals`, `decisions` and
+  `quality`.
+- `session_names`: the names the file gives for the role. `sessions`: the ids of
+  the sessions on this computer filling it now, the `id` the session list uses.
+  `running` is whether there is one; a role in `unfilled` has none.
+
+These are not the start roles above, which say how to start a new session.
+
 ## Live events
 
 `GET /api/v1/events` is a stream of
@@ -407,6 +469,8 @@ that must send a bearer token reads the stream with `fetch`.
 | `git` | `{"session": "<id>", "git": {...}}` | a session's git status changed |
 | `output` | `{"session": "<id>", "index", "role"}` | a running session wrote a new turn; read it with `/sessions/{id}/output?after=` |
 | `update` | one step: `{"step", "ok", "detail", "at"}`, with `step` one of `check`, `fetch`, `pull`, `install`, `test`, `restart`, `verify`, `rollback`, `done` | an update made progress |
+| `programmes` | `{"programmes": [{"id", "name", "order"}]}` | an org file was added, removed or changed what it lists; looked at every ten seconds while a stream is open |
+| `programme_hints` | `{"programme_hints": [...]}`, the list the session list carries | a hint was added, removed or changed; looked at every ten seconds while a stream is open |
 | `work` | the `/api/v1/work` body | what waits on the owner, or an open pull request, changed; looked at every ten seconds while a stream is open |
 | `news` | one item: `{"kind", "session", "text", …}` | something happened worth telling: a session finished, failed, started waiting, asked for an approval |
 

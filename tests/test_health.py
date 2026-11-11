@@ -1,5 +1,7 @@
 """health(): the bridge's own state, cheap enough to poll."""
 
+import asyncio
+
 from fakes import FakeClaude
 from mcp.client import Client
 
@@ -35,7 +37,11 @@ async def test_health_reports_the_bridges_state_and_its_calls(tmp_path, monkeypa
     async with Client(srv) as c:
         await c.call_tool("guide", {})
         await c.call_tool("read_session_output", {"session": "nope"}, meta={"trace_id": "t9"})
-        h = (await c.call_tool("health", {})).structured_content
+        for _ in range(100):  # the watcher's first look runs behind, on a thread of its own
+            h = (await c.call_tool("health", {})).structured_content
+            if h["watcher"]["last_check_at"]:
+                break
+            await asyncio.sleep(0.05)
     now = h["now"]
     assert now["up_since"] and now["version"] and now["memory_rss_mb"] > 0
     assert now["last_restart"] == {"at": "2026-10-08T10:00:00+00:00", "reason": "auto-restart"}

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/roykollensvendsen/claude-voice/blob/main/docs/agent-protocol/v1/plugin.json",
+  "title": "Plugin",
+  "description": "One plugin as the agent reports it in agent_info. A plugin is an MCP server on the machine: a name, its tools and their inputs. Its tools are in tools/list, each named <plugin>_<tool>, with their input schemas; this says which tools are its, and what on the machine it uses.",
+  "type": "object",
+  "required": [
+    "name",
+    "tools",
+    "uses"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "uniqueItems": true,
+      "description": "The names of its tools as offered in tools/list, each starting with the plugin's name and an underscore."
+    },
+    "confirms": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,31}$"
+      },
+      "uniqueItems": true,
+      "description": "Which of its tools confirm a spoken yes. Each is also in tools. The hub calls one only for the voice, never for a Claude Code session; part of what Roy approves."
+    },
+    "uses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,31}$",
+        "examples": [
+          "microphone",
+          "camera",
+          "location",
+          "calls",
+          "contacts",
+          "notifications",
+          "media",
+          "sensors",
+          "usage"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "What private thing on the machine the plugin can reach with its settings as they are now. Known in version 1: microphone, camera, location, calls, contacts, notifications, media, sensors, and usage, the use of the machine and its apps, such as data used. A later version may add more; a hub shows a value it does not know to Roy as unknown, and it needs his approval like any other. Part of what he approves: a setting that reaches more changes this, and Roy approves the plugin again."
+    },
+    "instructions": {
+      "type": "string",
+      "description": "The plugin's own rules for the voice, passed on with its tools."
+    }
+  },
+  "examples": [
+    {
+      "name": "status",
+      "tools": [
+        "status_battery",
+        "status_ring"
+      ],
+      "uses": []
+    },
+    {
+      "name": "phone",
+      "tools": [
+        "phone_call",
+        "phone_confirm",
+        "phone_hang_up"
+      ],
+      "confirms": [
+        "phone_confirm"
+      ],
+      "uses": [
+        "calls",
+        "contacts"
+      ],
+      "instructions": "A number not on the phone's own list waits for a spoken yes."
+    },
+    {
+      "name": "mobiledata",
+      "tools": [
+        "mobiledata_left"
+      ],
+      "uses": [
+        "usage"
+      ],
+      "instructions": "Reads the phone's total mobile data, never any one app's."
+    }
+  ]
+}
