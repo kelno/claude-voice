@@ -130,11 +130,13 @@ WAIT_AFTER_PARAM = (
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
 # in, and later delivers its result inside a call the assistant seems to have written itself,
 # carrying a field only the app may write; assistants copy it to fetch results, and are
-# refused. A result that took this long carries a reminder, where the copied example is.
+# refused. A result that took this long carries a reminder, where the copied example is: a rule
+# kept in the owner's memory alone still slipped, and the app refuses the copy before the bridge
+# sees it, so the reminder can't wait for the slip.
 LATE_SECONDS = 1.0
 LATE_NOTE = (
-    "If this came late, in a call carrying _deferred_result_for: only the app writes that "
-    "field; a pending result arrives by itself."
+    "A call carrying _deferred_result_for was inserted by the app, not written by you; "
+    "sending that field fails. Pending results arrive by themselves."
 )
 # The tools that wait on a session; another call on that session while one runs is told so.
 WAITING_TOOLS = ("wait_for_session", "ask_active_session")
