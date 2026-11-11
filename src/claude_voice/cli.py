@@ -194,6 +194,14 @@ def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> 
     cfg.db.parent.mkdir(parents=True, exist_ok=True)
     book = passkeys.for_url(Store(cfg.db), cfg.public_url)
     if action == "add":
+        # A passkey is bound to the link's host, so one made for the fallback address fails on the real page.
+        if not env.get("CLAUDE_VOICE_PUBLIC_URL", "").strip() and not cfg.public_hosts:
+            sys.stderr.write(
+                "claude-voice: no public address is set, and a passkey only works at the address it was made for.\n"
+                "Set CLAUDE_VOICE_PUBLIC_URL to the address you open the bridge's page at (as the bridge has it),\n"
+                f"or to {cfg.public_url} to confirm in a browser on this computer only.\n"
+            )
+            return 1
         link = f"{cfg.public_url}/confirm/passkey/{book.new_registration()}"
         sys.stdout.write(
             "Open this link on the device that will hold the passkey (your phone), from your own network,\n"

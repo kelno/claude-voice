@@ -121,3 +121,15 @@ def test_the_passkey_command_works_without_the_folder_of_work_folders(tmp_path, 
     assert "No passkey" in capsys.readouterr().out
     assert main(["passkey", "remove", "nope"], env=settings) == 1
     assert capsys.readouterr().err.startswith("claude-voice: no passkey 'nope'")
+
+
+def test_a_passkey_link_is_never_made_for_an_address_nobody_set(tmp_path, capsys):
+    """A passkey is bound to the link's host: one made for the fallback address fails on the real page."""
+    settings = env(tmp_path, CLAUDE_VOICE_DB=str(tmp_path / "b.db"))
+    assert main(["passkey", "add"], env=settings) == 1
+    out, err = capsys.readouterr()
+    assert "/confirm/passkey/" not in out
+    assert "CLAUDE_VOICE_PUBLIC_URL" in err and "http://127.0.0.1:8811" in err
+    local = {**settings, "CLAUDE_VOICE_PUBLIC_URL": "http://127.0.0.1:8811"}
+    assert main(["passkey", "add"], env=local) == 0  # set on purpose, for confirming at the PC
+    assert "http://127.0.0.1:8811/confirm/passkey/" in capsys.readouterr().out

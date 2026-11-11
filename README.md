@@ -300,6 +300,8 @@ Nothing that needs your own OK rests on those approvals: opening a folder and a
 session's request for your OK are confirmed with a passkey on the bridge's own
 page. Add one with `claude-voice passkey add`, which prints a one-time link to open
 on your phone; the page answers only from your own network (the tailnet here).
+The passkey works only at the address in the link, so `add` refuses until
+`CLAUDE_VOICE_PUBLIC_URL` or `CLAUDE_VOICE_PUBLIC_HOSTS` is set, as for the bridge.
 `claude-voice passkey list` shows the passkeys added so far, each with its id, and
 `claude-voice passkey remove <id>` removes one; an id it doesn't know is refused:
 
