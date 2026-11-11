@@ -143,3 +143,20 @@ async def test_the_sessions_the_bridge_starts_are_never_presented_as_background(
         tool = tools[name]
         assert "background" not in f"{tool.title} {tool.description}".lower(), name
         assert "remote control" in tool.description.lower() or name == "stop_active_session", name
+
+
+# What concerns one parameter goes in that parameter's own description: Claude Code and the
+# Claude app pass it to the model, while a result's schema never reaches it (ledger Q100,
+# tested 2026-11-11). A parameter several tools share is described the same way in each.
+async def test_every_parameter_is_described_in_its_own_description_and_alike_everywhere(world):
+    async with Client(world[2]) as c:
+        tools = (await c.list_tools()).tools
+    undescribed, texts = [], {}
+    for t in tools:
+        for name, prop in t.input_schema.get("properties", {}).items():
+            if not prop.get("description"):
+                undescribed.append(f"{t.name}.{name}")
+            texts.setdefault(name, {}).setdefault(prop.get("description"), []).append(t.name)
+    assert undescribed == []
+    for name in ("session", "wait_seconds", "max_chars", "language"):
+        assert len(texts.get(name, {})) <= 1, (name, texts.get(name))
