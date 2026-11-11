@@ -29,7 +29,8 @@ def test_the_channel_declares_itself_a_channel_and_speaks_the_clients_protocol()
 
 def test_the_channel_tells_the_session_a_relayed_message_is_not_the_owners_word():
     text = channel.answer(request("initialize", protocolVersion="2025-11-25"))["result"]["instructions"]
-    assert '<channel source="claude-voice"' in text
+    # Claude Code names the source after the plugin and its server, as the session sees it.
+    assert 'source="plugin:relay-channel:claude-voice"' in text
     assert "not the owner's" in text and "confirm_ask" in text
     assert len(text) <= 2048  # Claude Code cuts a server's instructions past that
 
