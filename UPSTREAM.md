@@ -25,7 +25,7 @@ The owner's rule: align with upstream, reworking the fork to match it, as long a
 
 ## Differences from upstream
 
-Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `abfd746`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
+Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `3baebbd`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
 
 ### Decision records
 
