@@ -98,9 +98,6 @@ the bridge says which are missing, with the exact fix, through its
 | `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher, and whether developer mode is on |
-| `plugin_restart` | start one plugin again with its new code, without restarting the bridge; its tools come back only if they take what was approved |
-| `developer_mode_request`, `developer_mode_confirm`, `developer_mode_off` | switch developer mode on by voice with a question and your yes (only from the Claude app; it ends by itself after eight hours), or off at once |
-| `plugin_approve_request`, `plugin_approve_confirm` | in developer mode, approve a plugin whose tools changed: the voice names each changed tool and approves on your yes |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |

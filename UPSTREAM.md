@@ -25,7 +25,7 @@ The owner's rule: align with upstream, reworking the fork to match it, as long a
 
 ## Differences from upstream
 
-Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `613bd3d`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
+Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `abfd746`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
 
 ### Decision records
 
@@ -57,6 +57,7 @@ A switched-off tool keeps its code, as close to upstream's as possible, and only
 | `send_task`, `session_recap`, `cancel`, `close_session`, `list_sessions`, `create_session`, `approve`, `deny`, `list_pending_approvals` | They served sessions run inside the bridge, which the owner couldn't open on the phone or at the PC and whose prompts came only through the relay; all work now runs as ordinary sessions on Remote Control | "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Retire the tools for sessions run inside the bridge" |
 | `get_active_session`, `set_active_session` | The chosen session marks which session the owner talks to, for the companion page; the owner switched it off, and tools the relay sees but never uses are noise in its list. The companion API's `/api/v1/active` routes stay. Switched off, code kept | "Drop the chosen-session tools the owner switched off", "Keep the switched-off upstream tools' code, offered to no one" |
 | `refresh_session_summary` | A second tool summing up a session, next to `digest_session`; a fresh agent reading the tools couldn't tell the two apart. The summary stays on the companion page, made by its own route. Switched off, code kept | "Drop the second summary tool, leaving digest_session", "Keep the switched-off upstream tools' code, offered to no one" |
+| `plugin_restart`, `developer_mode_request`, `developer_mode_confirm`, `developer_mode_off`, `plugin_approve_request`, `plugin_approve_confirm` | They restart a plugin and approve a changed one by voice; this PC runs no plugins, so they would only lengthen the relay's list. Switched off, code kept; upstream's tests of them run with them switched back on | "Switch off the plugin tools, since no plugin runs here" |
 | `whats_new` | No relay thought to call it; every result now carries a line on what the relay hasn't read. The companion API's event stream still reads the watcher's events, through `event_feed()`, a plain function | "Tell the relay in every result what it hasn't read yet", "Remove whats_new now that every result carries the news" |
 
 ### Upstream features, and how they're set here
@@ -69,7 +70,7 @@ All of upstream's code is in; what is on or off here (owner):
 - Chosen session (`get_active_session`, `set_active_session`) and `refresh_session_summary`: off (see the table above).
 - Companion app: off. Its API code is in, without its parts for sessions run inside the bridge; its event stream reads the watcher's events through `event_feed()`, a plain function, since `whats_new` is not a tool here.
 - Other machines, "the hub" (`agent.py`, `fleet.py`, `machines.py`, `tailnet.py`, ADR-CV-006 to 008): in, inactive. Nothing is paired on this PC and Tailscale isn't needed: with no machine, the fleet's middleware passes every call through. The agent's own bridge is built without the approval broker the fork retired, and offers only the session tools the fork's bridge has.
-- Plugins: code in, off; no other MCP servers on this PC for now.
+- Plugins: code in, off; no other MCP servers on this PC for now. Their tools (restarting a plugin, developer mode, approving a changed plugin by voice) are switched off (see the table above).
 - Quality levels: as upstream (ADR-CV-009). Continuous integration keeps main's levels with each run, and the software panel shows them.
 
 ### Same tools, different behaviour

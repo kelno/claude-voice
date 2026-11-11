@@ -156,6 +156,7 @@ def bridge(tmp_path, specs, approve=True, factory=None):
         repo_config=repos,
         plugin_approvals=approvals,
         plugin_client=factory,
+        switched_off=frozenset(),  # the fork switches the plugin tools off; these test upstream's code
     )
 
 

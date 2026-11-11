@@ -271,7 +271,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "developer_mode_request",  # a question only; the confirm is what switches
         "plugin_approve_request",
     }
-    for name in read_only:
+    for name in read_only & set(tools):  # a tool the fork switched off is not listed
         ann = tools[name].annotations
         assert ann is not None and ann.read_only_hint is True, name
     for name in set(tools) - read_only:
@@ -285,7 +285,7 @@ async def test_only_tools_the_owner_approves_each_time_are_marked_destructive(tm
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    destructive = {"update_bridge", "plugin_approve_confirm"}
+    destructive = {"update_bridge"}
     for name, tool in tools.items():
         ann = tool.annotations
         if ann is not None and ann.read_only_hint:
@@ -502,6 +502,16 @@ async def test_a_switched_off_upstream_tool_is_offered_to_no_one_but_keeps_its_p
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as c:
         names = {t.name for t in (await c.list_tools()).tools}
-    assert SWITCHED_OFF == {"get_active_session", "set_active_session", "refresh_session_summary"}
+    assert SWITCHED_OFF == {
+        "get_active_session",
+        "set_active_session",
+        "refresh_session_summary",
+        "plugin_restart",
+        "developer_mode_request",
+        "developer_mode_confirm",
+        "developer_mode_off",
+        "plugin_approve_request",
+        "plugin_approve_confirm",
+    }
     assert not SWITCHED_OFF & names
     assert all(titles.load().get(name) for name in SWITCHED_OFF)
