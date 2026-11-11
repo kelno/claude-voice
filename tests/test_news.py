@@ -43,13 +43,13 @@ def turn(role, text, origin=None):
 class Desk:
     """A running session: its registry entry and its conversation."""
 
-    def __init__(self, live, cwd, name="billing-ab", sid="sid-1"):
-        self.live, self.cwd, self.name, self.sid = live, cwd, name, sid
+    def __init__(self, live, cwd, name="billing-ab", sid="sid-1", pid=PID):
+        self.live, self.cwd, self.name, self.sid, self.pid = live, cwd, name, sid, pid
         self.transcript = [turn("user", "earlier question", "human"), turn("assistant", "earlier answer")]
         self.set("idle")
 
     def set(self, status, waiting_for=None):
-        entry = {"pid": PID, "sessionId": self.sid, "cwd": self.cwd, "name": self.name, "status": status}
+        entry = {"pid": self.pid, "sessionId": self.sid, "cwd": self.cwd, "name": self.name, "status": status}
         if waiting_for:
             entry["waitingFor"] = waiting_for
         (self.live / f"{self.name}.json").write_text(json.dumps(entry), encoding="utf-8")
@@ -68,13 +68,14 @@ def world(tmp_path):
 
 
 @contextlib.asynccontextmanager
-async def bridge(tmp_path, desk, store):
-    """The bridge over HTTP, as the Claude app reaches it, for one desk session."""
+async def bridge(tmp_path, desk, store, *others):
+    """The bridge over HTTP, as the Claude app reaches it, for one desk session or more."""
     root = Path(desk.cwd).parent
+    desks = {d.sid: d for d in (desk, *others)}
 
     async def deliver(name, text):
         # The relayed message lands in the session's conversation, marked as from another session.
-        desk.transcript.append(turn("user", text, "peer"))
+        next(d for d in desks.values() if d.name == name).transcript.append(turn("user", text, "peer"))
         return {"delivered": True, "detail": "DELIVERED"}
 
     port = free_port()
@@ -86,7 +87,7 @@ async def bridge(tmp_path, desk, store):
         conversations=lambda **k: [],
         live_dir=desk.live,
         deliver=deliver,
-        read_transcript=lambda sid, directory: list(desk.transcript),
+        read_transcript=lambda sid, directory: list(desks[sid].transcript),
         poll_seconds=0.01,
         projects_dir=tmp_path / "projects",
         repo_config=config.Config(
@@ -472,3 +473,56 @@ async def test_nothing_followed_means_no_next_step(served):
     async with http, client as c:
         out = await call(c, "list_folders")
     assert "next_step" not in out
+
+
+# One wait for all followed sessions: wait_for_session with no session named.
+
+
+async def test_a_wait_on_all_followed_sessions_returns_at_the_first_with_news(tmp_path, world):
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())  # its own process
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+            await call(c, "message_active_session", session="ledger", message="Close the month.")
+            desk.set("busy")
+            other.transcript.append(turn("assistant", "Month closed."))
+            out = await call(c, "wait_for_session")
+            later = await call(c, "list_folders")
+    assert out["session"] == "ledger" and out["reply"] == "Month closed." and out["reply_final"] is True
+    assert later["news"] == "billing-ab (busy): nothing new"  # ledger's reply was read: no longer followed
+
+
+async def test_a_wait_on_all_followed_sessions_runs_out_while_they_work(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        out = await call(c, "wait_for_session")
+    assert out["status"] == "still_working" and out["sessions"] == ["billing-ab"]
+    assert "call wait_for_session again now" in out["next_step"]
+
+
+async def test_a_wait_with_nothing_to_wait_for_returns_at_once_and_says_so(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        out = await call(c, "wait_for_session", wait_seconds=60)
+    assert out["status"] == "nothing_to_wait_for"
+    assert out["next_step"] == "Nothing left to follow: every reply is read. No need to tell the owner."
+
+
+async def test_a_session_paused_on_the_owner_wakes_a_wait_once(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Delete the old exports.")
+        desk.set("waiting", waiting_for="permission prompt")
+        first = await call(c, "wait_for_session")
+        second = await call(c, "wait_for_session", wait_seconds=60)
+    assert first["session"] == "billing-ab" and first["status"] == "needs_input"
+    assert second["status"] == "nothing_to_wait_for"
+    assert "billing-ab waits on the owner's answer" in second["next_step"]

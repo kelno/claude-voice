@@ -1001,7 +1001,7 @@ def build_server(
             unfollowed = marks.get(sid, {}).get("sent") is None
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
-        step = next_step(active_before, live)
+        step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
         if json.dumps(marks, sort_keys=True) != before:
             manager.store.set_setting(MARKS_SETTING, marks)
         return {**({"news": " | ".join(items)} if items else {}), **({"next_step": step} if step else {})}
@@ -1045,8 +1045,9 @@ def build_server(
         """Move the read mark on the session a call started, resumed, messaged, asked or read, and
         follow it after a message or a question still unanswered."""
         target = None
-        if tool in READ_MARKING_TOOLS and args.get("session"):
-            target = next((d for d in live.values() if args["session"] in (d.get("name"), d.get("sessionId"))), None)
+        named = args.get("session") or (structured.get("session") if tool == "wait_for_session" else None)
+        if tool in READ_MARKING_TOOLS and named:
+            target = next((d for d in live.values() if named in (d.get("name"), d.get("sessionId"))), None)
         elif tool in STARTING_TOOLS and structured.get("claude_session_id"):
             target = live.get(str(structured["claude_session_id"]))
         reached = structured.get("next_after")
@@ -1079,8 +1080,29 @@ def build_server(
             )
             return [f"{name}: ended" + (" before you read its reply" if unread else "")]
         mark["name"] = name
-        turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
         news = []
+        where, last = follow_state(sid, mark, d)
+        state = session_state(d)
+        if where == "unread":
+            news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
+            mark["state"] = "unread"
+        elif where == "read":
+            # RULE: following a session ends once its finished turn is read
+            mark.update(sent=None, replied=False, state=None)
+            return []
+        elif where == "waiting":
+            mark["state"] = "waiting"
+        else:
+            mark.update(state="working", told=False, last=last)
+        if state == "waiting on a permission prompt":
+            return [f"{name}: {', '.join([state, *news])}"]
+        return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
+
+    def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
+        """Where a followed, running session stands: "unread" (its turn ended, not read yet),
+        "read" (read: following it is over), "waiting" (paused on a permission prompt, mid-turn)
+        or "working"; and its latest message since the relay's, if any."""
+        turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
         answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
         # Its turn has ended once it rests, or asks its user something (not mid-turn on a
         # prompt), or once a later message came in after its reply.
@@ -1088,22 +1110,12 @@ def build_server(
             t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
         )
         mark["replied"] = mark["replied"] or (bool(answer) and ended)
-        state = session_state(d)
-        if mark["replied"] and any(i > mark["seen"] for i in answer):
-            news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
-            mark["state"] = "unread"
-        elif mark["replied"]:
-            # RULE: following a session ends once its finished turn is read
-            mark.update(sent=None, replied=False, state=None)
-            return []
-        elif state == "waiting on a permission prompt":
-            mark["state"] = "waiting"
-        else:
-            mark.update(state="working", told=False)
-            mark["last"] = turns[answer[-1]]["text"] if answer else None
-        if state == "waiting on a permission prompt":
-            return [f"{name}: {', '.join([state, *news])}"]
-        return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
+        last = turns[answer[-1]]["text"] if answer else None
+        if mark["replied"]:
+            return ("unread" if any(i > mark["seen"] for i in answer) else "read"), last
+        if session_state(d) == "waiting on a permission prompt":
+            return "waiting", last
+        return "working", last
 
     def session_state(d: dict[str, Any] | None) -> str:
         if d is None:
@@ -2449,7 +2461,7 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
-        session: Annotated[str, Field(description=SESSION_PARAM)],
+        session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
         wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
         after: Annotated[
             int | None,
@@ -2458,13 +2470,51 @@ def build_server(
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
         """Wait for a session's turn to end or need input; then its reply.
-        Sends nothing; reply is the newest message among those returned, empty when the session
+        With no session named, it waits on every session you follow and returns the first with
+        news. Sends nothing; reply is the newest message among those returned, empty when the session
         wrote nothing new; at most 30 turns come back, and read_session_output(after=next_after)
         reads the rest while turns_left is above 0. status: "idle" (its turn
         has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question says
         what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
-        conversation now lives in moved_to); reply_final: its turn ended with something new, and
-        reply is whole up to 12,000 characters (reply_cut past that)."""
+        conversation now lives in moved_to), or, with no session named, "nothing_to_wait_for" (at
+        once: none you follow is working); reply_final: its turn ended with something new, and reply is
+        whole up to 12,000 characters (reply_cut past that)."""
+        if session is None:
+            return await wait_on_followed(wait_seconds, max_chars)
+        return await wait_on(session, wait_seconds, after, max_chars)
+
+    async def wait_on_followed(wait_seconds: float, max_chars: int) -> dict[str, Any]:
+        """Wait on every session the relay follows until one has news: a finished turn it hasn't
+        read, a pause on a permission prompt it wasn't told of, or an end; then that one's reply,
+        the oldest followed first. Following nothing, it returns at once."""
+        clock = asyncio.get_running_loop().time
+        deadline = clock() + within_budget(wait_seconds)
+        while True:
+            live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
+            following = {sid: m for sid, m in marks.items() if m.get("sent") is not None}
+            ready, waited = [], []
+            for sid, mark in following.items():
+                d = live.get(sid)
+                where = "ended" if d is None else follow_state(sid, mark, d)[0]
+                # RULE: a wait on all followed sessions returns at the first with news
+                if where in ("ended", "unread") or (where == "waiting" and not mark.get("told")):
+                    ready.append(sid)
+                elif where == "working":
+                    waited.append(str(mark.get("name") or sid))
+            if ready:
+                sid = min(ready, key=lambda k: following[k].get("since") or 0)
+                mark = following[sid]
+                if sid not in live:
+                    return {"status": "session_ended", "session": mark.get("name") or sid, "session_ended": True}
+                return await wait_on(sid, 0, max(mark["sent"], mark["seen"]), max_chars)
+            if not waited:
+                return {"status": "nothing_to_wait_for", "sessions": []}
+            if clock() >= deadline:
+                return {"status": "still_working", "sessions": waited}
+            await asyncio.sleep(poll_seconds)
+
+    async def wait_on(session: str, wait_seconds: float, after: int | None, max_chars: int) -> dict[str, Any]:
+        """Wait on one session, as wait_for_session with a session named."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
