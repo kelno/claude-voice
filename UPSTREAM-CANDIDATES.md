@@ -188,12 +188,6 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - What: `trust_folder`, which marks a folder `start_active_session` has just made as trusted in Claude Code's config, writes its key with forward slashes (`folder.as_posix()`), as Claude Code keys a Windows folder; with the backslashed `str(folder)`, Claude Code never read it and refused the start ("Workspace not trusted"). Found in the resync's trial run.
 - Why: a small bug fix on Windows; no change on Linux or macOS, where both forms are the same. Offer with 8, or alone. Test first: `tests/test_start.py`, with a Windows path, so it fails on Linux CI too.
 
-### 6g. Handing a session to the desktop app — fork "Hand a session the bridge started to the desktop app"
-
-- What: `hand_to_desktop(name)` stops a session `start_active_session` started and opens a named Windows Terminal tab running `claude --desktop --resume '<id>'`, which brings it into the Claude desktop app's sidebar. Refuses sessions the bridge didn't start, mid-turn ones and ones with no conversation yet. A Remote Control hook (`REMOTE_CONTROL_AT_START`, off) for `claude --bg --remote-control`.
-- Why: sessions the bridge starts are otherwise invisible in the desktop app.
-- Upstream relevance: medium; Windows-only as written (Windows Terminal, PowerShell), macOS would need its own terminal. Not tried live yet. Tests: `tests/test_handover.py`.
-
 ### 6e. A manual for the assistant — fork "Give the bridge a manual, sent at connection and kept in a guide tool", cut down in "Keep in the manual only the rules that span tools"
 
 - What: the server instructions rewritten as a short manual (roles, the rule that the owner sees nothing passing through tools, keeping agents' words apart, the relay's scope, how to wait, what only the owner answers), and a `guide` tool returning the same text for clients that drop server instructions. Since "Keep in the manual only the rules that span tools" it holds only what spans tools; what one tool needs is in that tool's description (6h).
@@ -209,7 +203,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why: upstream documents Tailscale Funnel only; a prefix behind an existing reverse proxy is a common setup.
 - Would need: the change, a test that the form's action stays under the public URL, and a README section on running behind a reverse proxy.
 
-### 8. Windows in the README and CI — prerequisite for the Windows ones (6y, 6z, 6g)
+### 8. Windows in the README and CI — prerequisite for the Windows ones (6y, 6z)
 
 - Upstream says "Linux or macOS". Supporting Windows means a decision record (scope: the bridge runs on Windows; the systemd service and `install.sh` stay Linux-only; Windows runs it by hand or as a startup task), a README section, and a Windows job in `.github/workflows/checks.yml` so it stays working (today every job is `ubuntu-latest`).
 - Without the CI job, Windows support would rot; upstream's own rule ("every rule is enforced by something that can fail") argues for it.

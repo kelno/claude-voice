@@ -108,6 +108,9 @@ async def test_tools_covered_by_others_are_gone_and_the_rest_take_few_parameters
     async with Client(world[2]) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
     assert "recent_activity" not in tools and "get_messages" not in tools
+    # Started sessions are in the desktop sidebar already, with Remote Control; moving one into its
+    # folder's group took it off the phone (kelno, 2026-11-11).
+    assert "hand_to_desktop" not in tools
     assert set(tools["list_active_sessions"].input_schema.get("properties", {})) == set()
     assert set(tools["search_session_history"].input_schema["properties"]) == {"session", "query", "max_chars"}
     assert set(tools["list_folders"].input_schema["properties"]) == {"query"}

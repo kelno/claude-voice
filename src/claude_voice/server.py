@@ -691,7 +691,6 @@ def build_server(
     trust_folder: Callable[[Path], None] = transcripts.trust_folder,
     plugin_approvals: Path | None = None,
     plugin_client: Callable[[Any], Any] | None = None,
-    open_in_desktop: Callable[[str, str, str], Awaitable[None]] = transcripts.open_in_desktop,
     machine_folder: Path = machines.FOLDER,
     machine_http: machines.Http = machines.http_client,
     machine_whois: machines.Whois = tailnet.whois,
@@ -1585,34 +1584,6 @@ def build_server(
         watch_live(d)
         store.set_setting(WATCHED_SETTING, watched)
         return {"session": d.get("name"), "watched": True}
-
-    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def hand_to_desktop(name: str) -> dict[str, Any]:
-        """Only when the owner asks: move a started session into the desktop app.
-        A session start_active_session started, once its turn has ended, goes into the desktop
-        app's Code tab, in its folder's group, with its conversation: the bridge stops it, and a
-        terminal tab on the PC, named after it, hands it over; it is off the phone until the owner
-        opens it there. status: "handed_over", "busy" (mid-turn; nothing done), "no_conversation"
-        (it never answered, so there is nothing to open), or "not_started_here"."""
-        live = next((d for d in live_sessions() if name in (d.get("name"), d.get("sessionId"))), None)
-        started = store.started_session(str(live.get("sessionId")) if live else name)
-        if started is None:
-            return {"name": name, "status": "not_started_here"}
-        sid, cwd = started["claude_session_id"], started["cwd"]
-        name = started["name"]
-        if live and live.get("status") != "idle":
-            return {"name": name, "claude_session_id": sid, "status": "busy"}
-        # Claude Code writes no conversation before the first turn: nothing to open then.
-        if not any(t["role"] == "assistant" for t in transcripts.recent_turns(read_transcript(sid, cwd), None)):
-            return {"name": name, "claude_session_id": sid, "status": "no_conversation"}
-        if live:
-            # The desktop app only takes a session that is no longer running elsewhere.
-            await stop_active_session(sid)
-        try:
-            await open_in_desktop(sid, cwd, name)
-        except Exception as exc:
-            raise ToolError(f"Could not open {name} in the desktop app: {exc}") from None
-        return {"name": name, "claude_session_id": sid, "status": "handed_over", "terminal_tab": name}
 
     def under_root(cwd: str | None) -> str | None:
         """Folder name: relative to the root, the full path in a granted folder, or None
