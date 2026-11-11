@@ -269,9 +269,11 @@ Sessions
   and puts a card in front of the owner, so never ask one to.
 - Sessions run in folders on the PC (list_folders); the desktop app's Code
   tab groups them by folder. claude.ai Projects, the named workspaces in the
-  Chat tab and on the phone, are something else, which the bridge never
-  touches: when the owner names a project, look for its folder with
-  list_folders, and if the name could be a claude.ai Project, ask which.
+  Chat tab and on the phone, are something else: the bridge can't see them or
+  act in them. When the owner asks for work in a "project", look for a folder
+  by that name with list_folders; if none matches, say the bridge works only
+  in folders on the PC, and that the name may be one of their claude.ai
+  Projects.
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
