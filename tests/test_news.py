@@ -603,3 +603,50 @@ async def test_a_followed_session_is_named_whatever_its_capitals(served):
         stopped = await call(c, "follow_session", session="Billing-Ab", follow=False)
     assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
     assert stopped["status"] == "not_followed"
+
+
+async def test_reading_progress_mid_turn_then_a_restart_keeps_the_session_followed(tmp_path, world):
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+            desk.set("busy")
+            desk.transcript.append(turn("assistant", "Exporting the first table."))
+            desk.transcript.append(turn("assistant", "Exporting the second table."))
+            read = await call(c, "wait_for_session", session="billing-ab", after=sent["next_after"], wait_seconds=0.1)
+            mid = await call(c, "list_folders")
+    desk.transcript.append(turn("assistant", "Export done."))
+    desk.set("idle")
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            out = await call(c, "list_folders")
+            waited = await call(c, "wait_for_session", wait_seconds=0.1)
+    assert read["status"] == "still_working"
+    assert mid["news"] == "billing-ab (busy): nothing new"
+    assert out["news"].startswith("billing-ab (idle): reply to you")
+    assert waited["reply"] == "Export done."
+
+
+async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
+    # Mid-turn, the relay has read the latest progress line and sends again: the next finished
+    # turn answers this message, and reading progress before it doesn't end the following.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        desk.transcript.append(turn("assistant", "Exporting the first table."))
+        await call(c, "read_session_output", session="billing-ab")
+        await call(c, "message_active_session", session="billing-ab", message="Also the archive.")
+        desk.transcript.append(turn("assistant", "Exporting the archive."))
+        read = await call(c, "read_session_output", session="billing-ab")
+        mid = await call(c, "list_folders")
+        desk.transcript.append(turn("assistant", "Both done."))
+        desk.set("idle")
+        out = await call(c, "list_folders")
+    assert read["turns"][-1]["text"] == "Exporting the archive."
+    assert mid["news"] == "billing-ab (busy): nothing new"
+    assert out["news"].startswith("billing-ab (idle): reply to you")

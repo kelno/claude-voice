@@ -1082,13 +1082,19 @@ def build_server(
                 mark = marks.get(str(target.get("sessionId")))
                 if mark is None:
                     mark_read(target, seen=reached, sent=reached)  # its history so far isn't news
-                elif mark.get("sent") is None:
+                elif mark.get("sent") is None or not unread_reply(target, mark):
+                    # RULE: a send after every reply is read waits for its own reply
                     mark_read(target, seen=mark["seen"], sent=reached)
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
                 mark_read(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
             else:
                 mark_read(target, seen=reached)
+
+    def unread_reply(d: dict[str, Any], mark: dict[str, Any]) -> bool:
+        """Whether the session wrote anything after the relay's message that the relay hasn't read."""
+        turns = all_turns(str(d.get("sessionId")), str(d.get("cwd")))
+        return any(t["role"] == "assistant" and i > max(mark["sent"], mark["seen"]) for i, t in enumerate(turns))
 
     def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A followed session's entry in the news line, or none once its finished turn is read
