@@ -276,6 +276,14 @@ Sessions
   by that name with list_folders; if none matches, say the bridge works only
   in folders on the PC, and that the name may be one of their claude.ai
   Projects.
+- The bridge works only in folders open to it: those under the root (the
+  folder list_folders gives as root, which its names are relative to) and
+  those the owner opened with request_access. "Open" means open to the
+  bridge, not open in an app. A folder or session outside them has access
+  "folder_not_open" (request_access opens it once the owner confirms) or
+  "folder_closed" (it is inside, or contains, a folder the bridge keeps
+  closed for good: secrets under the home folder, the system's own folders;
+  nothing opens it).
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
@@ -1090,8 +1098,9 @@ def build_server(
         """Folders to start a session in: used by Claude Code lately, or found by a word.
         The folders Claude Code was used in during the last 30 days, anywhere on this machine,
         newest first, from its own history; a word (`query`) also finds folders under the root
-        never used. Each has access like list_active_sessions (absent when open; name is relative
-        to the root when under it, else the full path), at most 20."""
+        never used. At most 20, with `root`, the root's full path. A folder's name is relative to
+        the root when under it, else its full path; its access is as list_active_sessions says,
+        absent when it is open to the bridge."""
         children = [p for p in manager.root.iterdir() if p.is_dir() and not p.name.startswith(".")]
         by_key = {project_key_for_directory(str(p)): p for p in children}
         found: dict[Path, tuple[float, int]] = {p.resolve(): (0.0, 0) for p in children}
@@ -1667,7 +1676,7 @@ def build_server(
         Claude Code sessions on this machine, busy, idle or waiting; kind "interactive" is one
         the user types in, "bg" one with no terminal window (the bridge's own are on Remote
         Control); side_chat marks a desktop side chat ("btw:
-        ..."), which gets no work unless asked. A session outside the open folders has access
+        ..."), which gets no work unless asked. A session outside the folders open to the bridge has access
         "folder_not_open" (open it with request_access, which the owner approves in their app) or
         "folder_closed" (never opened; a refusal names the closed folder), and only its name,
         folder and status; access is absent when the session is open to the bridge, and a
@@ -1868,11 +1877,11 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
-        """Open a folder to the bridge for good, once the owner confirms with a passkey.
+        """Open a folder to the bridge, once the owner confirms with a passkey.
         Give one of `session`, a listed session, to open its folder, or `folder`, a full path, to
         open one no session runs in yet, so start_active_session can work there (Claude Code's
         trust is then marked too, and covers the whole repository when the folder is inside one,
-        which the owner should hear); revoke_access closes it again. Send the owner the
+        which the owner should hear); it stays open until revoke_access takes it back. Send the owner the
         returned link in the chat: the page shows the code and the folder, which opens with
         everything under it once they confirm there with their passkey."""
         target, d = folder_to_open(session, folder)
@@ -2102,7 +2111,8 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def revoke_access(folder: str) -> dict[str, Any]:
-        """Close a folder opened with request_access; health lists the granted ones."""
+        """Take back a folder opened with request_access: it is folder_not_open again.
+        health lists the folders opened this way."""
         try:
             closed = manager.access.revoke(folder)
         except ValueError as exc:
