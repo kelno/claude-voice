@@ -22,7 +22,7 @@ find = 'if env.get\("ANTHROPIC_API_KEY"\) and env.get\("CLAUDE_VOICE_ALLOW_API_K
 replace = 'if False:'
 
 [[rule]]
-name = "a project outside the root is refused"
+name = "a folder outside the root is refused"
 file = "src/claude_voice/sessions.py"
 find = 'if self.access.state\(path\) != "open":'
 replace = 'if False:'
@@ -228,7 +228,7 @@ replace = 'return max(min(seconds, 300), 0)'
 [[rule]]
 name = "a new folder must be a simple name under the root"
 file = "src/claude_voice/server.py"
-find = 'if not SIMPLE_FOLDER\.fullmatch\(project\):'
+find = 'if not SIMPLE_FOLDER\.fullmatch\(folder\):'
 replace = 'if False:'
 
 [[rule]]

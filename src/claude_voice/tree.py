@@ -111,10 +111,10 @@ class SessionTree:
         clock: Callable[[], float] = time.time,
         subagents: Callable[[str, str], list[str]] = lambda sid, directory: list_subagents(sid, directory=directory),
         alive: Callable[[int], bool] = _pid_alive,
-        project_of: Callable[[str | None], str | None] | None = None,
+        folder_of: Callable[[str | None], str | None] | None = None,
         rename: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] = lambda rows: rows,
     ) -> None:
-        self.project_of = project_of  # the bridge's own rule, granted folders included
+        self.folder_of = folder_of  # the bridge's own rule, granted folders included
         self.live_dir = live_dir
         self.root = Path(root).resolve()
         self.projects_dir = projects_dir
@@ -125,9 +125,9 @@ class SessionTree:
         self._transcripts: dict[Path, _Transcript] = {}
         self._couriers: tuple[set[int], set[str]] = (set(), set())  # pids, names
 
-    def _project(self, cwd: str | None) -> str | None:
-        if self.project_of is not None:
-            return self.project_of(cwd)
+    def _folder(self, cwd: str | None) -> str | None:
+        if self.folder_of is not None:
+            return self.folder_of(cwd)
         if not cwd:
             return None
         path = Path(cwd).resolve()
@@ -152,7 +152,7 @@ class SessionTree:
                 pids.add(pid)
                 names.add(str(d.get("name", "")))
                 continue
-            if not self.alive(pid) or self._project(d.get("cwd")) is None:
+            if not self.alive(pid) or self._folder(d.get("cwd")) is None:
                 continue
             out.append(d)
         self._couriers = (pids, names)
@@ -175,13 +175,13 @@ class SessionTree:
             return False
 
     def _node(
-        self, nid: str, name: Any, kind: str, project: str | None, status: Any, parent: str | None
+        self, nid: str, name: Any, kind: str, folder: str | None, status: Any, parent: str | None
     ) -> dict[str, Any]:
         return {
             "id": nid,
             "name": name,
             "kind": kind,
-            "project": project,
+            "folder": folder,
             "status": status,
             "parent_id": parent,
             "talks_to": set(),
@@ -192,9 +192,9 @@ class SessionTree:
         for d in live:
             sid = str(d["sessionId"])
             cwd = str(d.get("cwd"))
-            project = self._project(d.get("cwd"))
+            folder = self._folder(d.get("cwd"))
             kind = session_kind(d)
-            nodes[sid] = self._node(sid, d.get("name"), kind, project, d.get("status"), None)
+            nodes[sid] = self._node(sid, d.get("name"), kind, folder, d.get("status"), None)
             try:
                 agents = self.subagents(sid, cwd)
             except Exception:
@@ -202,7 +202,7 @@ class SessionTree:
             for agent in agents:
                 if not self._recent_subagent(sid, cwd, agent):
                     continue  # long sessions keep every helper they ever ran; show those at work
-                nodes[f"{sid}/{agent}"] = self._node(f"{sid}/{agent}", agent, "subagent", project, None, sid)
+                nodes[f"{sid}/{agent}"] = self._node(f"{sid}/{agent}", agent, "subagent", folder, None, sid)
 
     def _resolver(self, live: list[dict[str, Any]]) -> Callable[[str, str], str | None]:
         """Who a name or socket address in a transcript is: the bridge, a running session, or nobody."""

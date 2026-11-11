@@ -51,7 +51,7 @@ ran in the last day, with the session the owner talks to:
 ```json
 {
   "sessions": [
-    {"id": "5f3c…", "name": "billing-ab", "kind": "terminal", "project": "billing",
+    {"id": "5f3c…", "name": "billing-ab", "kind": "terminal", "folder": "billing",
      "status": "idle", "doing": "Fixed the export totals.", "minutes_since_update": 2,
      "question": {"text": "Which file?", "options": ["a.py", "b.py"]}}
   ],

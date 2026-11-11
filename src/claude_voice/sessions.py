@@ -1,7 +1,7 @@
 """What the bridge's tools share about where sessions may run and how they start.
 
 The sessions themselves are ordinary background Claude Code sessions; this keeps
-the project root, the folders opened to the bridge, the permission mode new
+the root, the folders opened to the bridge, the permission mode new
 sessions get, and the SDK client the read-only side session runs on.
 """
 
@@ -52,14 +52,14 @@ class SessionManager:
         # conversation gets the mode for new sessions and no added folders.
         self.grant_for = grant_for or (lambda session_id, cwd, new_mode: Grant(new_mode))
 
-    def resolve_project(self, project: str) -> Path:
-        path = Path(project).expanduser()
+    def resolve_folder(self, folder: str) -> Path:
+        path = Path(folder).expanduser()
         if not path.is_absolute():
             path = self.root / path
         path = path.resolve()
-        # RULE: a project outside the root is refused
+        # RULE: a folder outside the root is refused
         if self.access.state(path) != "open":
-            raise ValueError(f"project must be under {self.root} or a folder opened with request_access")
+            raise ValueError(f"folder must be under {self.root} or opened with request_access")
         if not path.is_dir():
             raise ValueError(f"not a directory: {path}")
         return path

@@ -43,7 +43,7 @@ CODE_TRIES = 5
 # them, start, rename and stop them, and answer what they ask. Nothing about the bridge itself:
 # not updating it, not handing out access to it, not its health or its own settings.
 SESSION_TOOLS = (
-    "list_projects",
+    "list_folders",
     "list_active_sessions",
     "get_active_session",
     "read_session_output",

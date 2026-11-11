@@ -267,6 +267,11 @@ Sessions
   one itself with the bridge's tools. A desktop session (one the owner opened
   in the desktop app) can't: the app refuses a start from a relayed message
   and puts a card in front of the owner, so never ask one to.
+- Sessions run in folders on the PC (list_folders); the desktop app's Code
+  tab groups them by folder. claude.ai Projects, the named workspaces in the
+  Chat tab and on the phone, are something else, which the bridge never
+  touches: when the owner names a project, look for its folder with
+  list_folders, and if the name could be a claude.ai Project, ask which.
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
@@ -284,7 +289,7 @@ Missing tools
 - The app caches this connector's tool list. If a tool named here isn't in
   yours, search for it by its exact name; if it still isn't there, tell the
   owner the tool list needs a refresh in claude.ai Settings → Connectors.
-- This bridge is the owner's own project, kept up by their agents: when a
+- This bridge is the owner's own software, kept up by their agents: when a
   tool gets in your way or lacks something, proposing a change to the bridge
   is a fair suggestion, and feedback you log can name that change as a lead.
 """
@@ -327,7 +332,7 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
     if not root.is_dir():
         raise ConfigError(
             f"CLAUDE_VOICE_ROOT is not a directory: {root}. Make it with `mkdir -p {root}`, or set "
-            "CLAUDE_VOICE_ROOT to the folder that holds your projects."
+            "CLAUDE_VOICE_ROOT to the folder that holds your work folders."
         )
     cfg = Config(
         root=root,
@@ -384,7 +389,7 @@ def _parse_cursor(cursor: str | None) -> int | None:
 
 REMOTE_ID = re.compile(r"session_[A-Za-z0-9]+")
 # A session named by its short number, as said aloud: "3", "nr 3", "nr. 3", "nummer 3", "number 3".
-SIMPLE_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # a new project folder: one plain name
+SIMPLE_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # a new folder: one plain name
 SPOKEN_NUMBER = re.compile(r"(?:nr\.?|nummer|number)?\s*(\d{1,4})", re.IGNORECASE)
 
 
@@ -753,7 +758,7 @@ def build_server(
 
     # under_root is defined further down; looked up when called, so granted folders count.
     watcher = events.LiveWatcher(
-        manager.store, live_dir, manager.root, clock=manager.clock, project_of=lambda cwd: under_root(cwd)
+        manager.store, live_dir, manager.root, clock=manager.clock, folder_of=lambda cwd: under_root(cwd)
     )
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -764,7 +769,7 @@ def build_server(
         manager.root,
         projects_dir=projects_dir,
         clock=manager.clock,
-        project_of=lambda cwd: under_root(cwd),
+        folder_of=lambda cwd: under_root(cwd),
         rename=renamed,
     )
     side_answer = side_answer or transcripts.shared_reader()
@@ -1072,7 +1077,7 @@ def build_server(
         return {"guide": INSTRUCTIONS}
 
     @tool(annotations=READ_ONLY)
-    def list_projects(query: str | None = None) -> dict[str, Any]:
+    def list_folders(query: str | None = None) -> dict[str, Any]:
         """Folders to start a session in: used by Claude Code lately, or found by a word.
         The folders Claude Code was used in during the last 30 days, anywhere on this machine,
         newest first, from its own history; a word (`query`) also finds folders under the root
@@ -1107,7 +1112,7 @@ def build_server(
                 row["access"] = f"folder_{manager.access.state(path)}"
             rows.append((newest, row))
         rows.sort(key=lambda r: (-r[0], r[1]["name"]))
-        return {"root": str(manager.root), "projects": [row for _, row in rows[:20]]}
+        return {"root": str(manager.root), "folders": [row for _, row in rows[:20]]}
 
     state_seen: dict[str, tuple[str, str]] = {}  # session id -> (state, since)
 
@@ -1221,7 +1226,7 @@ def build_server(
                 "number": numbers.get(str(row["claude_session_id"])),
                 "name": row["name"],
                 "kind": session_kind({**d, "kind": row["kind"]}),
-                "project": row["project"],
+                "folder": row["folder"],
                 "status": row["status"],
                 "state": state,
                 "state_since": observe(str(row["claude_session_id"]), str(row["name"]), state, doing),
@@ -1241,7 +1246,7 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_active_session(
-        project: str,
+        folder: str,
         name: str | None = None,
         model: str | None = None,
         effort: str | None = None,
@@ -1249,13 +1254,13 @@ def build_server(
         remote_control: bool | None = None,
         create_folder: bool = False,
     ) -> dict[str, Any]:
-        """Start new work: a session in a project, on Remote Control on phone and PC.
-        A project from list_projects; the session is named `name` or after the project, listed at
-        once so ask_active_session reaches it, and runs on Remote Control with no window unless
-        the settings say otherwise; `start_in` ("terminal" for a window on the PC) and
-        `remote_control` change that once.
-        `create_folder=true` first makes the project folder under the root when it does not
-        exist; only for a plain name (letters, digits, '.', '_', '-'), never by default.
+        """Start new work: a session in a folder, on Remote Control on phone and PC.
+        `folder`: a name from list_folders, or a full path; the session is named `name` or after
+        the folder, listed at once so ask_active_session reaches it, and runs on Remote Control
+        with no window unless the settings say otherwise; `start_in` ("terminal" for a window on
+        the PC) and `remote_control` change that once.
+        `create_folder=true` first makes that folder under the root when it does not exist; only
+        for a plain name (letters, digits, '.', '_', '-'), never by default.
         Optional: `model` (an alias such as opus or sonnet, or a full name) and `effort` (low,
         medium, high, xhigh or max); left out, the model is opus and the effort Claude Code's
         default."""
@@ -1267,16 +1272,16 @@ def build_server(
         folder_created = False
         if create_folder:
             # RULE: a new folder must be a simple name under the root
-            if not SIMPLE_FOLDER.fullmatch(project):
-                raise ToolError(f"{project!r} is not a simple name; use letters, digits, '.', '_' or '-' only.")
-            new = manager.root / project
+            if not SIMPLE_FOLDER.fullmatch(folder):
+                raise ToolError(f"{folder!r} is not a simple name; use letters, digits, '.', '_' or '-' only.")
+            new = manager.root / folder
             if not new.exists():
                 new.mkdir()  # never over something that exists
                 folder_created = True
                 # RULE: only a folder the bridge just made is trusted for claude code
                 trust_folder(new)
         try:
-            path = manager.resolve_project(project)
+            path = manager.resolve_folder(folder)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         # RULE: starting the same session twice gives back the one already running
@@ -1287,7 +1292,7 @@ def build_server(
             return {
                 "name": same.get("name"),
                 "claude_session_id": same.get("sessionId"),
-                "project": under_root(str(path)),
+                "folder": under_root(str(path)),
                 "status": same.get("status") or "idle",
                 "already_running": True,
                 "folder_created": folder_created,
@@ -1340,7 +1345,7 @@ def build_server(
                 return {
                     "name": started_as,
                     "claude_session_id": found.get("sessionId"),
-                    "project": under_root(str(path)),
+                    "folder": under_root(str(path)),
                     "status": found.get("status") or "idle",
                     "started_in": started_in,
                     **({"note": where_note} if where_note else {}),
@@ -1397,8 +1402,8 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_role(role: str, task: str | None = None) -> dict[str, Any]:
         """Start a session for a role, such as "contribute", on Remote Control.
-        A contribute session changes claude-voice in its own clone and opens a pull request to the
-        project, as its settings say; `task` is what the owner wants. Returns the session's name:
+        A contribute session changes claude-voice in its own clone and opens a pull request to
+        upstream, as its settings say; `task` is what the owner wants. Returns the session's name:
         reach it like any session started here, with message_active_session, then a wait."""
         try:
             return await launch_role(role, task)
@@ -1598,8 +1603,9 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def hand_to_desktop(name: str) -> dict[str, Any]:
         """Only when the owner asks: move a started session into the desktop sidebar.
-        A session start_active_session started, once its turn has ended, goes into its project's
-        group in the desktop app's sidebar with its conversation: the bridge stops it and opens a
+        A session start_active_session started, once its turn has ended, goes into the desktop
+        app's Code tab, in its folder's group in the sidebar, with its conversation: the bridge
+        stops it and opens a
         terminal tab on the PC, named after it, that hands it over; there it waits for the owner
         to open it, and until then it is off the phone. status: "handed_over", "busy" (mid-turn;
         nothing done), "no_conversation" (it never answered, so there is nothing to open), or
@@ -1625,12 +1631,12 @@ def build_server(
         return {"name": name, "claude_session_id": sid, "status": "handed_over", "terminal_tab": name}
 
     def under_root(cwd: str | None) -> str | None:
-        """Project name: relative to the root, the full path in a granted folder, or None
+        """Folder name: relative to the root, the full path in a granted folder, or None
         if the folder is not open to the bridge."""
         if not cwd:
             return None
         try:
-            path = manager.resolve_project(cwd)
+            path = manager.resolve_folder(cwd)
         except ValueError:
             return None
         if manager.access.base(path) == manager.root:
@@ -1698,7 +1704,7 @@ def build_server(
             row = {
                 "claude_session_id": d.get("sessionId"),
                 "name": d.get("name"),
-                "project": name,
+                "folder": name,
                 "status": d.get("status"),
                 "kind": d.get("kind"),
                 "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
@@ -1721,14 +1727,14 @@ def build_server(
         return sessions
 
     @tool(annotations=READ_ONLY)
-    def list_claude_conversations(project: str | None = None, limit: int = 10) -> dict[str, Any]:
+    def list_claude_conversations(folder: str | None = None, limit: int = 10) -> dict[str, Any]:
         """Earlier conversations, newest first; resume one with attach_conversation.
         Recent Claude Code conversations on this machine, including ones started in a terminal;
-        optionally only for one project."""
+        optionally only in one folder (`folder`, a name from list_folders)."""
         directory = None
-        if project:
+        if folder:
             try:
-                directory = str(manager.resolve_project(project))
+                directory = str(manager.resolve_folder(folder))
             except ValueError as exc:
                 raise ToolError(str(exc)) from None
         limit = min(max(limit, 1), 50)
@@ -1742,7 +1748,7 @@ def build_server(
             listed.append(
                 {
                     "claude_session_id": c.session_id,
-                    "project": name,
+                    "folder": name,
                     "summary": c.custom_title or c.summary,
                     "first_prompt": c.first_prompt,
                     "git_branch": c.git_branch,
@@ -1758,7 +1764,7 @@ def build_server(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def attach_conversation(
-        claude_session_id: str, project: str | None = None, label: str | None = None
+        claude_session_id: str, folder: str | None = None, label: str | None = None
     ) -> dict[str, Any]:
         """Resume an earlier conversation on Remote Control; then talk to it.
         Continues an existing Claude Code conversation (from list_claude_conversations) like
@@ -1767,7 +1773,7 @@ def build_server(
         can't continue it in place, as when it is still open elsewhere, it starts a copy under a
         new id, and copied_from names the original: say so; a claude_code_note is Claude Code's
         own remark on the start."""
-        if project is None:
+        if folder is None:
             live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
             match = None
             if live is None:
@@ -1777,10 +1783,10 @@ def build_server(
                 )
                 if match is None:
                     raise ToolError(f"No Claude Code conversation with id {claude_session_id}")
-            project = (live or {}).get("cwd") or (match.cwd if match else "") or ""
+            folder = (live or {}).get("cwd") or (match.cwd if match else "") or ""
             label = label or (live or {}).get("name") or (match.custom_title or match.summary if match else None)
         try:
-            path = manager.resolve_project(project)
+            path = manager.resolve_folder(folder)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         if not transcripts.SESSION_ID.fullmatch(claude_session_id):
@@ -2556,7 +2562,7 @@ def build_server(
         """Ask the side session, a read-only fork that reads code; waits up to 20 s.
         5 s by default: the Claude app sends a call past about 10 s to the background.
         The side session is a new read-only fork of a running session's whole conversation that
-        can read the project's files, while the session itself keeps working, untouched; each
+        can read the files in the session's folder, while the session itself keeps working, untouched; each
         question forks anew, from the latest state. It waits up to the caller's time budget (20 s
         for the Claude app): status "answered" (report it as the side
         session's), "still_working" (read it later with read_forked_session(fork_id)),

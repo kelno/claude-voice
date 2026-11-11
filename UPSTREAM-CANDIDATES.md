@@ -46,9 +46,9 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 ### 6b. Project list from Claude Code's history — fork "List the folders Claude Code was used in, wherever they are"
 
-- What: `list_projects` lists the folders Claude Code was used in during the last 30 days, anywhere, read from `~/.claude/projects` (the real folder found from the working folder a conversation records), each marked with `access` when not open; deleted folders left out; search on the folder name.
+- What: `list_folders` (upstream's `list_projects`) lists the folders Claude Code was used in during the last 30 days, anywhere, read from `~/.claude/projects` (the real folder found from the working folder a conversation records), each marked with `access` when not open; deleted folders left out; search on the folder name.
 - Why: the root-only list missed busy folders elsewhere and didn't match the desktop app's sessions.
-- Depends on 6 (access marks). Test: `test_the_project_list_includes_folders_claude_was_used_in_anywhere`.
+- Depends on 6 (access marks). Test: `test_the_folder_list_includes_folders_claude_was_used_in_anywhere`.
 
 ### 6c. peek_session and clearer reader descriptions — fork "Rename the quick question to peek_session and say what each reader sees"
 
@@ -226,7 +226,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.
 - The fork's `CLAUDE.md` (fork "Check how far behind upstream the fork is at each session start"): each session fetches upstream and offers the owner a resync when the fork is behind, the last sync being the merge base of `main` and `upstream/main`. It sits after upstream's own pointers, under "The owner's fork". The same section (fork "Say the fork is AI-managed") says the fork is AI-managed, maintained by kelno's own agents under kelno's private rules, and that for those agents the gates and the ratchet run as slow checks rather than before every push.
-- The guide's line saying the bridge is the owner's own project, so a change to it is a fair suggestion when a tool gets in the way (fork "Tell the relay the bridge is the owner's own project", then "Call the change feedback names a lead, not the fix"): true only of this fork.
+- The guide's line saying the bridge is the owner's own software, so a change to it is a fair suggestion when a tool gets in the way (fork "Tell the relay the bridge is the owner's own project", then "Call the change feedback names a lead, not the fix"): true only of this fork.
 - The commit-msg hook calls `python3`, which the python.org installer doesn't create on Windows (only `python.exe`), so the hook fails there unless something else provides `python3`. Fixed on this PC outside the repo, with a `python3.exe` link. Worth a one-line issue at most, not a fork change.
 
 ## Merged upstream

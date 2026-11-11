@@ -47,7 +47,7 @@ claude-voice check
 
 `check` now says that Claude Code is not signed in. Run `claude`, type
 `/login`, sign in with your Claude account, and run `claude-voice check` again.
-It should print `ready to serve over stdio`. Your projects belong in `~/src`;
+It should print `ready to serve over stdio`. Your work folders belong in `~/src`;
 to use another folder, set `CLAUDE_VOICE_ROOT` (see [the settings](#settings)).
 
 Then connect it to Claude Code on the same computer:
@@ -92,7 +92,7 @@ the bridge says which are missing, with the exact fix, through its
 | Tool | What it is for |
 | --- | --- |
 | `guide` | how to use the bridge: its roles, rules and which tool for what; the same text as its server instructions, also handed over with a conversation's first result |
-| `list_projects` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
+| `list_folders` | the folders Claude Code was used in lately, anywhere on the computer, from its own history; or any folder under the root found by a word from its name |
 | `fleet_recap` | every session in one call, each with a line on what it is doing |
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
 | `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
@@ -102,7 +102,7 @@ the bridge says which are missing, with the exact fix, through its
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |
 | `confirm_ask`, `confirm_with_owner`, `confirm_check` | the owner's own OK for a session: the session asks with its exact summary, `confirm_with_owner` gives the link to the bridge's page where you confirm it with your passkey, and the session checks the result itself; how and why: [docs/owner-confirmation.md](docs/owner-confirmation.md) |
-| `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new project folder by a plain name under the root, only when asked |
+| `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new folder by a plain name under the root, only when asked |
 | `start_role` | start a session for a role, such as `contribute`: say what to change in claude-voice and get a pull request |
 | `stop_active_session` | stop such a session again; sessions the bridge did not start are never stopped |
 | `rename_session` | give a running session a new name; messages to the old name still reach it. A session the bridge started is renamed in Claude Code too once its turn has ended, through Claude Code's job record for it, and keeps the name when woken again; any other keeps its old name in Claude Code and the desktop app |
@@ -207,7 +207,7 @@ every check, for an assistant doing the setup:
 
 ```console
 $ env -u ANTHROPIC_API_KEY -u CLAUDE_VOICE_ALLOW_API_KEY CLAUDE_VOICE_ROOT=no-such-folder claude-voice check
-claude-voice: CLAUDE_VOICE_ROOT is not a directory: no-such-folder. Make it with `mkdir -p no-such-folder`, or set CLAUDE_VOICE_ROOT to the folder that holds your projects.
+claude-voice: CLAUDE_VOICE_ROOT is not a directory: no-such-folder. Make it with `mkdir -p no-such-folder`, or set CLAUDE_VOICE_ROOT to the folder that holds your work folders.
 $ env -u CLAUDE_VOICE_ALLOW_API_KEY CLAUDE_VOICE_ROOT=src ANTHROPIC_API_KEY=sk-ant-example claude-voice check
 claude-voice: ANTHROPIC_API_KEY is set, so Claude would bill the API instead of your subscription. Unset it, or set CLAUDE_VOICE_ALLOW_API_KEY=1 if that is intended.
 ```

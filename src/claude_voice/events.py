@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS feed(
   session TEXT NOT NULL,
   kind TEXT NOT NULL,
   text TEXT,
-  project TEXT
+  folder TEXT
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 """
@@ -51,18 +51,20 @@ class LiveWatcher:
         live_dir: Path,
         root: Path,
         clock: Callable[[], float] = time.time,
-        project_of: Callable[[str | None], str | None] | None = None,
+        folder_of: Callable[[str | None], str | None] | None = None,
     ) -> None:
         self.db = store.db
         self.db.executescript(SCHEMA)
+        if "project" in {r[1] for r in self.db.execute("PRAGMA table_info(feed)")}:
+            self.db.execute("ALTER TABLE feed RENAME COLUMN project TO folder")  # its name before the rename
         self.live_dir = live_dir
         self.root = Path(root).resolve()
         self.clock = clock
-        self.project_of = project_of  # the bridge's own rule, granted folders included
+        self.folder_of = folder_of  # the bridge's own rule, granted folders included
 
-    def _project(self, cwd: str | None) -> str | None:
-        if self.project_of is not None:
-            return self.project_of(cwd)
+    def _folder(self, cwd: str | None) -> str | None:
+        if self.folder_of is not None:
+            return self.folder_of(cwd)
         if not cwd:
             return None
         path = Path(cwd).resolve()
@@ -78,22 +80,22 @@ class LiveWatcher:
         """Diff the running sessions against the last look; record and return the changes."""
         now = {}
         for d in read_live(self.live_dir):
-            project = self._project(d.get("cwd"))
-            if project is not None and d.get("name"):
-                now[d["name"]] = (d.get("status"), d.get("sessionId"), project)
+            folder = self._folder(d.get("cwd"))
+            if folder is not None and d.get("name"):
+                now[d["name"]] = (d.get("status"), d.get("sessionId"), folder)
 
         before = {r[0]: (r[1], r[2]) for r in self.db.execute("SELECT * FROM live_snapshot").fetchall()}
         baselined = self.db.execute("SELECT 1 FROM meta WHERE key='baselined'").fetchone()
 
         changes: list[tuple[str, str, str | None, str | None]] = []
         if baselined:
-            for name, (status, _, project) in now.items():
+            for name, (status, _, folder) in now.items():
                 if name not in before:
-                    changes.append((name, "started", status, project))
+                    changes.append((name, "started", status, folder))
                 elif before[name][0] != status:
                     kind = _transition(before[name][0], status)
                     if kind:
-                        changes.append((name, kind, status, project))
+                        changes.append((name, kind, status, folder))
             for name in before.keys() - now.keys():
                 changes.append((name, "ended", None, None))
 
@@ -106,10 +108,10 @@ class LiveWatcher:
             )
             self.db.execute("INSERT OR IGNORE INTO meta VALUES('baselined','1')")
             seqs: list[int] = []
-            for name, kind, _status, project in changes:
+            for name, kind, _status, folder in changes:
                 cur = self.db.execute(
-                    "INSERT INTO feed(ts, session, kind, text, project) VALUES(?,?,?,?,?)",
-                    (ts, name, kind, _live_sentence(name, kind, project), project),
+                    "INSERT INTO feed(ts, session, kind, text, folder) VALUES(?,?,?,?,?)",
+                    (ts, name, kind, _live_sentence(name, kind, folder), folder),
                 )
                 seqs.append(cur.lastrowid or 0)
         return self.feed_after(min(seqs) - 1) if seqs else []
@@ -118,27 +120,27 @@ class LiveWatcher:
         """Add a news item the watcher did not see itself, e.g. the tree changing shape."""
         with self.db:
             self.db.execute(
-                "INSERT INTO feed(ts, session, kind, text, project) VALUES(?,?,?,?,?)",
+                "INSERT INTO feed(ts, session, kind, text, folder) VALUES(?,?,?,?,?)",
                 (self.clock(), session, kind, text, None),
             )
 
     def feed_after(self, seq: int, limit: int = 200) -> list[dict[str, Any]]:
         rows = self.db.execute(
-            "SELECT seq, ts, session, kind, text, project FROM feed WHERE seq>? ORDER BY seq LIMIT ?",
+            "SELECT seq, ts, session, kind, text, folder FROM feed WHERE seq>? ORDER BY seq LIMIT ?",
             (seq, limit),
         ).fetchall()
-        return [{"seq": r[0], "ts": r[1], "session": r[2], "kind": r[3], "text": r[4], "project": r[5]} for r in rows]
+        return [{"seq": r[0], "ts": r[1], "session": r[2], "kind": r[3], "text": r[4], "folder": r[5]} for r in rows]
 
     def last_seq(self) -> int:
         return self.db.execute("SELECT COALESCE(MAX(seq), 0) FROM feed").fetchone()[0]
 
 
-def _live_sentence(name: str, kind: str, project: str | None) -> str:
+def _live_sentence(name: str, kind: str, folder: str | None) -> str:
     return {
         "finished": f"{name} has finished and is waiting.",
         "needs_input": f"{name} needs your input.",
         "working": f"{name} is working.",
-        "started": f"{name} started in {project}.",
+        "started": f"{name} started in {folder}.",
         "ended": f"{name} has ended.",
     }.get(kind, f"{name}: {kind}.")
 
