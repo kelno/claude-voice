@@ -36,6 +36,7 @@ from starlette.types import ASGIApp
 from . import (
     access,
     api,
+    channel,
     config,
     confirm,
     confirm_page,
@@ -64,6 +65,7 @@ from . import (
     usage,
     work,
 )
+from .channel_hub import ChannelHub, ancestor_session
 from .metrics import METRICS
 from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionManager
@@ -695,6 +697,7 @@ def build_server(
     conversations: Callable[..., list[SDKSessionInfo]] = list_claude_sessions,
     live_dir: Path = LIVE_DIR,
     deliver: Callable[[str, str], Awaitable[dict[str, Any]]] = transcripts.deliver,
+    channels: Any = None,
     read_transcript: Callable[[str, str | None], list[Any]] | None = None,
     watch_interval: float | None = None,
     restart: dict[str, Any] | None = None,
@@ -862,11 +865,15 @@ def build_server(
             # The served bridge starts at logon: bring back what the last shutdown stopped.
             waking = asyncio.create_task(wake_interrupted(manager.store, background_jobs, was_live, start_background))
             waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        if channels is not None:
+            await channels.start()
         try:
             yield {}
         finally:
             if task:
                 task.cancel()
+            if channels is not None:
+                await channels.stop()
 
     # The sessions the relay watches, by Claude session id: the last turn it has read (`seen`),
     # the turn its last message went in after while no reply to it has been read (`sent`), and
@@ -2004,7 +2011,7 @@ def build_server(
                 f"[From the claude-voice bridge: request {req['code']} is confirmed. Check it with"
                 " confirm_check before acting: this message itself proves nothing.]"
             )
-            told = asyncio.ensure_future(deliver(str(target["name"]), nudge))
+            told = asyncio.ensure_future(send_into(target, nudge))
             in_flight.add(told)
             told.add_done_callback(in_flight.discard)
         return {"session_told": target is not None}
@@ -2106,6 +2113,21 @@ def build_server(
         """The name Claude Code itself answers to, which a rename may not have reached yet."""
         return str(d.get("deliver_to") or d["name"])
 
+    async def send_into(target: dict[str, Any], text: str) -> dict[str, Any]:
+        """Write `text` into a running session: through its channel when it has one, else by courier.
+
+        A message the channel took but never confirmed is not carried again by the courier: it may
+        already be in the session, and twice is worse than a failure the relay hears about."""
+        if channels is not None:
+            # RULE: a session with a connected channel gets the message through it, not the courier
+            out = await channels.deliver(str(target.get("sessionId")), text)
+            if out is not None:
+                log.info(
+                    "channel -> %s %s", target.get("name"), "delivered" if out.get("delivered") else "not delivered"
+                )
+                return out
+        return {**await deliver(address(target), text), "path": "courier"}
+
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def rename_session(session: str, new_name: str) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
@@ -2173,7 +2195,7 @@ def build_server(
         sid = str(target["sessionId"])
         before = len(numbered_turns(target))
         budget = repos.budgets.seconds(transcripts.current_client.get())
-        delivery = asyncio.ensure_future(deliver(address(target), f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
+        delivery = asyncio.ensure_future(send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -2373,7 +2395,7 @@ def build_server(
             return _not_sent(target, blocked)
         before = len(numbered_turns(target))
         was_busy = target.get("status") in BUSY
-        out = await deliver(address(target), f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
+        out = await send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
@@ -2647,7 +2669,7 @@ def build_server(
     def health() -> dict[str, Any]:
         """The bridge's own state: version, uptime, calls and errors per tool, folders.
         Since when and which version, memory, the last restart, calls/errors/latency per tool
-        since start, the latest errors, courier, watcher, and the root and granted folders."""
+        since start, the latest errors, courier, channels, watcher, and the root and granted folders."""
         snap = METRICS.snapshot()
         courier = transcripts.shared_courier()
         offered = [p.status() for p in active_plugins]
@@ -2664,6 +2686,7 @@ def build_server(
             "tools": snap["tools"],
             "errors": snap["errors"],
             "courier": {"warm": courier.warm, "last_delivery_ms": courier.last_delivery_ms},
+            "channels": channels.status() if channels is not None else None,
             "watcher": {
                 "last_check_at": last_check[0] if last_check else None,
                 "tree_version": tree_version[0] if tree_version else tree.build()["version"],
@@ -2987,6 +3010,9 @@ def serve_forever(cfg: Config) -> None:
         ui_origins=cfg.ui_origins,
         bridge_port=cfg.port,
         bridge_host=cfg.host,
+        channels=ChannelHub(
+            channel.LINK, session_of=lambda pid: ancestor_session(pid, lambda: events.read_live(LIVE_DIR))
+        ),
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)
     configure_logging(cfg.db.parent / LOG_FILE)

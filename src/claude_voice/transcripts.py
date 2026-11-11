@@ -856,6 +856,19 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
 # otherwise. The owner wants the bridge's sessions to edit their project directly, as a
 # session at the PC does; other background sessions keep Claude Code's default.
 BRIDGE_SETTINGS: dict[str, Any] = {"worktree": {"bgIsolation": "none"}}
+# The relay channel (docs/channel.md): a plugin enabled for the bridge's own sessions only, whose
+# channel carries the relay's messages in. Claude Code lists the plugins installed for the user here.
+CHANNEL_PLUGIN = "relay-channel@claude-voice"
+INSTALLED_PLUGINS = Path("~/.claude/plugins/installed_plugins.json")
+
+
+def channel_installed(record: Path = INSTALLED_PLUGINS) -> bool:
+    """Whether the owner has set up the relay channel's plugin on this computer."""
+    try:
+        plugins = json.loads(record.expanduser().read_text(encoding="utf-8")).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return False
+    return bool(plugins.get(CHANNEL_PLUGIN))
 
 
 def background_command(
@@ -872,6 +885,7 @@ def background_command(
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
     wake: bool = False,
+    channel: bool = False,
 ) -> list[str]:
     """The command that starts a named session, on a model and effort if given, with extra
     settings (such as a hook), Remote Control and a first message if given. In the
@@ -881,11 +895,15 @@ def background_command(
 
     A conversation that has been a background session before keeps its saved options, and
     Claude Code starts a copy of it when given any other flag; `wake` continues it in place.
+    With `channel`, a background session runs the relay channel; Claude Code keeps both flags
+    in its job record, so a woken session keeps it.
     """
     if wake and resume:
         return [cli, "--resume", resume, "--bg"]
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
+    relay = channel and not terminal
+    plugins = {"enabledPlugins": {CHANNEL_PLUGIN: True}} if relay else {}
     return [
         *(terminal or []),
         *through,
@@ -899,8 +917,10 @@ def background_command(
         *(["--resume", resume] if resume else []),
         *(["--permission-mode", permission_mode] if permission_mode else []),
         *(arg for d in add_dirs for arg in ("--add-dir", d)),
+        # --channels takes a list: --settings after it ends the list before the first message.
+        *(["--channels", f"plugin:{CHANNEL_PLUGIN}"] if relay else []),
         "--settings",
-        json.dumps({**BRIDGE_SETTINGS, **(json.loads(settings) if settings else {})}),
+        json.dumps({**BRIDGE_SETTINGS, **plugins, **(json.loads(settings) if settings else {})}),
         *(["--", prompt] if prompt else []),
     ]
 
@@ -945,6 +965,7 @@ async def start_background(
         permission_mode,
         add_dirs,
         wake,
+        channel_installed(),
     )
     if terminal:
         opener = procs.find(terminal[0]) or terminal[0]
