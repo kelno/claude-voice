@@ -182,7 +182,7 @@ OLD_MARKS_SETTING = "watched_sessions"
 # names the situation, so the line varies with it rather than repeating one order.
 NEXT_WAITING = (
     "{name} is paused on a permission prompt only the owner can answer{prompt}. Tell the owner once "
-    "what it asks; don't wait on it until they have answered: once it works again, a result says so."
+    "what it asks; don't wait on that session until they have answered: once it works again, a result says so."
 )
 NEXT_UNREAD = (
     "{name} has finished its turn: read it, with the after= the news gives, before you tell the owner what it said."
@@ -289,8 +289,9 @@ Waiting
 News
 - A result may start with news: an entry for each session you follow, with
   its state and what's new, or "nothing new". A message or a question
-  follows a session until you have read the turn that answers it;
-  follow_session follows one the owner hands you, or stops following one.
+  follows a session until you have read the turn that answers it, and then
+  it leaves the news; follow_session follows one the owner hands you, or
+  stops following one.
   Reading a session doesn't follow it. What you follow is the relay's, kept
   across voice conversations and bridge restarts, so it may name a session an
   earlier conversation messaged.
@@ -300,7 +301,7 @@ News
   attach_conversation resumes it, to read it). Progress lines aren't news;
   read_session_output still shows them. "read with after=N" says where to
   read from.
-- What's new stays in the entry until you read the session
+- What's new stays in the entry until you read that turn
   (read_session_output, wait_for_session or ask_active_session returned it,
   even cut), or the prompt is answered. Tell the owner once, at your next
   reply, not during a silent wait. Read a session first,
@@ -1750,7 +1751,8 @@ def build_server(
         For "tell me when it's done": a message or a question already follows a session by itself;
         this follows one you haven't written to. The news line names it, and any turn it finishes
         counts, even one answering the owner's own typing. A session at rest has nothing to
-        finish: status "already_done", and nothing is followed."""
+        finish: status "already_done", and nothing is followed: tell the owner it is done (read_session_output
+        shows what it last said)."""
         if not follow:
             sid = followed(session)
             if sid is None:
