@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import stat
 import sys
 
@@ -258,8 +259,10 @@ def test_the_approvals_file_holds_no_secret_only_a_fingerprint(tmp_path):
     approvals = tmp_path / "approved.json"
     plugins.approve(GARAGE, LISTING, approvals)
     body = json.loads(approvals.read_text())
-    assert set(body) == {"garage"} and set(body["garage"]) == {"runs", "inputs"}
-    assert all(len(v) == 64 for v in body["garage"].values())
+    assert set(body) == {"garage"} and set(body["garage"]) == {"runs", "inputs", "place", "tools", "marks"}
+    each = body["garage"].pop("tools")  # one fingerprint per tool, so a change can be named
+    assert set(each) == set(GARAGE.tools)
+    assert all(len(v) == 64 for v in [*body["garage"].values(), *each.values()])
 
 
 async def test_a_plugins_own_instructions_reach_the_voice(tmp_path):
@@ -285,3 +288,64 @@ async def test_a_plugin_tool_whose_inputs_changed_is_not_offered_until_approved_
     plugins.approve(GARAGE, plugins.Plugin(GARAGE, lambda params: Client(after)).listing(), approvals)
     again = bridge(tmp_path, [GARAGE], approve=False, factory=lambda params: Client(after))
     assert "garage_request" in await tool_names(again)
+
+
+# -- a plugin slow to start, or one that cannot be listed --------------------------------
+
+
+class Unready:
+    """A plugin that never answers its first listing, as a cold start that ran out of time
+    looks to the bridge: a TimeoutError with nothing in its message."""
+
+    def __init__(self, params=None):
+        pass
+
+    async def __aenter__(self):
+        raise TimeoutError()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class Unhurried:
+    """A plugin whose first start takes `seconds`, as uv and heavy imports do, then answers."""
+
+    def __init__(self, server, seconds):
+        self.inner, self.seconds = Client(server), seconds
+
+    async def __aenter__(self):
+        await asyncio.sleep(self.seconds)
+        return await self.inner.__aenter__()
+
+    async def __aexit__(self, *exc):
+        return await self.inner.__aexit__(*exc)
+
+
+def test_a_plugin_that_could_not_be_listed_is_reported_as_not_started_never_as_changed_tools(tmp_path, caplog):
+    fake, _ = stand_in()
+    approvals = tmp_path / "approved.json"
+    plugins.approve(GARAGE, plugins.Plugin(GARAGE, lambda params: Client(fake)).listing(), approvals)
+    before = approvals.read_text()
+    with caplog.at_level(logging.INFO, logger="claude_voice"):
+        plugin, why = plugins.start_one(MCPServer("bridge"), GARAGE, approvals, Unready)
+    said = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
+    assert plugin is None and why == "not started"
+    assert not any("tools changed" in line or "plugins approve" in line for line in said)
+    assert approvals.read_text() == before  # nothing to approve again
+
+
+def test_the_log_says_why_a_plugin_could_not_be_listed(caplog):
+    with caplog.at_level(logging.INFO, logger="claude_voice"):
+        assert plugins.Plugin(GARAGE, Unready).listing() == {}
+    line = next(r.getMessage() for r in caplog.records if "could not be listed" in r.getMessage())
+    assert not line.endswith(": ") and "TimeoutError" in line
+
+
+def test_a_first_listing_waits_as_long_as_the_plugins_own_time_limit(monkeypatch):
+    """The vacuum's first start after new code took over 15 s; its calls may take 30."""
+    monkeypatch.setattr(plugins, "START_SECONDS", 0.1)
+    monkeypatch.setattr(plugins, "LIST_SECONDS", 0.1, raising=False)
+    fake, _ = stand_in()
+    patient = config.PluginSpec(**{**GARAGE.__dict__, "timeout": 3.0})
+    listing = plugins.Plugin(patient, lambda params: Unhurried(fake, 0.5)).listing()
+    assert set(listing) == {"garage_status", "garage_request"}

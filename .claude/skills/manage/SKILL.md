@@ -17,6 +17,18 @@ reaches them except through you.
 2. Say what changed and what is running, in plain words.
 3. End with **one** list of what waits on the owner, each with a recommendation,
    and with the exact command where their hands are needed.
+4. **Show that list only when it has changed**, or when the owner asks what
+   you are waiting for. A plugin session's small report that changes nothing
+   for the owner gets one line, or none. The same list sent again and again
+   buries what is new.
+
+## Keep the owner's list where they can see it
+
+Write what waits on the owner to `~/.local/state/claude-voice/waiting.json`
+whenever it changes, as a JSON list of `{"id", "text", "command", "repo",
+"session", "since"}`, with only `id` and `text` required. The phone page shows
+it first, live, so it no longer scrolls away in the conversation. Remove an
+item as soon as the owner has done it. Never put a secret in it.
 
 ## Handling a plugin session's message
 

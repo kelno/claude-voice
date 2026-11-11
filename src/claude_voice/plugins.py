@@ -2,9 +2,11 @@
 
 A plugin is named in the settings file's ``[plugins.<name>]`` section (its command, folder
 and the tools allowed to the voice), and runs only once the owner has approved it by typing
-its name (``claude-voice plugins approve <name>``). The approval is two fingerprints: one of
+its name (``claude-voice plugins approve <name>``). The approval is fingerprints: one of
 the command, folder and tools, checked before the plugin is started, and one of what each
-allowed tool takes, checked once it has said so. A change to either needs approving again. Each plugin runs as its
+allowed tool takes and whether it only reads, checked once it has said so. A change to
+either needs approving again: typed, or by voice in developer mode when only the tools
+changed (ADR-CV-010). Each plugin runs as its
 own long-lived child process, started again with a growing pause when it fails; every call
 has a time limit. Only the allowed tools are offered to the voice, named after the plugin,
 and the plugin's own safety rules stay in the plugin.
@@ -28,10 +30,23 @@ from .config import PluginSpec
 log = logging.getLogger("claude_voice")
 APPROVALS = Path("~/.config/claude-voice/plugins-approved.json")
 START_SECONDS = 15.0  # how long a plugin may take to start
+# How long a plugin's first answer may take: after new code, uv may install packages first and
+# heavy libraries load (the vacuum's imports alone take 5 to 10 s), so 15 s was too short.
+LIST_SECONDS = 60.0
 
 
 class NotReady(ConnectionError):
     """A plugin or machine that did not start or answer in time."""
+
+
+def _reason(exc: BaseException, limit: float) -> str:
+    """Why a listing failed, in words: a time-out carries no message of its own, and a task
+    group hides the error that ended it."""
+    while isinstance(exc, BaseExceptionGroup) and exc.exceptions:
+        exc = exc.exceptions[0]
+    said = f"no answer within {limit:g} s" if isinstance(exc, TimeoutError) else str(exc)
+    # RULE: the log says why a plugin could not be listed
+    return f"{said} ({type(exc).__name__})" if said else type(exc).__name__
 
 
 def _hash(shape: Any) -> str:
@@ -43,9 +58,26 @@ def fingerprint(spec: PluginSpec) -> str:
     return _hash({"command": spec.command, "args": spec.args, "cwd": spec.cwd, "tools": sorted(spec.tools)})
 
 
+def place_fingerprint(spec: PluginSpec) -> str:
+    """Where the plugin runs from: its command and folder, without its tools."""
+    return _hash({"command": spec.command, "args": spec.args, "cwd": spec.cwd})
+
+
 def input_fingerprint(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> str:
     """What the owner approved each allowed tool to take, as the plugin described it."""
     return _hash({tool: listing.get(tool, {}).get("schema") for tool in sorted(spec.tools)})
+
+
+def tool_fingerprints(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Each allowed tool's inputs and read-only mark, one fingerprint per tool, so a later
+    change can be named tool by tool."""
+    shown = {tool: listing.get(tool, {}) for tool in spec.tools}
+    return {tool: _hash({"schema": t.get("schema"), "read_only": t.get("read_only")}) for tool, t in shown.items()}
+
+
+def mark_fingerprint(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> str:
+    """Which allowed tools say they only read, as the plugin described them."""
+    return _hash({tool: listing.get(tool, {}).get("read_only") for tool in sorted(spec.tools)})
 
 
 def _approvals(path: Path) -> dict[str, Any]:
@@ -53,6 +85,11 @@ def _approvals(path: Path) -> dict[str, Any]:
         return dict(json.loads(path.expanduser().read_text()))
     except (OSError, ValueError):
         return {}
+
+
+def read_approvals(path: Path | None = None) -> dict[str, Any]:
+    """Every plugin's approval as the file holds it now, read fresh."""
+    return _approvals(path or APPROVALS)
 
 
 def _approval(spec: PluginSpec, path: Path | None) -> dict[str, Any]:
@@ -66,8 +103,54 @@ def approved(spec: PluginSpec, path: Path | None = None) -> bool:
 
 
 def inputs_approved(spec: PluginSpec, listing: dict[str, dict[str, Any]], path: Path | None = None) -> bool:
+    found = _approval(spec, path)
     # RULE: a plugin tool whose inputs changed is not offered until approved again
-    return _approval(spec, path).get("inputs") == input_fingerprint(spec, listing)
+    if found.get("inputs") != input_fingerprint(spec, listing):
+        return False
+    # RULE: a changed read only mark needs approving again
+    return found.get("marks") in (None, mark_fingerprint(spec, listing))  # None: approved before marks counted
+
+
+def known_place(spec: PluginSpec, path: Path | None = None) -> bool:
+    """Whether the owner once typed approval for this plugin's command and folder."""
+    found = _approval(spec, path)
+    # RULE: a new command or folder is never approved by voice
+    return found.get("place") == place_fingerprint(spec) or found.get("runs") == fingerprint(spec)
+
+
+def changes(spec: PluginSpec, listing: dict[str, dict[str, Any]], path: Path | None = None) -> list[str]:
+    """Each tool that differs from what the owner approved, in a few words to read aloud.
+    An approval from before tools were counted one by one names every tool."""
+    stored = _approval(spec, path).get("tools")
+    each: dict[str, str] = stored if isinstance(stored, dict) else {}
+    now = tool_fingerprints(spec, listing)
+    said = [_change(tool, listing.get(tool), new=bool(each) and tool not in each) for tool in spec.tools]
+    said = [s for tool, s in zip(spec.tools, said, strict=True) if not each or each.get(tool) != now[tool]]
+    return said + [f"{tool} is no longer offered" for tool in each if tool not in now]
+
+
+def _change(tool: str, found: dict[str, Any] | None, new: bool) -> str:
+    """One changed tool, in a few words."""
+    if found is None:
+        return f"{tool} is gone from the plugin"
+    mark = ", only reads" if found.get("read_only") else ""
+    return f"{'new: ' if new else ''}{tool} takes {takes(found.get('schema'))}{mark}"
+
+
+def checkout_refusal(status: dict[str, Any] | None, branch: str) -> str | None:
+    """Why the plugin's checkout may not be approved by voice, or None when it may: clean,
+    on the branch it follows, and level with that branch as last fetched."""
+    if status is None:
+        return "its folder is not a git checkout"
+    tracking = status.get("tracking") or {}
+    # RULE: only a clean checkout level with its followed branch is approved by voice
+    if status.get("dirty"):
+        return "its checkout has changes that are not committed"
+    if status.get("branch") != branch or not str(tracking.get("name", "")).endswith(f"/{branch}"):
+        return f"its checkout is not on {branch}"
+    if tracking.get("ahead") or tracking.get("behind"):
+        return f"its checkout is not level with {tracking.get('name')}"
+    return None
 
 
 def takes(schema: Any) -> str:
@@ -77,15 +160,45 @@ def takes(schema: Any) -> str:
     return ", ".join(name if name in needed else f"{name}?" for name in properties) or "nothing"
 
 
+def _record(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "runs": fingerprint(spec),
+        "inputs": input_fingerprint(spec, listing),
+        "place": place_fingerprint(spec),
+        "tools": tool_fingerprints(spec, listing),
+        "marks": mark_fingerprint(spec, listing),
+    }
+
+
+def upgrade(spec: PluginSpec, listing: dict[str, dict[str, Any]], path: Path | None = None) -> bool:
+    """Complete an approval written before developer mode, once the plugin was found exactly
+    as it allowed: the same start, the same tools taking the same inputs. Nothing more is
+    allowed than before; the approval only gains what voice approval needs to recognise it.
+    Whether it was upgraded."""
+    found = _approval(spec, path)
+    if "place" in found:
+        return False
+    # RULE: an approval from before developer mode is upgraded only when nothing differs
+    if found.get("runs") != fingerprint(spec) or found.get("inputs") != input_fingerprint(spec, listing):
+        return False
+    _write(spec.name, _record(spec, listing), path)
+    log.info("plugin %s approval upgraded", spec.name)
+    return True
+
+
 def approve(spec: PluginSpec, listing: dict[str, dict[str, Any]], path: Path | None = None) -> None:
+    _write(spec.name, _record(spec, listing), path)
+    log.info("plugin %s approved", spec.name)
+
+
+def _write(name: str, entry: dict[str, Any], path: Path | None) -> None:
     target = (path or APPROVALS).expanduser()
-    body = {**_approvals(target), spec.name: {"runs": fingerprint(spec), "inputs": input_fingerprint(spec, listing)}}
+    body = {**_approvals(target), name: entry}
     target.parent.mkdir(parents=True, exist_ok=True)
     spare = target.with_name(target.name + ".tmp")
     spare.write_text(json.dumps(body, indent=2) + "\n")
     os.chmod(spare, 0o600)
     os.replace(spare, target)
-    log.info("plugin %s approved", spec.name)
 
 
 def exposed_name(plugin: str, tool: str) -> str:
@@ -122,6 +235,7 @@ class Plugin:
         self.state = "not started"
         self.instructions: str | None = None
         self.offered: list[str] = []
+        self.unlisted: str | None = None  # why the latest listing got no answer, or None
         self._failure: Exception | None = None
         self.last_failure: Exception | None = None  # what made the latest call fail, for a caller to tell apart
         self._client: Any = None
@@ -130,29 +244,48 @@ class Plugin:
         self._ready = asyncio.Event()
         self._closing = asyncio.Event()
 
+    def list_seconds(self) -> float:
+        """How long the first listing may wait for the plugin to answer."""
+        # RULE: a first listing waits as long as the plugins own time limit
+        return max(LIST_SECONDS, self.spec.timeout)
+
     def listing(self) -> dict[str, dict[str, Any]]:
         """The allowed tools as the plugin describes them, read once at start in a thread of
-        its own, so the voice sees each tool's real description and arguments."""
+        its own, so the voice sees each tool's real description and arguments. When the
+        plugin gave no answer, `unlisted` says why."""
         found: dict[str, dict[str, Any]] = {}
+        limit = self.list_seconds()
+        self.unlisted = None
 
         async def read() -> None:
             async with self.open() as client:
                 self.instructions = getattr(client, "instructions", None) or None
                 for tool in (await client.list_tools()).tools:
                     if tool.name in self.spec.tools:
-                        found[tool.name] = {"description": tool.description or "", "schema": tool.input_schema}
+                        marks = getattr(tool, "annotations", None)
+                        found[tool.name] = {
+                            "description": tool.description or "",
+                            "schema": tool.input_schema,
+                            "read_only": getattr(marks, "read_only_hint", None),
+                        }
 
         def run() -> None:
             try:
-                asyncio.run(asyncio.wait_for(read(), START_SECONDS))
-            except Exception as exc:  # a plugin that cannot start yet still gets its tools, plainly described
-                log.info("plugin %s could not be listed: %s", self.spec.name, exc)
-                self.state = "failed to start"
+                asyncio.run(asyncio.wait_for(read(), limit))
+            except Exception as exc:
+                self._unlisted(_reason(exc, limit))
 
         worker = threading.Thread(target=run, daemon=True)
         worker.start()
-        worker.join(START_SECONDS + 5)
+        worker.join(limit + 5)
+        if worker.is_alive():  # still reading: what it found so far is not the whole answer
+            self._unlisted(f"no answer within {limit + 5:g} s")
+            return {}
         return found
+
+    def _unlisted(self, why: str) -> None:
+        self.unlisted, self.state = why, "failed to start"
+        log.info("plugin %s could not be listed: %s", self.spec.name, why)
 
     async def _run(self) -> None:
         """Hold the connection open in a task of its own: the client must be closed in the
@@ -198,6 +331,19 @@ class Plugin:
         if runner is not None:
             with contextlib.suppress(Exception, asyncio.CancelledError):
                 await asyncio.wait_for(asyncio.shield(runner), 5)
+
+    async def stop(self) -> None:
+        """Stop the process once a call already running has had its answer, waiting no
+        longer than a call may take."""
+        # RULE: a restart lets a call already running finish first
+        held = False
+        with contextlib.suppress(TimeoutError):
+            held = await asyncio.wait_for(self._lock.acquire(), self.spec.timeout)
+        try:
+            await self._drop()
+        finally:
+            if held:
+                self._lock.release()
 
     async def call(self, tool: str, arguments: dict[str, Any]) -> Any:
         """The plugin's answer, or RuntimeError saying what went wrong; a failed process is
@@ -265,30 +411,81 @@ def offer(server: Any, plugin: Plugin, listing: dict[str, dict[str, Any]]) -> li
         made.parameters = known.get("schema") or {"type": "object", "properties": {}}
         server._tool_manager._tools[name] = made
         offered.append(name)
-    # RULE: a plugins own instructions reach the voice
-    if plugin.instructions:
-        lowlevel = server._lowlevel_server
-        lowlevel.instructions = (
-            f"{lowlevel.instructions or ''}\n\nThe {plugin.spec.name} plugin: {plugin.instructions}".strip()
-        )
+    _instruct(server._lowlevel_server, plugin)
     return offered
 
 
+def _instruct(lowlevel: Any, plugin: Plugin) -> None:
+    """Add the plugin's own rules to what the voice is told, once, however often it starts."""
+    # RULE: a plugins own instructions reach the voice
+    if plugin.instructions and plugin.instructions not in (lowlevel.instructions or ""):
+        lowlevel.instructions = (
+            f"{lowlevel.instructions or ''}\n\nThe {plugin.spec.name} plugin: {plugin.instructions}".strip()
+        )
+
+
+def withdraw(server: Any, plugin: Plugin) -> None:
+    """Take the plugin's tools back from the voice."""
+    for name in plugin.offered:
+        server._tool_manager._tools.pop(name, None)
+    plugin.offered = []
+
+
+Checked = tuple[Plugin | None, dict[str, dict[str, Any]], str]
+
+
+def check_one(spec: PluginSpec, approvals: Path | None = None, client: Callable[[Any], Any] | None = None) -> Checked:
+    """List one plugin's tools and check them against the owner's approval, offering nothing
+    yet: the plugin or None, its listing, and in a word why."""
+    if not approved(spec, approvals):
+        log.info("plugin %s is not approved; run: claude-voice plugins approve %s", spec.name, spec.name)
+        return None, {}, "not approved"
+    plugin = Plugin(spec, client or CLIENT)
+    listing = plugin.listing()
+    # RULE: a plugin that could not be listed is reported as not started never as changed tools
+    if plugin.unlisted is not None:
+        log.info("plugin %s did not start in time, so it is not offered: %s", spec.name, plugin.unlisted)
+        return None, {}, "not started"
+    if not inputs_approved(spec, listing, approvals):
+        log.info("plugin %s's tools changed; run: claude-voice plugins approve %s", spec.name, spec.name)
+        return None, listing, "tools changed"
+    upgrade(spec, listing, approvals)
+    return plugin, listing, "started"
+
+
+def present(server: Any, plugin: Plugin, listing: dict[str, dict[str, Any]], commit: str | None) -> None:
+    """Offer a checked plugin's tools to the voice, and log at which commit it was accepted."""
+    plugin.offered = offer(server, plugin, listing)
+    log.info("plugin %s accepted again unchanged at %s", plugin.spec.name, commit or "an unknown commit")
+    log.info("plugin %s offers %s", plugin.spec.name, ", ".join(plugin.offered))
+
+
+def start_one(
+    server: Any,
+    spec: PluginSpec,
+    approvals: Path | None = None,
+    client: Callable[[Any], Any] | None = None,
+    commit_of: Callable[[str], str | None] | None = None,
+) -> tuple[Plugin | None, str]:
+    """Start one plugin and offer its tools if it is as the owner approved it: the plugin,
+    or None, and in a word why."""
+    plugin, listing, why = check_one(spec, approvals, client)
+    if plugin is not None:
+        present(server, plugin, listing, commit_of(spec.cwd) if commit_of else None)
+    return plugin, why
+
+
 def start_approved(
-    server: Any, specs: list[PluginSpec], approvals: Path | None = None, client: Callable[[Any], Any] | None = None
+    server: Any,
+    specs: list[PluginSpec],
+    approvals: Path | None = None,
+    client: Callable[[Any], Any] | None = None,
+    commit_of: Callable[[str], str | None] | None = None,
 ) -> list[Plugin]:
     """Start each plugin its owner approved and offer its tools on `server`; the ones offered."""
     started = []
     for spec in specs:
-        if not approved(spec, approvals):
-            log.info("plugin %s is not approved; run: claude-voice plugins approve %s", spec.name, spec.name)
-            continue
-        plugin = Plugin(spec, client or CLIENT)
-        listing = plugin.listing()
-        if not inputs_approved(spec, listing, approvals):
-            log.info("plugin %s's tools take new inputs; run: claude-voice plugins approve %s", spec.name, spec.name)
-            continue
-        plugin.offered = offer(server, plugin, listing)
-        started.append(plugin)
-        log.info("plugin %s offers %s", spec.name, ", ".join(plugin.offered))
+        plugin, _ = start_one(server, spec, approvals, client, commit_of)
+        if plugin is not None:
+            started.append(plugin)
     return started

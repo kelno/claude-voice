@@ -48,7 +48,7 @@ class SessionManager:
         self.client_factory = client_factory
         self.clock = clock
         self.new_mode = new_mode
-        # The bridge itself passes permissions.session_grant; left out, a resumed
+        # The bridge itself passes session_modes.session_grant; left out, a resumed
         # conversation gets the mode for new sessions and no added folders.
         self.grant_for = grant_for or (lambda session_id, cwd, new_mode: Grant(new_mode))
 

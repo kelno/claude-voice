@@ -41,6 +41,10 @@ decision nobody writes down.
 | [ADR-CV-007](ADR-CV-007-a-phone-agent-and-voice-calls.md) | A phone joins the hub as an agent, under privacy rules every machine keeps | Proposed |
 | [ADR-CV-008](ADR-CV-008-approvals-reach-the-phone-when-the-app-is-closed.md) | Approvals reach the phone when the app is closed | Accepted |
 | [ADR-CV-009](ADR-CV-009-main-keeps-the-quality-levels.md) | Main keeps the quality levels, so a pull request never records them | Accepted |
+| [ADR-CV-010](ADR-CV-010-a-known-plugin-is-approved-again-by-voice.md) | A plugin already approved is updated without typing, or approved again by voice | Accepted |
+| [ADR-CV-011](ADR-CV-011-a-short-list-of-owner-actions-is-approved-by-voice.md) | A short, fixed list of the owner's own actions is approved by voice | Accepted |
+| [ADR-CV-012](ADR-CV-012-a-session-opens-where-the-owner-is.md) | A session opens where the owner is | Accepted |
+| [ADR-CV-013](ADR-CV-013-an-agreed-exception-is-shown-as-exempt.md) | A measure left outside its limit by agreement is shown as exempt, never green | Accepted |
 | [ADR-CV-101](ADR-CV-101-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-102 |
 | [ADR-CV-102](ADR-CV-102-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-103](ADR-CV-103-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-104 |

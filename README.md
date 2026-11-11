@@ -97,7 +97,10 @@ the bridge says which are missing, with the exact fix, through its
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
 | `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
-| `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher |
+| `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher, and whether developer mode is on |
+| `plugin_restart` | start one plugin again with its new code, without restarting the bridge; its tools come back only if they take what was approved |
+| `developer_mode_request`, `developer_mode_confirm`, `developer_mode_off` | switch developer mode on by voice with a question and your yes (only from the Claude app; it ends by itself after eight hours), or off at once |
+| `plugin_approve_request`, `plugin_approve_confirm` | in developer mode, approve a plugin whose tools changed: the voice names each changed tool and approves on your yes |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
 | `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |
@@ -410,9 +413,11 @@ the rules it follows, which apply to any change.
 
 ## Develop
 
-[CONTRIBUTING.md](CONTRIBUTING.md) has the gates and how a change is made. In
-short, tests are written first, and run against a scripted stand-in for Claude,
-so they need no account.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the gates and how a change is made. Once
+per clone, `uv run claude-voice permissions` gives Claude Code the rules for the
+voice repositories: what it may run without asking, and what it may never run
+([docs/permissions.md](docs/permissions.md)). In short, tests are written
+first, and run against a scripted stand-in for Claude, so they need no account.
 
 ## Plugins: other local tools for the voice
 
@@ -429,9 +434,12 @@ args = ["run", "garage-door-mcp", "--secrets-file", "firmware/secrets.yaml", "--
 cwd = "~/garage-door"
 tools = ["garage_status", "garage_request", "garage_confirm"]
 timeout = 30          # seconds a call may take
+branch = "main"       # the branch its checkout follows, for approving by voice (default main)
 ```
 
-Then approve it by typing its name, and restart the bridge:
+Then approve it by typing its name. A bridge that is running picks the approval up
+within a few seconds and offers the plugin's tools without restarting; connected
+clients are told the tool list changed:
 
 <!-- not run: it asks for typed input -->
 ```
@@ -447,7 +455,34 @@ the plugin reads its own, and starts with only a small default environment. Each
 plugin runs as a process of its own, started again after a failure, and a call
 that runs past `timeout` is cut off. Its tools reach the voice named after it
 (`garage_status`), its safety rules stay inside it, and the health report shows
-each plugin's state. To list them:
+each plugin's state.
+
+Once a plugin is approved, three things can happen to it
+([ADR-CV-010](decisions/ADR-CV-010-a-known-plugin-is-approved-again-by-voice.md)):
+
+- **New code, the same tools taking the same inputs.** It runs without asking, and
+  the log names the commit. `plugin_restart` starts one plugin again with its new
+  code, without restarting the bridge or dropping the call. The new one must list
+  its tools within 60 seconds, or its own `timeout` when that is longer. If it does
+  not, it counts as not started, never as changed: the one running stays offered,
+  and the voice says to try again.
+- **A tool added, removed, taking new inputs, or with a changed read-only mark.** You
+  can type the approval as above, or approve it by voice in **developer mode**. You
+  switch that on by voice: the voice asks, you say yes. It ends by itself after eight
+  hours, can be switched off at once from anywhere, and `health` and the work page
+  show it. The voice then names each changed tool and approves on your yes. It works
+  only from the Claude app, never from a program on this computer, and only when the
+  plugin's checkout is clean and level with the branch it follows (`branch`). Any
+  file git does not know about counts as unclean, a backup included, so keep such
+  files out of the plugin's folder or list them in its `.git/info/exclude`.
+- **A new plugin, or a new command or folder.** Always typed, as above.
+
+An approval typed before developer mode existed recorded less about the plugin. The
+first time the bridge finds the plugin exactly as that approval allowed, it completes
+the approval by itself and logs `plugin <name> approval upgraded`; from then on a
+changed tool can be approved by voice. Nothing more is allowed than before.
+
+To list them:
 
 ```console
 $ claude-voice plugins

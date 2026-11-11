@@ -276,14 +276,62 @@ replace = 'if False:'
 [[rule]]
 name = "a plugins own instructions reach the voice"
 file = "src/claude_voice/plugins.py"
-find = 'if plugin\.instructions:$'
+find = 'if plugin\.instructions and plugin\.instructions not in'
 replace = 'if False:'
 
 [[rule]]
 name = "a plugin tool whose inputs changed is not offered until approved again"
 file = "src/claude_voice/plugins.py"
-find = 'return _approval\(spec, path\)\.get\("inputs"\) == input_fingerprint\(spec, listing\)'
+find = 'if found\.get\("inputs"\) != input_fingerprint\(spec, listing\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a changed read only mark needs approving again"
+file = "src/claude_voice/plugins.py"
+find = 'return found\.get\("marks"\) in \(None, mark_fingerprint\(spec, listing\)\)'
 replace = 'return True'
+
+[[rule]]
+name = "a new command or folder is never approved by voice"
+file = "src/claude_voice/plugins.py"
+find = 'return found\.get\("place"\) == place_fingerprint\(spec\) or'
+replace = 'return True'
+
+[[rule]]
+name = "an approval from before developer mode is upgraded only when nothing differs"
+file = "src/claude_voice/plugins.py"
+find = 'if found\.get\("runs"\) != fingerprint\(spec\) or found\.get\("inputs"\) != input_fingerprint'
+replace = 'if False:'
+
+[[rule]]
+name = "only a clean checkout level with its followed branch is approved by voice"
+file = "src/claude_voice/plugins.py"
+find = 'if status\.get\("dirty"\):'
+replace = 'if False:'
+
+[[rule]]
+name = "developer mode ends by itself after eight hours"
+file = "src/claude_voice/devmode.py"
+find = 'if until is not None and until <= self\.clock\(\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a question token works once and only for two minutes"
+file = "src/claude_voice/devmode.py"
+find = 'if found\[1\] <= self\.clock\(\):'
+replace = 'if False:'
+
+[[rule]]
+name = "only the owners voice in the claude app can approve a plugin or switch developer mode on"
+file = "src/claude_voice/plugin_desk.py"
+find = 'if caller != "claude_app":'
+replace = 'if False:'
+
+[[rule]]
+name = "a changed plugin is approved by voice only in developer mode"
+file = "src/claude_voice/plugin_desk.py"
+find = 'if not self\.mode\.state\(\)\["on"\]:'
+replace = 'if False:'
 
 [[rule]]
 name = "the bridge stops within seconds even with a stream open"
@@ -311,7 +359,7 @@ replace = 'if True:'
 
 [[rule]]
 name = "a resumed session keeps the permissions it has where the owner runs it"
-file = "src/claude_voice/permissions.py"
+file = "src/claude_voice/session_modes.py"
 find = 'if session_id and SESSION_ID\.fullmatch\(session_id\):'
 replace = 'if False:'
 
@@ -470,3 +518,129 @@ name = "an answer from the page reaches the machine the question is on"
 file = "src/claude_voice/fleet.py"
 find = 'answer = await machine.call\("approve" if decision == "allow" else "deny", arguments\)'
 replace = 'answer = await machine.call("approve", arguments)'
+
+[[rule]]
+name = "a question read aloud states how things are and then asks"
+file = "src/claude_voice/plugin_desk.py"
+find = '"say": "Developer mode is off\. Do you want me to switch it on for eight hours\? While it "'
+replace = '"say": "Switch developer mode on for eight hours? While it "'
+
+[[rule]]
+name = "a repository with no time budget still shows how long its tests take"
+file = "src/claude_voice/software.py"
+find = 'return f"\{v:\.0f\} s of a \{budget\[.seconds.\]\} s budget" if budget else f"\{v:\.0f\} s"'
+replace = 'return f"{v:.0f} s of a {budget.get("seconds")} s budget"'
+
+[[rule]]
+name = "a restart lets a call already running finish first"
+file = "src/claude_voice/plugins.py"
+find = 'held = await asyncio\.wait_for\(self\._lock\.acquire\(\), self\.spec\.timeout\)'
+replace = 'held = False'
+
+[[rule]]
+name = "a request from another computer is not from here"
+file = "src/claude_voice/api.py"
+find = 'if not _loopback\(peer\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a forwarded request is not from here"
+file = "src/claude_voice/api.py"
+find = 'if _forwarded\(headers\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a request to another address is not from here"
+file = "src/claude_voice/api.py"
+find = 'if _header\(headers, b"host"\) not in _own\(port\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a request sent by another website is not from here"
+file = "src/claude_voice/api.py"
+find = 'return origin is None or origin in _own\(port, "http://"\)'
+replace = 'return True'
+
+[[rule]]
+name = "only a request from here may bring a terminal to the front"
+file = "src/claude_voice/api.py"
+find = 'if not from_here\(request.scope\):'
+replace = 'if False:'
+
+[[rule]]
+name = "only the terminal titled with the session name is raised"
+file = "src/claude_voice/terminals.py"
+find = 'found = \[w for w in titled if title_name\(str\(w.get\("title"\) or ""\)\) in names\]'
+replace = 'found = titled[:1]'
+
+[[rule]]
+name = "a terminal already attached to a tmux session is raised, not opened again"
+file = "src/claude_voice/terminals.py"
+find = 'if self._attached\(tmux_session\):'
+replace = 'if False:'
+
+[[rule]]
+name = "an exemption counts only with a reason and the owners yes"
+file = "src/claude_voice/software.py"
+find = 'if reason and approved:'
+replace = 'if True:'
+
+[[rule]]
+name = "an exempt measure is shown as exempt and never as ok"
+file = "src/claude_voice/software.py"
+find = 'return \{\*\*row, "status": "exempt", "text": f"\{row\[.text.\]\}; exempt: \{reason\}"\}'
+replace = '''return {**row, "status": "ok", "text": f"{row['text']}; exempt: {reason}"}'''
+
+[[rule]]
+name = "rules already in the settings are kept"
+file = "src/claude_voice/permissions.py"
+find = 'kept = list\(have.get\(key\) or \[\]\)'
+replace = 'kept = []'
+
+[[rule]]
+name = "a rule the settings already have is not added again"
+file = "src/claude_voice/permissions.py"
+find = 'if rule not in kept:'
+replace = 'if True:'
+
+[[rule]]
+name = "a second run writes nothing"
+file = "src/claude_voice/permissions.py"
+find = 'if after == before:'
+replace = 'if False:'
+
+[[rule]]
+name = "a dry run writes nothing"
+file = "src/claude_voice/permissions.py"
+find = 'if dry_run:'
+replace = 'if False:'
+
+[[rule]]
+name = "the backup is written only once"
+file = "src/claude_voice/permissions.py"
+find = 'if file.exists\(\) and not backup.exists\(\):'
+replace = 'if file.exists():'
+
+[[rule]]
+name = "a plugin that could not be listed is reported as not started never as changed tools"
+file = "src/claude_voice/plugins.py"
+find = 'if plugin\.unlisted is not None:'
+replace = 'if False:'
+
+[[rule]]
+name = "a restart that fails keeps the plugin that was running"
+file = "src/claude_voice/plugin_desk.py"
+find = 'if why == "not started":'
+replace = 'if False:'
+
+[[rule]]
+name = "a first listing waits as long as the plugins own time limit"
+file = "src/claude_voice/plugins.py"
+find = 'return max\(LIST_SECONDS, self\.spec\.timeout\)'
+replace = 'return LIST_SECONDS'
+
+[[rule]]
+name = "the log says why a plugin could not be listed"
+file = "src/claude_voice/plugins.py"
+find = 'return f"\{said\} \(\{type\(exc\)\.__name__\}\)" if said else type\(exc\)\.__name__'
+replace = 'return str(exc)'

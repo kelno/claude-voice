@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import tomllib
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from . import procs
 
 TREND = 30  # points of history per measure
 FILE = "quality.json"
+EXEMPTIONS = "quality.toml"  # the measures the owner agreed to leave outside their limits
 ARTIFACT = "quality-levels"  # the name main's checks keep their measured levels under
 NEW_PER_LOOK = 5  # downloads of main's levels per look; the rest wait for the next one
 
@@ -79,20 +81,25 @@ def _read_saved(saved: Path) -> dict[str, Any] | None:
 
 
 def kept_levels(
-    repo: str, cache: Path | None = None, limit: int = TREND, run: Callable[[list[str]], str | None] = _gh
+    repo: str,
+    cache: Path | None = None,
+    limit: int = TREND,
+    run: Callable[[list[str]], str | None] = _gh,
+    branch: str = "main",
 ) -> list[dict[str, Any]]:
-    """The levels main kept with its latest runs, oldest first.
+    """The levels the followed branch kept with its latest runs, oldest first.
 
     Only finished runs: a finished run's levels never change, so each is downloaded once
-    and then read from disk, and one that kept none is remembered as having none.
+    and then read from disk, and one that kept none is remembered as having none. The newest
+    are downloaded first, so a page shows today's numbers before it fills in their history.
     """
     folder = (cache or _cache()) / repo.replace("/", "__")
     listed = run(
-        ["run", "list", "--repo", repo, "--branch", "main", "--event", "push", "--workflow", "checks"]
+        ["run", "list", "--repo", repo, "--branch", branch, "--event", "push", "--workflow", "checks"]
         + ["--status", "completed", "--limit", str(limit), "--json", "databaseId"]
     )
     out, fetched = [], 0
-    for run_id in reversed(_run_ids(listed)):
+    for run_id in _run_ids(listed):  # newest first
         saved = folder / f"{run_id}.json"
         if not saved.exists() and fetched < NEW_PER_LOOK:
             fetched += 1
@@ -100,7 +107,7 @@ def kept_levels(
         levels = _read_saved(saved)
         if levels is not None:
             out.append(levels)
-    return out
+    return out[::-1]
 
 
 def history(repo: Path, limit: int = TREND) -> list[dict[str, Any]]:
@@ -133,6 +140,19 @@ def _status(value: float, ok: float, warn: float, higher: bool = True) -> str:
 
 
 # id, label, unit, how to read the value, how to word it, how to judge it
+# RULE: a repository with no time budget still shows how long its tests take
+def _time_text(q: dict[str, Any], v: float) -> str:
+    budget = q.get("test_budget")
+    return f"{v:.0f} s of a {budget['seconds']} s budget" if budget else f"{v:.0f} s"
+
+
+def _time_status(q: dict[str, Any], v: float) -> str:
+    budget = q.get("test_budget")
+    if not budget:
+        return "unknown"
+    return _status(v, budget["seconds"], budget["seconds"] * (1 + budget["tolerance"]), False)
+
+
 MEASURES: tuple[tuple[str, str, str, Callable[..., Any], Callable[..., str], Callable[..., str]], ...] = (
     (
         "coverage",
@@ -203,10 +223,8 @@ MEASURES: tuple[tuple[str, str, str, Callable[..., Any], Callable[..., str], Cal
         "Time the tests take",
         "s",
         lambda q: q["test_seconds"],
-        lambda q, v: f"{v:.0f} s of a {q['test_budget']['seconds']} s budget",
-        lambda q, v: _status(
-            v, q["test_budget"]["seconds"], q["test_budget"]["seconds"] * (1 + q["test_budget"]["tolerance"]), False
-        ),
+        _time_text,
+        _time_status,
     ),
 )
 
@@ -262,6 +280,28 @@ def _measured(folder: Path | None, kept: list[dict[str, Any]] | None) -> list[di
     return past + [{**q, "test_budget": budget} for q in kept or []]
 
 
+def exemptions(folder: Path | None) -> dict[str, str]:
+    """The reason for each measure the owner agreed to leave outside its limit, by its id."""
+    try:
+        entries = tomllib.loads((folder / EXEMPTIONS).read_text()).get("exempt", []) if folder else []
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+    out = {}
+    for entry in entries if isinstance(entries, list) else []:
+        reason, approved = str(entry.get("reason", "")).strip(), str(entry.get("approved", "")).strip()
+        # RULE: an exemption counts only with a reason and the owners yes
+        if reason and approved:
+            out[str(entry.get("measure", ""))] = reason
+    return out
+
+
+def _exempt(row: dict[str, Any], reason: str | None) -> dict[str, Any]:
+    if reason is None or row["status"] in ("ok", "unknown"):
+        return row
+    # RULE: an exempt measure is shown as exempt and never as ok
+    return {**row, "status": "exempt", "text": f"{row['text']}; exempt: {reason}"}
+
+
 def _metric(measure: tuple[Any, ...], past: list[dict[str, Any]], link: str) -> dict[str, Any]:
     """One measure's row: its value now, how it reads, its status and its trend."""
     id_, label, unit, read, word, judge = measure
@@ -280,17 +320,19 @@ def repo_report(
     folder: Path | None,
     ci: dict[str, Any] | None = None,
     kept: list[dict[str, Any]] | None = None,
+    branch: str = "main",
 ) -> dict[str, Any]:
     """One repository's measures, each with its value, status and trend."""
     past = _measured(folder, kept)
-    link = f"{url}/actions/workflows/checks.yml?query=branch%3Amain" if kept else f"{url}/blob/main/{FILE}"
-    metrics = [_metric(measure, past, link) for measure in MEASURES]
+    link = f"{url}/actions/workflows/checks.yml?query=branch%3A{branch}" if kept else f"{url}/blob/{branch}/{FILE}"
+    exempt = exemptions(folder)
+    metrics = [_exempt(_metric(measure, past, link), exempt.get(measure[0])) for measure in MEASURES]
     metrics.append(ci_metric(ci))
     return {"name": name, "url": url, "metrics": metrics, "as_of": _now()}
 
 
-def latest_run(repo: str) -> dict[str, Any] | None:
-    """The latest run of the checks on main, from GitHub's command line, or None."""
+def latest_run(repo: str, branch: str = "main") -> dict[str, Any] | None:
+    """The latest run of the checks on the followed branch, from GitHub's command line, or None."""
     gh = procs.find("gh")
     if not gh:
         return None
@@ -303,7 +345,7 @@ def latest_run(repo: str) -> dict[str, Any] | None:
                 "--repo",
                 repo,
                 "--branch",
-                "main",
+                branch,
                 "--workflow",
                 "checks",
                 "--limit",

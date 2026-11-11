@@ -249,9 +249,10 @@ not on every refresh.
 
 | Call | Answer |
 | --- | --- |
-| `GET /api/v1/health/software` | `{"as_of", "repos": [{"name", "url", "as_of", "metrics": [{"id", "label", "value", "unit", "text", "status": "ok"\|"warn"\|"bad"\|"unknown", "url", "trend": [≤30 values, oldest first]}]}]}` |
+| `GET /api/v1/health/software` | `{"as_of", "repos": [{"name", "url", "as_of", "metrics": [{"id", "label", "value", "unit", "text", "status": "ok"\|"warn"\|"bad"\|"exempt"\|"unknown", "url", "trend": [≤30 values, oldest first]}]}]}` |
 
-One entry for claude-voice and one for claude-voice-ui, read from the levels
+One entry for claude-voice, one for claude-voice-ui and one for each plugin's
+own repository (the one its checked-out branch pushes to), read from the levels
 main keeps with each run of its checks (see CONTRIBUTING, "The quality ratchet"),
 from each clone's `quality.json` for the time before that, and from the latest
 run of the checks on main; kept for ten minutes. The measures, by `id`:
@@ -262,6 +263,37 @@ run of the checks on main; kept for ten minutes. The measures, by `id`:
 `url`). The trend is each measured version, oldest first, so it moves change by
 change. A repository with nothing measured has every measure `unknown` rather
 than a guess.
+
+A measure the owner has agreed to leave outside its limit is `exempt`, never
+`ok`. The agreement is kept in the repository's own `quality.toml`, one entry
+per measure, and counts only with both a written reason and the owner's yes:
+
+<!-- not run: an example entry in a repository's quality.toml -->
+```toml
+[[exempt]]
+measure = "complexity"
+reason = "the tool table is one long match on the tool's name"
+approved = "Roy, 2026-11-11, in pull request #212"
+```
+
+An exempt measure's `text` ends with the reason. A measure inside its limit
+stays `ok` whatever the file says, and an entry missing its reason or its
+approval is ignored.
+
+## The team's work
+
+| Call | Answer |
+| --- | --- |
+| `GET /api/v1/work` | `{"as_of", "waiting_on_owner": [{"id", "text", "command"\|null, "since", "repo"\|null, "session"\|null}], "open_prs": [{"repo", "number", "title", "url", "checks": "pass"\|"fail"\|"pending", "draft"}], "unreadable": ["<repo>"], "developer_mode": {"on", "until"\|null}}` |
+
+What waits on the owner is the manager session's own list, read fresh on every
+call from `~/.local/state/claude-voice/waiting.json`; an item with no `id` or
+`text` is left out. The open pull requests are those of claude-voice,
+claude-voice-ui and every plugin's repository, asked of GitHub at most once a
+minute; a repository whose pull requests could not be read is named in
+`unreadable` rather than shown as having none. `text` and `command` are plain
+text, never markup. `developer_mode` says whether the owner's voice may approve a
+plugin whose tools changed, and until when (ADR-CV-010); it ends by itself.
 
 ## A session's own page
 
@@ -280,6 +312,37 @@ summary: only the POST does, with a small model. `context` is the same object as
 `none`, `generating`, `ready` or `error` (then `summary_error` says why, and the
 last good `summary` is kept). The stream carries `summary` with
 `{"session", "summary", "summary_state"}` when one is ready or has failed.
+
+## Opening a session's terminal
+
+Decided in [ADR-CV-012](../decisions/ADR-CV-012-a-session-opens-where-the-owner-is.md).
+
+| Call | Answer |
+| --- | --- |
+| `GET /api/v1/whoami` | `{"here": true \| false}`. Needs no signing in: it tells only whether the asker is on this computer |
+| `POST /api/v1/sessions/{id}/focus` | no body. `200` `{"done": "raised"}` (a terminal holding it was brought to the front) or `{"done": "attached"}` (a new terminal was opened on its tmux session); `401` without signing in; `403` `{"reason": "not_here"}`; `409` `{"reason": "no_window" \| "not_running" \| "not_local"}`; `501` `{"reason": "no_window_list"}` |
+
+A request is **here** only when all of these hold: it comes from a loopback
+address; it has no `X-Forwarded-For`, `Forwarded` or `Tailscale-User-*` header;
+its `Host` is `127.0.0.1` or `localhost` on the bridge's own port; and its
+`Origin`, when it has one, is `http://127.0.0.1:<port>` or
+`http://localhost:<port>`. So the page served at `/ui/` from `127.0.0.1:8811` is
+here, and the same page reached through Tailscale, Funnel or a preview server is
+not, though those connect from this computer too. The page reads `whoami` once
+when it starts and shows "Open in terminal" only when it is here, and only for a
+session whose `machine` is `null`.
+
+`{id}` is the session's id, not its name or number. A session in tmux gets the
+terminal already attached to it raised, or else a new `gnome-terminal` running
+`tmux attach-session` on it (`attached`). A session in a plain terminal gets the
+window that holds it raised; that window is the one terminal window whose title
+is the session's name after Claude Code's status sign. Nothing ever starts
+`claude` again. `no_window`: the session is not in a terminal (a background or
+bridge session), or its window was not found or found twice, or the desktop would
+not raise it. `not_running`: no running session has that id. `not_local`: the
+session is on another machine. `no_window_list`: this desktop cannot list or
+raise windows (the computer-use-linux GNOME Shell extension is not running) or has
+no `gnome-terminal`.
 
 ## How new sessions start
 
@@ -344,6 +407,7 @@ that must send a bearer token reads the stream with `fetch`.
 | `git` | `{"session": "<id>", "git": {...}}` | a session's git status changed |
 | `output` | `{"session": "<id>", "index", "role"}` | a running session wrote a new turn; read it with `/sessions/{id}/output?after=` |
 | `update` | one step: `{"step", "ok", "detail", "at"}`, with `step` one of `check`, `fetch`, `pull`, `install`, `test`, `restart`, `verify`, `rollback`, `done` | an update made progress |
+| `work` | the `/api/v1/work` body | what waits on the owner, or an open pull request, changed; looked at every ten seconds while a stream is open |
 | `news` | one item: `{"kind", "session", "text", …}` | something happened worth telling: a session finished, failed, started waiting, asked for an approval |
 
 A comment line (`: keep-alive`) comes every 15 seconds so proxies keep the

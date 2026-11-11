@@ -268,6 +268,8 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "message_forked_session",
         "read_forked_session",
         "wait_for_session",
+        "developer_mode_request",  # a question only; the confirm is what switches
+        "plugin_approve_request",
     }
     for name in read_only:
         ann = tools[name].annotations
@@ -283,7 +285,7 @@ async def test_only_tools_the_owner_approves_each_time_are_marked_destructive(tm
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    destructive = {"update_bridge"}
+    destructive = {"update_bridge", "plugin_approve_confirm"}
     for name, tool in tools.items():
         ann = tool.annotations
         if ann is not None and ann.read_only_hint:

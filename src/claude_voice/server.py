@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import json
 import logging
 import logging.handlers
@@ -11,6 +12,7 @@ import os
 import re
 import secrets
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,8 +23,10 @@ from claude_agent_sdk import SDKSessionInfo, project_key_for_directory
 from claude_agent_sdk import list_sessions as list_claude_sessions
 from mcp.server import MCPServer
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.shared.subscriptions import ToolsListChanged
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
@@ -36,6 +40,7 @@ from . import (
     confirm,
     confirm_page,
     detail,
+    devmode,
     doctor,
     events,
     fleet,
@@ -45,22 +50,25 @@ from . import (
     machines,
     metrics,
     passkeys,
-    permissions,
+    plugin_desk,
     plugins,
     procs,
     renames,
     roles,
+    session_modes,
     software,
     tailnet,
     titles,
     transcripts,
     updater,
     usage,
+    work,
 )
 from .metrics import METRICS
 from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionManager
 from .store import Store
+from .terminals import NOT_LOCAL, Terminals
 from .tree import PROJECTS_DIR, SessionTree, session_kind
 
 MIN_TOKEN_CHARS = 32
@@ -334,10 +342,10 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
             )
         cfg.access_ttl = int(ttl)
     cfg.new_session_mode = env.get("CLAUDE_VOICE_PERMISSION_MODE", "").strip() or "default"
-    if cfg.new_session_mode not in permissions.MODES:
+    if cfg.new_session_mode not in session_modes.MODES:
         raise ConfigError(
             f"CLAUDE_VOICE_PERMISSION_MODE is {cfg.new_session_mode!r}; "
-            f"use one of {', '.join(sorted(permissions.MODES))}."
+            f"use one of {', '.join(sorted(session_modes.MODES))}."
         )
     cfg.public_url = env.get("CLAUDE_VOICE_PUBLIC_URL", "").rstrip("/") or (
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
@@ -377,6 +385,10 @@ def app_url(bridge_session_id: Any) -> str | None:
 
 
 VOICE_STORE: list[Store] = []  # the store voice calls are counted in, set by build_server
+# Clients connected the older way (an initialize handshake), told when the tool list
+# changes; one is known once it has made a call. Newer clients listen on the server's
+# subscription stream instead.
+LISTENERS: weakref.WeakSet[Any] = weakref.WeakSet()
 
 
 def _result_chars(result: Any) -> int:
@@ -419,6 +431,9 @@ async def log_requests(ctx, call_next):
     what = f"{ctx.method} {tool}".rstrip()
     meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
     trace = str(meta.get("trace_id") or "") or None
+    with contextlib.suppress(TypeError):
+        if (session := getattr(ctx, "session", None)) is not None:
+            LISTENERS.add(session)
     token = transcripts.current_trace.set(trace)
     client_token = transcripts.current_client.set(caller_kind(ctx, trace))
     request = getattr(ctx, "request", None)
@@ -591,6 +606,69 @@ async def wake_interrupted(
     return woken
 
 
+BUSY = ("busy", "shell")  # a session's statuses while it works
+
+
+def _not_sent(target: dict[str, Any], outcome: dict[str, Any]) -> dict[str, Any]:
+    """The answer to a question that was never sent: the session, why, and no reply."""
+    return {
+        "session": target["name"],
+        **outcome,
+        "session_ended": False,
+        "reply": "",
+        "reply_final": False,
+        "turns": [],
+        "next_after": -1,
+    }
+
+
+def _asked_at(turns: list[dict[str, Any]], probe: str) -> dict[str, Any] | None:
+    """Our own message among a session's new turns, or None while it is not in view."""
+    return next((t for t in turns if t["role"] == "user" and probe in t["text"]), None)
+
+
+def _settled(
+    now: dict[str, Any],
+    new_turns: list[dict[str, Any]],
+    probe: str,
+    was_busy: bool,
+    seen_busy: bool,
+    receive_ran_out: bool,
+) -> str | None:
+    """What one look at an asked session shows: answered, not_received, waiting, or None to look again."""
+    asked = _asked_at(new_turns, probe)
+    answers = [t for t in new_turns if t["role"] == "assistant"]
+    if was_busy and asked is not None and any(t["index"] > asked["index"] for t in answers):
+        # Asked mid-work: its first words after our question are the answer; the
+        # rest of its turn belongs to whatever it was doing.
+        return "answered"
+    replied = seen_busy or bool(answers)
+    arrived = replied or asked is not None
+    if not arrived and receive_ran_out:
+        return "not_received"  # handed over, yet never reached the conversation
+    if replied and now.get("status") == "idle":
+        return "answered"
+    if now.get("status") == "waiting" and arrived:
+        return "waiting"
+    return None
+
+
+def _reply_turns(
+    fresh: list[dict[str, Any]], probe: str, before: int, status: str, was_busy: bool
+) -> tuple[list[dict[str, Any]], int]:
+    """The turns that answer our message, and the index they follow; reply_of cuts them."""
+    # Only what answers our message counts: what the session wrote after it. Its
+    # last words are the reply; the rest of its turn is how it got there.
+    anchor = _asked_at(fresh, probe)
+    start = anchor["index"] if anchor else before - 1
+    new = [t for t in fresh if t["role"] == "assistant" and t["index"] > start]
+    if anchor is None and status != "still_working":
+        new = new[-1:]  # the message is not in view: only the session's final words
+    elif anchor is not None and was_busy and new:
+        new = new[:1]
+    return new, start
+
+
 def build_server(
     manager: SessionManager,
     oauth: OAuthProvider | None = None,
@@ -636,10 +714,12 @@ def build_server(
     repo_config: config.Config | None = None,
     find_program: Callable[[str], str | None] = procs.find,
     desktop_env: Mapping[str, str] | None = None,
-    ci_status: Callable[[str], dict[str, Any] | None] = software.latest_run,
-    kept_levels: Callable[[str], list[dict[str, Any]]] = software.kept_levels,
+    ci_status: Callable[..., dict[str, Any] | None] = software.latest_run,
+    kept_levels: Callable[..., list[dict[str, Any]]] = software.kept_levels,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
+    work_board: work.Board | None = None,
+    terminals: Terminals | None = None,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -746,6 +826,11 @@ def build_server(
                         check()
                     with contextlib.suppress(Exception):
                         await across.refresh()  # the other machines, asked every ten seconds
+                    with contextlib.suppress(Exception):
+                        await desk.pick_up()  # an approval typed while the bridge runs
+                    with contextlib.suppress(Exception):
+                        if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
+                            api.HUB.publish("work", changed)  # the phone page updates at once
                     await asyncio.sleep(watch_interval)
 
             # What ran at the last look, read before the watcher's first look replaces it.
@@ -922,6 +1007,22 @@ def build_server(
         register = titled(**kwargs)
         return lambda fn: fn if fn.__name__ in switched_off else register(fn)
 
+    # The tool list changes when a plugin is started again or approved, so say so up front
+    # (tools.listChanged), and tell connected clients each time it does.
+    lowlevel = mcp._lowlevel_server
+    lowlevel.create_initialization_options = functools.partial(  # type: ignore[method-assign]
+        lowlevel.create_initialization_options, NotificationOptions(tools_changed=True)
+    )
+
+    async def tools_changed() -> None:
+        with contextlib.suppress(Exception):
+            await mcp._subscriptions.publish(ToolsListChanged())
+        for session in list(LISTENERS):
+            try:
+                await session.send_tool_list_changed()
+            except Exception:  # a client that has gone away is forgotten
+                LISTENERS.discard(session)
+
     if oauth is not None:
         mcp.custom_route("/oauth/consent", methods=["GET"])(oauth.consent_page)
         mcp.custom_route("/oauth/consent", methods=["POST"])(oauth.consent_submit)
@@ -1045,7 +1146,33 @@ def build_server(
     sending: dict[str, list[dict[str, Any]]] = {}  # messages still being delivered, by session id
     in_flight: set[asyncio.Future[Any]] = set()
 
-    active_plugins = plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client)
+    def commit_of(folder: str) -> str | None:
+        return ((gitstatus.read(folder) or {}).get("commit") or {}).get("hash")
+
+    def plugin_specs() -> list[config.PluginSpec]:
+        """The plugins as the settings file names them now, so a tool added there is seen
+        without restarting the bridge; the ones read at start when it is given or unreadable."""
+        if repo_config is not None:
+            return repos.plugins
+        try:
+            return config.load(config.FILE, own_clone=roles.own_clone()).plugins
+        except config.ConfigError:
+            return repos.plugins
+
+    active_plugins = plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client, commit_of)
+    developer_mode = devmode.DeveloperMode()
+    desk = plugin_desk.Desk(
+        mcp,
+        active_plugins,
+        specs=plugin_specs,
+        approvals=plugin_approvals,
+        client=plugin_client,
+        git=gitstatus.read,
+        mode=developer_mode,
+        questions=devmode.Questions(),
+        announce=tools_changed,
+    )
+    mcp.plugin_desk = desk  # type: ignore[attr-defined]  # for tests
     across.machines = machines.start_approved(
         mcp, repos.machines, machine_folder, http=machine_http, whois=machine_whois
     )
@@ -1344,19 +1471,36 @@ def build_server(
             raise ToolError(str(exc)) from None
 
     software_seen: dict[str, Any] = {}
+    # Each plugin's own repository joins the two above, on the software panel and the work page.
+    plugin_repos = work.plugin_repos(repos.plugins)
+    board = work_board or work.Board(
+        {"claude-voice": repos.repos.claude_voice, "claude-voice-ui": repos.repos.claude_voice_ui}
+        | {name: repo for name, repo, _ in plugin_repos},
+        run=software._gh,
+    )
 
     def software_now() -> dict[str, Any]:
         """Both repositories' measures and checks, kept for ten minutes: git and GitHub are slow."""
         if software_seen and time.monotonic() - software_seen["at"] < 600:
             return software_seen["report"]
+        # A plugin may follow another branch than main (dreame-mcp's voice plugin lives on "voice").
+        followed = {str(Path(spec.cwd)): spec.branch for spec in repos.plugins}
         listed = (
             ("claude-voice", repos.repos.claude_voice, bridge_folder or repos.paths.claude_voice),
             ("claude-voice-ui", repos.repos.claude_voice_ui, repos.paths.claude_voice_ui),
+            *plugin_repos,
         )
         report = {
             "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
             "repos": [
-                software.repo_report(name, f"https://github.com/{repo}", folder, ci_status(repo), kept_levels(repo))
+                software.repo_report(
+                    name,
+                    f"https://github.com/{repo}",
+                    folder,
+                    ci_status(repo, branch=followed.get(str(folder), "main")),
+                    kept_levels(repo, branch=followed.get(str(folder), "main")),
+                    branch=followed.get(str(folder), "main"),
+                )
                 for name, repo, folder in listed
             ],
         }
@@ -2077,6 +2221,36 @@ def build_server(
             turn["text"] = transcripts.clip(turn["text"], max(max_chars, 20))
         return out
 
+    async def await_reply(
+        target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float
+    ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
+        """Watch a session we just sent a message until it settles, ends or the wait runs out.
+
+        Gives back the session as last seen, the status, and what it waits for, if anything."""
+        pid, seen_busy = target.get("pid"), False
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + within_budget(wait_seconds)
+        while True:
+            now = live_by_pid(pid)
+            if now is None:
+                return target, "session_ended", None
+            target = now
+            # A quick turn can start and end between two looks, so a new reply
+            # counts as much as having seen the session busy.
+            seen_busy = seen_busy or now.get("status") in BUSY
+            new_turns = numbered_turns(now)[before:]
+            received_late = loop.time() - started >= receive_seconds
+            settled = _settled(now, new_turns, probe, was_busy, seen_busy, received_late)
+            if settled == "waiting":
+                blocked = waiting(now)
+                return target, (blocked["status"] if blocked else "needs_input"), blocked
+            if settled:
+                return target, settled, None
+            if loop.time() >= deadline:
+                return target, "still_working", None
+            await asyncio.sleep(poll_seconds)
+
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
         session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
@@ -2171,85 +2345,21 @@ def build_server(
         target = find_live(session)
         moved = moved_to(target)
         if moved:
-            return {
-                "session": target["name"],
-                "status": "moved",
-                "moved_to": moved,
-                "session_ended": False,
-                "reply": "",
-                "reply_final": False,
-                "turns": [],
-                "next_after": -1,
-            }
-
+            return _not_sent(target, {"status": "moved", "moved_to": moved})
         blocked = waiting(target)
         if blocked:
             # A message would only queue behind what it waits for; send nothing.
-            return {
-                "session": target["name"],
-                **blocked,
-                "session_ended": False,
-                "reply": "",
-                "reply_final": False,
-                "turns": [],
-                "next_after": -1,
-            }
+            return _not_sent(target, blocked)
         before = len(numbered_turns(target))
-        was_busy = target.get("status") in ("busy", "shell")
+        was_busy = target.get("status") in BUSY
         out = await deliver(address(target), f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
-        pid, status, seen_busy = target.get("pid"), "still_working", False
-        started = asyncio.get_running_loop().time()
-        deadline = started + within_budget(wait_seconds)
         probe = message.strip()[:80]
-        while True:
-            now = live_by_pid(pid)
-            if now is None:
-                status = "session_ended"
-                break
-            target = now
-            # A quick turn can start and end between two looks, so a new reply
-            # counts as much as having seen the session busy.
-            seen_busy = seen_busy or now.get("status") in ("busy", "shell")
-            new_turns = numbered_turns(now)[before:]
-            anchor_at = next((t["index"] for t in new_turns if t["role"] == "user" and probe in t["text"]), None)
-            if (
-                was_busy
-                and anchor_at is not None
-                and any(t["role"] == "assistant" and t["index"] > anchor_at for t in new_turns)
-            ):
-                # Asked mid-work: its first words after our question are the answer; the
-                # rest of its turn belongs to whatever it was doing.
-                status = "answered"
-                break
-            replied = seen_busy or any(t["role"] == "assistant" for t in new_turns)
-            arrived = replied or any(t["role"] == "user" and probe in t["text"] for t in new_turns)
-            if not arrived and asyncio.get_running_loop().time() - started >= receive_seconds:
-                status = "not_received"  # handed over, yet never reached the conversation
-                break
-            if replied and now.get("status") == "idle":
-                status = "answered"
-                break
-            if now.get("status") == "waiting" and (seen_busy or replied or arrived):
-                blocked = waiting(now)
-                status = blocked["status"] if blocked else "needs_input"
-                break
-            if asyncio.get_running_loop().time() >= deadline:
-                break
-            await asyncio.sleep(poll_seconds)
-
+        target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds)
         fresh = numbered_turns(target)[before:] if status != "session_ended" else []
-        # Only what answers our message counts: what the session wrote after it. Its
-        # last words are the reply; the rest of its turn is how it got there.
-        anchor = next((t for t in fresh if t["role"] == "user" and probe in t["text"]), None)
-        start = anchor["index"] if anchor else before - 1
-        new = [t for t in fresh if t["role"] == "assistant" and t["index"] > start]
-        if anchor is None and status != "still_working":
-            new = new[-1:]  # the message is not in view: only the session's final words
-        elif anchor is not None and was_busy and new:
-            new = new[:1]
+        new, start = _reply_turns(fresh, probe, before, status, was_busy)
         final = reply_is_final(status, new)
         reply = reply_of(new, max_chars, final)
         return {
@@ -2522,6 +2632,7 @@ def build_server(
         offered = [p.status() for p in active_plugins]
         return {
             "plugins": offered,
+            "developer_mode": developer_mode.state(),
             "now": {
                 "up_since": started_at,
                 "version": running_version,
@@ -2538,6 +2649,46 @@ def build_server(
             },
             "access": {"root": str(manager.root), "granted": [str(p) for p in manager.access.granted()]},
         }
+
+    def caller() -> str:
+        return transcripts.current_client.get()
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def plugin_restart(name: str) -> dict[str, Any]:
+        """Start one plugin again so its new code is used, without restarting the bridge.
+        Its tools come back only if they still take what the owner approved. Read 'say' aloud."""
+        return await desk.restart(name)
+
+    @tool(annotations=ToolAnnotations(read_only_hint=True))
+    def developer_mode_request() -> dict[str, Any]:
+        """Ask the owner to switch developer mode on: read 'say' aloud exactly.
+        Call developer_mode_confirm with the token only if the owner clearly answers yes.
+        Developer mode lets the owner approve changed plugin tools by voice; it ends after 8 hours."""
+        return desk.mode_request(caller())
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def developer_mode_confirm(token: str) -> dict[str, Any]:
+        """Switch developer mode on, with the token from developer_mode_request.
+        Only after the owner's own clear yes to the question just read."""
+        return desk.mode_confirm(caller(), token)
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def developer_mode_off() -> dict[str, Any]:
+        """Switch developer mode off at once. No question is needed."""
+        return desk.mode_off(caller())
+
+    @tool(annotations=ToolAnnotations(read_only_hint=True))
+    async def plugin_approve_request(name: str) -> dict[str, Any]:
+        """Ask the owner to approve a plugin whose tools changed: read 'say' aloud.
+        It names each changed tool. Call plugin_approve_confirm with the token only on the
+        owner's clear yes. Works only in developer mode."""
+        return await desk.approve_request(caller(), name)
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    async def plugin_approve_confirm(token: str) -> dict[str, Any]:
+        """Approve the changed plugin, with the token from plugin_approve_request.
+        Only after the owner's own clear yes to the question just read."""
+        return await desk.approve_confirm(caller(), token)
 
     # -- the session the voice talks to, and the companion page that picks it -----------
 
@@ -2671,6 +2822,15 @@ def build_server(
     async def _no_prs() -> dict[str, Any]:
         return {"prs": []}  # another machine's pull requests are not looked up from here
 
+    mcp.terminals = terminals or Terminals()  # type: ignore[attr-defined]  # the desktop, swapped in tests
+
+    def focus_session(session_id: str) -> tuple[int, dict[str, str]]:
+        """Bring a session's terminal to the front: one on another machine cannot be."""
+        if across.split(session_id):
+            return NOT_LOCAL
+        desk: Terminals = mcp.terminals  # type: ignore[attr-defined]
+        return desk.open(session_id, live_sessions(), lambda pid: None)  # no tmux on this fork
+
     if oauth is not None:
 
         async def check_token(token: str) -> bool:
@@ -2704,12 +2864,14 @@ def build_server(
             start_role=launch_role,
             settings=start_settings,
             software=software_now,
+            work=lambda: {**board.report(), "developer_mode": developer_mode.state()},
             detail=lambda s: across.detail_page(s) if across.split(s) else session_detail(s),
             summary=request_summary,
             update_changes=update_changes_now,
             ui_origins=ui_origins,
             remote_prompts=across.prompts,
             answer_remote=across.answer,
+            focus=focus_session,
         ).routes(mcp)
 
     mcp.fleet = across  # type: ignore[attr-defined]  # the other machines, for tests and the CLI
@@ -2740,9 +2902,13 @@ def build_app(
     )
     app = server.streamable_http_app(transport_security=security)
     if ui_dir is not None:
+        from starlette.responses import RedirectResponse
+        from starlette.routing import Route
         from starlette.staticfiles import StaticFiles
 
         app.mount("/ui", StaticFiles(directory=str(ui_dir), html=True), name="ui")
+        # The plain address is what people type, so it leads to the page rather than "not found".
+        app.router.routes.append(Route("/", lambda request: RedirectResponse("/ui/"), methods=["GET"]))
     wrapped: ASGIApp = api.TailnetOnly(PublicClientMetadata(app))
     if ui_origins:
         from starlette.middleware.cors import CORSMiddleware
@@ -2779,7 +2945,7 @@ def serve_forever(cfg: Config) -> None:
         denied=access.default_denied(),
         exempt=access.default_exempt(),
         new_mode=cfg.new_session_mode,
-        grant_for=permissions.session_grant,
+        grant_for=session_modes.session_grant,
     )
     if cfg.transport == "stdio":
         build_server(manager).run("stdio")

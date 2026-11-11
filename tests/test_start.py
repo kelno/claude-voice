@@ -123,7 +123,7 @@ async def no_background_sessions():
 def resuming(tmp_path, world, starter, grant=None, background_sessions=no_background_sessions):
     from test_server import FakeConversations, conversation
 
-    from claude_voice.permissions import Grant
+    from claude_voice.session_modes import Grant
 
     root, live = world
     m = SessionManager(
@@ -167,7 +167,7 @@ async def test_what_claude_code_notes_at_the_start_comes_back(tmp_path, world):
 
 
 async def test_an_old_conversation_resumes_as_a_background_session_with_its_own_permissions(tmp_path, world):
-    from claude_voice.permissions import Grant
+    from claude_voice.session_modes import Grant
 
     starter = Starter(world[1])
     grant = Grant("acceptEdits", (r"D:\work\shared",))
