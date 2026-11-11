@@ -188,8 +188,9 @@ LOG_KEPT = 3
 # each tool by the first line of its description, cut at about eighty characters, so each
 # tool's first line says what it is for, and the manual holds only what spans tools: roles and
 # the central rules. Agents are assumed to read the manual; one that doesn't is a bug to fix
-# here (the guide tool's first line, a clearer rule), not a case to design around, so the tool
-# descriptions never repeat the manual's rules as reminders. The app's agents load tools by search
+# here (the guide tool's first line, a clearer rule) first, so the tool descriptions avoid
+# repeating the manual's rules as reminders; one that slipped despite the manual may get a reminder
+# where it's needed, with a comment saying why (AGENTS.md). The app's agents load tools by search
 # and may never call guide, so the manual also comes with the first result of any MCP session that
 # hasn't read it (result_notes).
 INSTRUCTIONS = """\
