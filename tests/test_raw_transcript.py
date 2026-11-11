@@ -125,6 +125,9 @@ def test_a_model_claude_code_does_not_know_reads_as_a_clear_error_with_what_to_d
     assert "stop_active_session" in turn["text"] and "start_active_session" in turn["text"]
 
 
+NOTE = "<task-notification><task-id>{}</task-id><status>completed</status></task-notification>"
+
+
 def _task_lines(started_at="2026-11-11T23:04:06.725Z"):
     """A shell command and a helper agent started in the background; only the shell's note has come."""
     return [
@@ -150,7 +153,7 @@ def _task_lines(started_at="2026-11-11T23:04:06.725Z"):
         {
             "type": "user",
             "origin": {"kind": "task-notification"},
-            "message": {"role": "user", "content": "<task-id>bcwyg4e4s</task-id>"},
+            "message": {"role": "user", "content": NOTE.format("bcwyg4e4s")},
         },
     ]
 
@@ -174,3 +177,14 @@ def test_a_task_started_before_the_session_s_restart_is_not_running(tmp_path):
     restarted = 1794438247000  # 2026-11-11T23:04:07Z, in milliseconds, as the registry keeps it
     assert transcripts.background_tasks(msgs, since_ms=restarted) == []
     assert transcripts.background_tasks(msgs, since_ms=restarted - 5000) == ["a694b47"]
+
+
+def test_a_completion_note_counts_in_every_form_claude_code_records_it(tmp_path):
+    # From the command line, the note comes as a queued command, not as a turn of its own.
+    lines = _task_lines()[:3] + [
+        {"type": "queue-operation", "operation": "enqueue", "content": NOTE.format("bcwyg4e4s")},
+        {"type": "attachment", "attachment": {"type": "queued_command", "prompt": NOTE.format("a694b47")}},
+    ]
+    msgs = _read(tmp_path, lines)
+    assert transcripts.background_tasks(msgs) == []
+    assert [t["text"] for t in recent_turns(msgs, None)][0] == "sleep 90s, then say done"  # the notes are no turns

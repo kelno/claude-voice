@@ -553,7 +553,10 @@ def started_in_background(task_id):
 
 
 def task_done(task_id):
-    return turn("user", f"<task-notification>\n<task-id>{task_id}</task-id>\n</task-notification>", "task-notification")
+    """The completion note of a task, as the desktop app hands it to the session: a turn of its own."""
+    out = turn("user", f"<task-notification>\n<task-id>{task_id}</task-id>\n</task-notification>", "task-notification")
+    out.ended = [task_id]
+    return out
 
 
 async def test_a_session_with_a_background_task_still_running_is_not_at_rest(served):

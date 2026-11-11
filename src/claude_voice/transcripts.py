@@ -442,8 +442,12 @@ def _lean(raw: bytes) -> Any:
         entry = json.loads(raw)
     except ValueError:
         return None
-    if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant") or entry.get("isSidechain"):
+    if not isinstance(entry, dict) or entry.get("isSidechain"):
         return None
+    ended = _completion_note(entry)
+    if entry.get("type") not in ("user", "assistant"):
+        # Not a turn, but a task's end the session's state depends on.
+        return SimpleNamespace(type="task-ended", message={}, origin=None, ended=ended) if ended else None
     if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") != "peer":
         return None
     message = entry.get("message") or {}
@@ -464,7 +468,25 @@ def _lean(raw: bytes) -> Any:
         origin=(entry.get("origin") or {}).get("kind"),
         task=_started_in_background(entry),
         at=entry.get("timestamp"),
+        ended=ended,
     )
+
+
+def _completion_note(entry: dict[str, Any]) -> list[str]:
+    """The tasks whose completion note this transcript line holds. Claude Code queues the note
+    (a queue-operation line), then hands it over: as a user turn marked task-notification in the
+    desktop app, as an attachment from the command line. Any of them counts."""
+    if entry.get("type") == "queue-operation":
+        text = entry.get("content")
+    elif (entry.get("attachment") or {}).get("type") == "queued_command":
+        text = entry["attachment"].get("prompt")
+    elif (entry.get("origin") or {}).get("kind") == "task-notification":
+        text = (entry.get("message") or {}).get("content")
+    else:
+        return []
+    if not isinstance(text, str) or "<task-notification>" not in text:
+        return []
+    return re.findall(r"<task-id>([^<]+)</task-id>", text)
 
 
 def _started_in_background(entry: dict[str, Any]) -> str | None:
@@ -488,9 +510,7 @@ def background_tasks(messages: Iterable[Any], since_ms: float | None = None) -> 
         # RULE: a task started before the session's restart is not running
         if task and not (since_ms and at and datetime.fromisoformat(at).timestamp() * 1000 < since_ms):
             started.append(task)
-        content = (getattr(m, "message", None) or {}).get("content")
-        if getattr(m, "origin", None) == "task-notification" and isinstance(content, str):
-            ended.update(re.findall(r"<task-id>([^<]+)</task-id>", content))
+        ended.update(getattr(m, "ended", None) or ())
     # RULE: a background task runs until its completion note
     return [t for t in started if t not in ended]
 
