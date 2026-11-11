@@ -3,7 +3,7 @@
 How this fork, [kelno/claude-voice](https://github.com/kelno/claude-voice), differs from [claude-voice](https://github.com/roykollensvendsen/claude-voice) by Roy Kollen Svendsen and why, upstream's rules for a pull request, and how one is checked here. What could go back upstream is in `UPSTREAM-CANDIDATES.md`. Written to be picked up cold, by people and agents.
 
 - "The owner" is kelno, who maintains this fork; "the relay" is the voice assistant in the Claude app that talks to the bridge for them; "agents" are the Claude sessions that do the work.
-- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (the fork's `CLAUDE.md` says how), so fork commits keep their hashes; the last merge took upstream's `613bd3d`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
+- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (the fork's `CLAUDE.md` says how), so fork commits keep their hashes; the last merge took upstream's `39b4f4a`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
 
 ## Upstream's rules
 
@@ -25,7 +25,7 @@ The owner's rule: align with upstream, reworking the fork to match it, as long a
 
 ## Differences from upstream
 
-Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `3baebbd`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
+Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `39b4f4a`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
 
 ### Decision records
 
@@ -58,6 +58,7 @@ A switched-off tool keeps its code, as close to upstream's as possible, and only
 | `get_active_session`, `set_active_session` | The chosen session marks which session the owner talks to, for the companion page; the owner switched it off, and tools the relay sees but never uses are noise in its list. The companion API's `/api/v1/active` routes stay. Switched off, code kept | "Drop the chosen-session tools the owner switched off", "Keep the switched-off upstream tools' code, offered to no one" |
 | `refresh_session_summary` | A second tool summing up a session, next to `digest_session`; a fresh agent reading the tools couldn't tell the two apart. The summary stays on the companion page, made by its own route. Switched off, code kept | "Drop the second summary tool, leaving digest_session", "Keep the switched-off upstream tools' code, offered to no one" |
 | `plugin_restart`, `developer_mode_request`, `developer_mode_confirm`, `developer_mode_off`, `plugin_approve_request`, `plugin_approve_confirm` | They restart a plugin and approve a changed one by voice; this PC runs no plugins, so they would only lengthen the relay's list. Switched off, code kept; upstream's tests of them run with them switched back on | "Switch off the plugin tools, since no plugin runs here" |
+| `org_chart` | New at the 2026-11-12 resync: says who handles what from each programme's org chart file. No folder here has one yet, and the owner hasn't decided; until then the guide doesn't name it. Switched off, code kept; upstream's tests of it run with it switched back on | "Merge upstream's main, with org charts and the owner's voice rules" |
 | `whats_new` | No relay thought to call it; every result now carries a line on what the relay hasn't read. The companion API's event stream still reads the watcher's events, through `event_feed()`, a plain function | "Tell the relay in every result what it hasn't read yet", "Remove whats_new now that every result carries the news" |
 
 ### Upstream features, and how they're set here
@@ -73,6 +74,12 @@ All of upstream's code is in; what is on or off here (owner):
 - Companion app: off. Its API code is in, without its parts for sessions run inside the bridge; its event stream reads the watcher's events through `event_feed()`, a plain function, since `whats_new` is not a tool here.
 - Other machines, "the hub" (`agent.py`, `fleet.py`, `machines.py`, `tailnet.py`, ADR-CV-006 to 008): in, inactive. Nothing is paired on this PC and Tailscale isn't needed: with no machine, the fleet's middleware passes every call through. The agent's own bridge is built without the approval broker the fork retired, and offers only the session tools the fork's bridge has.
 - Plugins: code in, off; no other MCP servers on this PC for now. Their tools (restarting a plugin, developer mode, approving a changed plugin by voice) are switched off until a plugin runs here (owner; see the table above). The bridge declares MCP's `listChanged` and tells clients when its tool list changes, which upstream does when a plugin is restarted or approved: on (owner).
+- Org charts (`org.py`, `hints.py`, ADR-CV-014, `docs/org-chart.md`, the `claude-voice org` command, the org-chart skill in `.claude/skills/`): in, inactive, since no folder here has an org chart file. The `org_chart` tool is off (see the table above). A session named in a call is found by its name first, the fork's way (any capitals, refused when several fit), and only then by its address in an org chart, as upstream does; with no org file, that second step finds nothing. The phone page's programmes and hints are in the companion API, unused here.
+- The owner's own rules for the voice (`voice_instructions_file` in `config.toml`): in, not set (owner to decide). When set, the file goes into the server's instructions as upstream does, and into the guide too, since the Claude app doesn't pass the server's instructions to the model.
+- Upstream's default rules for the voice (`DEFAULT_RULES`: `read_next_step`, `plain_terminal`, `delegate_unable`): off (owner to decide); one is switched on by naming it in `VOICE_RULES_ON` in `server.py`. The guide covers the ground differently: next_step is for the relay, said aloud only where it asks; and `delegate_unable` names `send_task`, switched off here.
+- The setup check's warning on env file lines a shell would misread (`claude-voice check`): on, as upstream.
+- The first look and the software report run off the event loop, so the bridge answers at once after a restart: on, as upstream.
+- The agent protocol, frozen as version 1 (`docs/agent-protocol.md`): in, for the hub, inactive here.
 - Quality levels: as upstream (ADR-CV-009). Continuous integration keeps main's levels with each run, and the software panel shows them.
 
 ### Same tools, different behaviour
