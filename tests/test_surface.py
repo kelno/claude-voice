@@ -160,3 +160,21 @@ async def test_every_parameter_is_described_in_its_own_description_and_alike_eve
     assert undescribed == []
     for name in ("session", "wait_seconds", "max_chars", "language"):
         assert len(texts.get(name, {})) <= 1, (name, texts.get(name))
+
+
+# Tool search's result also gives a one-line summary per parameter, its description cut after
+# about 117 characters; the full schema comes with it (a relay in the Claude app's voice mode,
+# 2026-11-11). So a parameter description's first sentence says what matters, within that.
+PARAM_FIRST_SENTENCE_CHARS = 115
+
+
+async def test_a_parameter_descriptions_first_sentence_fits_before_the_cut(world):
+    async with Client(world[2]) as c:
+        tools = (await c.list_tools()).tools
+    long = {}
+    for t in tools:
+        for name, prop in t.input_schema.get("properties", {}).items():
+            first = prop.get("description", "").split(". ")[0]
+            if len(first) > PARAM_FIRST_SENTENCE_CHARS:
+                long[f"{t.name}.{name}"] = len(first)
+    assert long == {}

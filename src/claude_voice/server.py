@@ -103,29 +103,28 @@ DEFAULT_MODEL = "opus"
 # parameter goes there, and what a result means stays in the tool's description.
 SESSION_PARAM = "A running session's name or id, from list_active_sessions."
 WAIT_PARAM = (
-    "Seconds to wait: 5 by default, at most the caller's limit (20 s for the Claude app). In "
-    "the Claude app keep the default: the app sends a call past about 10 s to the background."
+    "Keep the default, 5 s, in the Claude app, which sends a call past about 10 s to the "
+    "background. At most the caller's limit (20 s for the Claude app)."
 )
 MAX_CHARS_PARAM = "How long each message or excerpt in the result may be before it is cut."
 LANGUAGE_PARAM = 'The language to answer in, such as "norsk".'
 CREATE_FOLDER_PARAM = (
-    "True first makes the folder under the root when it does not exist; only for a plain name"
-    " (letters, digits, '.', '_', '-'), and only when asked."
+    "Only when asked: true first makes the folder under the root, for a plain name (letters, digits, '.', '_', '-')."
 )
 OPEN_FOLDER_PARAM = (
-    "A full path, to open a folder no session runs in yet, so start_active_session can work "
-    "there. Claude Code's trust is then marked too, and covers the whole repository when the "
-    "folder is inside one, which the owner should hear."
+    "A full path; Claude Code then trusts it too, the whole repository if it is inside one: "
+    "tell the owner. For a folder no session runs in yet, so start_active_session can work "
+    "there."
 )
 SUMMARY_PARAM = (
-    "For someone with no context: exactly what is approved (the file, text, command or "
-    "permission string), at most 300 characters."
+    "Exactly what is approved, for someone with no context, in at most 300 characters. Name the "
+    "file, text, command or permission string."
 )
 WAIT_AFTER_PARAM = (
-    "The next_after a send returned: waits for a reply past that turn, even if the session "
-    "hasn't picked the message up yet. Left out: all you haven't read of that session, from "
-    "where you last read it in any conversation (from this call if you never did); an idle "
-    "session returns at once."
+    "The next_after a send returned, to wait for the reply to it; left out, all you haven't "
+    "read of that session. With it, the wait holds even if the session hasn't picked the "
+    "message up yet; without it, unread counts from where you last read it in any "
+    "conversation (from this call if you never did), and an idle session returns at once."
 )
 
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
