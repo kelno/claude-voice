@@ -116,7 +116,7 @@ async def test_granting_opens_a_sessions_folder_and_everything_under_it_for_good
         assert granted["folder"] == str(world["elsewhere"].resolve())
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert "access" not in listed["Notes"] and "access" not in listed["Notes, deeper"]
-        assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
+        assert m.resolve_folder(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
 
     _, again = server(world)  # a restarted bridge keeps the grant
     async with Client(again) as c:
@@ -150,7 +150,7 @@ async def test_a_denied_folder_stays_closed_inside_the_root(world):
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Keys"]["access"] == "folder_closed"
     with pytest.raises(ValueError):
-        m.resolve_project(".ssh")
+        m.resolve_folder(".ssh")
 
 
 async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
@@ -159,7 +159,7 @@ async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
     async with Client(srv) as c:
         granted = await owner_grants(c, srv, world, folder=str(world["elsewhere"]))
     assert granted["folder"] == str(world["elsewhere"].resolve())
-    assert m.resolve_project(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
+    assert m.resolve_folder(str(world["elsewhere"] / "sub")) == (world["elsewhere"] / "sub").resolve()
 
 
 async def test_a_folder_opened_by_path_is_trusted_by_claude_code_too(world):
@@ -199,7 +199,7 @@ async def test_a_trust_that_cannot_be_written_leaves_the_grant_and_says_why(worl
     assert granted["granted"] and "trusted" not in granted
     assert "trust" in granted["trust_not_set"]
     assert (world["tmp"] / ".claude.json").read_text(encoding="utf-8") == "not json"
-    assert m.resolve_project(str(world["elsewhere"])) == world["elsewhere"].resolve()
+    assert m.resolve_folder(str(world["elsewhere"])) == world["elsewhere"].resolve()
 
 
 async def test_a_session_s_folder_is_left_to_claude_code_s_own_trust(world):

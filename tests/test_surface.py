@@ -1,4 +1,4 @@
-"""A small tool surface: few tools, few parameters, and a project list that fits in a voice."""
+"""A small tool surface: few tools, few parameters, and a folder list that fits in a voice."""
 
 import json
 import os
@@ -42,10 +42,10 @@ def folder(world, name, used_days_ago=None, sessions=1):
 
 async def projects(srv, **args):
     async with Client(srv) as c:
-        return (await c.call_tool("list_projects", args)).structured_content["projects"]
+        return (await c.call_tool("list_folders", args)).structured_content["folders"]
 
 
-async def test_the_project_list_holds_only_folders_used_lately_newest_first(world):
+async def test_the_folder_list_holds_only_folders_used_lately_newest_first(world):
     folder(world, "billing", used_days_ago=2, sessions=3)
     folder(world, "hydropower", used_days_ago=0)
     folder(world, "old", used_days_ago=60)
@@ -64,7 +64,7 @@ async def test_a_word_finds_any_folder_even_one_never_used(world):
     assert out[1]["last_used"] is None and out[1]["sessions"] == 0
 
 
-async def test_the_project_list_is_never_longer_than_twenty(world):
+async def test_the_folder_list_is_never_longer_than_twenty(world):
     for i in range(25):
         folder(world, f"p{i:02}", used_days_ago=1)
     assert len(await projects(world[2])) == 20
@@ -88,7 +88,7 @@ async def projects_named(srv, **args):
     return {p["name"]: p for p in await projects(srv, **args)}
 
 
-async def test_the_project_list_includes_folders_claude_was_used_in_anywhere(world):
+async def test_the_folder_list_includes_folders_claude_was_used_in_anywhere(world):
     root, _, srv = world
     folder(world, "billing", used_days_ago=2)
     notes = root.parent / "notes"
@@ -110,7 +110,7 @@ async def test_tools_covered_by_others_are_gone_and_the_rest_take_few_parameters
     assert "recent_activity" not in tools and "get_messages" not in tools
     assert set(tools["list_active_sessions"].input_schema.get("properties", {})) == set()
     assert set(tools["search_session_history"].input_schema["properties"]) == {"session", "query", "max_chars"}
-    assert set(tools["list_projects"].input_schema["properties"]) == {"query"}
+    assert set(tools["list_folders"].input_schema["properties"]) == {"query"}
     long = [n for n, t in tools.items() if len((t.description or "").split(". ")) > 3]
     assert long == []
 

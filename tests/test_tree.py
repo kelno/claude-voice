@@ -103,7 +103,7 @@ def test_running_sessions_become_nodes_and_couriers_do_not(world):
     assert nodes["sid-app-1"]["kind"] == "terminal"
     assert nodes["sid-bg-1"]["kind"] == "background"
     assert nodes["sid-bg-1"]["status"] == "busy"
-    assert nodes["sid-app-1"]["project"] == "app"
+    assert nodes["sid-app-1"]["folder"] == "app"
     assert all(not n["name"].startswith("claude-voice-msg-") for n in nodes.values())
     assert nodes[BRIDGE_NODE]["kind"] == "bridge"
 

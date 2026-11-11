@@ -74,7 +74,7 @@ async def test_a_bearer_token_reads_every_session_and_the_active_one(bridge):
     async with client(app) as c:
         out = (await c.get("/api/v1/sessions", headers=BEARER)).json()
     card = next(s for s in out["sessions"] if s["name"] == "billing-ab")
-    assert card["project"] == "billing" and card["status"] == "idle" and out["active"] is None
+    assert card["folder"] == "billing" and card["status"] == "idle" and out["active"] is None
 
 
 async def test_signing_in_sets_a_cookie_scripts_cannot_read_and_only_its_hash_is_kept(bridge):

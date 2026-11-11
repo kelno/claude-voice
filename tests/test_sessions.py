@@ -18,15 +18,15 @@ def manager(tmp_path, root):
     return SessionManager(Store(tmp_path / "bridge.db"), project_root=root, client_factory=FakeClaude())
 
 
-def test_projects_must_be_existing_directories_under_the_root(manager, root, tmp_path):
-    assert manager.resolve_project(str(root / "app")) == root / "app"
+def test_folders_must_be_existing_directories_under_the_root(manager, root, tmp_path):
+    assert manager.resolve_folder(str(root / "app")) == root / "app"
     with pytest.raises(ValueError, match="under"):
-        manager.resolve_project(str(tmp_path))
+        manager.resolve_folder(str(tmp_path))
     with pytest.raises(ValueError, match="under"):
-        manager.resolve_project(str(root / "app" / ".." / ".."))
+        manager.resolve_folder(str(root / "app" / ".." / ".."))
     with pytest.raises(ValueError, match="not a directory"):
-        manager.resolve_project(str(root / "missing"))
+        manager.resolve_folder(str(root / "missing"))
 
 
-def test_relative_project_names_resolve_against_the_root(manager, root):
-    assert manager.resolve_project("app") == root / "app"
+def test_relative_folder_names_resolve_against_the_root(manager, root):
+    assert manager.resolve_folder("app") == root / "app"

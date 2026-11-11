@@ -63,37 +63,37 @@ def bridge(tmp_path, world, starter):
 async def test_a_started_session_runs_in_the_background_and_is_listed_at_once(tmp_path, world):
     starter = Starter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
-        out = (await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})).structured_content
+        out = (await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})).structured_content
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
     assert out["started_in"] == "background" and "note" not in out
-    assert {k: out[k] for k in ("name", "claude_session_id", "project", "status")} == {
+    assert {k: out[k] for k in ("name", "claude_session_id", "folder", "status")} == {
         "name": "invoices",
         "claude_session_id": "sid-invoices",
-        "project": "billing",
+        "folder": "billing",
         "status": "idle",
     }
     assert starter.calls == [(str(world[0] / "billing"), "invoices")]
     assert "invoices" in {r["name"] for r in listed["sessions"]}
 
 
-async def test_without_a_name_one_is_made_from_the_project_and_never_clashes(tmp_path, world):
+async def test_without_a_name_one_is_made_from_the_folder_and_never_clashes(tmp_path, world):
     starter = Starter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
-        first = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
-        second = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
+        first = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
+        second = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
     assert first["name"].startswith("billing-") and second["name"].startswith("billing-")
     assert second["name"] != first["name"]  # no name given: a new session each time
 
 
 async def test_a_folder_outside_the_root_is_refused(tmp_path, world):
     async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
-        bad = await c.call_tool("start_active_session", {"project": "/etc"})
-    assert bad.is_error and "under" in bad.content[0].text
+        bad = await c.call_tool("start_active_session", {"folder": "/etc"})
+    assert bad.is_error and ": folder must be under " in bad.content[0].text
 
 
 async def test_a_session_that_never_appears_is_reported_not_promised(tmp_path, world):
     async with Client(bridge(tmp_path, world, Starter(world[1], register=False))) as c:
-        bad = await c.call_tool("start_active_session", {"project": "billing", "name": "ghost"})
+        bad = await c.call_tool("start_active_session", {"folder": "billing", "name": "ghost"})
     assert bad.is_error and "did not appear" in bad.content[0].text
 
 
@@ -101,14 +101,14 @@ async def test_a_session_started_without_a_model_runs_on_opus(tmp_path, world):
     # Claude Code's own default on the owner's account is Fable; the owner wants Opus.
     starter = Starter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
-        await c.call_tool("start_active_session", {"project": "billing", "name": "plain"})
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "plain"})
     assert starter.options[0]["model"] == "opus"
 
 
 async def test_a_chosen_model_comes_with_a_note_that_it_is_only_checked_at_the_first_reply(tmp_path, world):
     async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
-        deep = (await c.call_tool("start_active_session", {"project": "billing", "model": "opus"})).structured_content
-        plain = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
+        deep = (await c.call_tool("start_active_session", {"folder": "billing", "model": "opus"})).structured_content
+        plain = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
     assert "first reply" in deep["note"]
     assert "note" not in plain
 
@@ -159,9 +159,9 @@ async def test_a_former_background_session_is_woken_in_place_with_its_saved_opti
 async def test_what_claude_code_notes_at_the_start_comes_back(tmp_path, world):
     starter = Starter(world[1], note="Some banner\nnote: something to know\nbackgrounded")
     async with Client(bridge(tmp_path, world, starter)) as c:
-        out = (await c.call_tool("start_active_session", {"project": "billing", "name": "noted"})).structured_content
+        out = (await c.call_tool("start_active_session", {"folder": "billing", "name": "noted"})).structured_content
     async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
-        plain = (await c.call_tool("start_active_session", {"project": "billing", "name": "quiet"})).structured_content
+        plain = (await c.call_tool("start_active_session", {"folder": "billing", "name": "quiet"})).structured_content
     assert out["claude_code_note"] == "note: something to know"
     assert "claude_code_note" not in plain
 
@@ -241,7 +241,7 @@ def bridge_with_stop(tmp_path, world, starter, stopper, windows=None):
 async def test_a_session_the_bridge_started_can_be_stopped_and_is_gone_after(tmp_path, world):
     stopper = Stopper(world[1])
     async with Client(bridge_with_stop(tmp_path, world, Starter(world[1]), stopper)) as c:
-        await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
         again = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
@@ -275,7 +275,7 @@ async def test_only_a_session_the_bridge_started_itself_is_ever_stopped(tmp_path
 async def test_the_record_of_started_sessions_survives_a_restart_of_the_bridge(tmp_path, world):
     stopper = Stopper(world[1])
     async with Client(bridge_with_stop(tmp_path, world, Starter(world[1]), stopper)) as c:
-        await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
     async with Client(bridge_with_stop(tmp_path, world, Starter(world[1]), stopper)) as c:  # same database
         out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
     assert out["status"] == "stopped"
@@ -291,9 +291,9 @@ async def test_a_session_can_be_started_on_a_chosen_model_and_effort(tmp_path, w
     starter = ModelStarter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
         out = (
-            await c.call_tool("start_active_session", {"project": "billing", "model": "opus", "effort": "high"})
+            await c.call_tool("start_active_session", {"folder": "billing", "model": "opus", "effort": "high"})
         ).structured_content
-        plain = (await c.call_tool("start_active_session", {"project": "billing"})).structured_content
+        plain = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
     assert starter.models == ("opus", None)  # the second start: Opus, as this fork chose, and Claude Code's effort
     assert "first reply" in out["note"] and "first reply" not in plain.get("note", "")
 
@@ -302,7 +302,7 @@ async def test_a_session_can_be_started_on_a_chosen_model_and_effort(tmp_path, w
 async def test_only_a_well_formed_model_name_and_a_known_effort_reach_claude_code(tmp_path, world, field, value):
     starter = ModelStarter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
-        bad = await c.call_tool("start_active_session", {"project": "billing", field: value})
+        bad = await c.call_tool("start_active_session", {"folder": "billing", field: value})
     assert bad.is_error and starter.calls == []
 
 
@@ -330,10 +330,10 @@ async def test_starting_the_same_session_twice_gives_back_the_one_already_runnin
     starter = Starter(world[1])
     async with Client(bridge(tmp_path, world, starter)) as c:
         first = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         ).structured_content
         again = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "invoices"})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         ).structured_content
     assert len(starter.calls) == 1
     assert again["claude_session_id"] == first["claude_session_id"] and again["already_running"] is True
@@ -373,28 +373,28 @@ async def test_a_window_the_bridge_opened_can_be_stopped_by_the_bridge(tmp_path,
         find_program=lambda n: None,
     )
     async with Client(server) as c:
-        await c.call_tool("start_active_session", {"project": "billing", "name": "inv"})
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "inv"})
         out = (await c.call_tool("stop_active_session", {"name": "inv"})).structured_content
     assert out["status"] == "stopped" and windows.closed == [PID] and stopper.calls == []
 
 
-async def test_a_new_project_folder_is_made_only_when_asked(tmp_path, world):
+async def test_a_new_folder_is_made_only_when_asked(tmp_path, world):
     root, live = world
     starter = Starter(live)
     async with Client(bridge(tmp_path, world, starter)) as c:
-        refused = await c.call_tool("start_active_session", {"project": "utgifter", "name": "u"})
+        refused = await c.call_tool("start_active_session", {"folder": "utgifter", "name": "u"})
         made = (
-            await c.call_tool("start_active_session", {"project": "utgifter", "name": "u", "create_folder": True})
+            await c.call_tool("start_active_session", {"folder": "utgifter", "name": "u", "create_folder": True})
         ).structured_content
     assert refused.is_error  # not made by default
-    assert (root / "utgifter").is_dir() and made["folder_created"] is True and made["project"] == "utgifter"
+    assert (root / "utgifter").is_dir() and made["folder_created"] is True and made["folder"] == "utgifter"
 
 
 @pytest.mark.parametrize("name", ["../escape", "a/b", "/etc", "..", ".hidden", "x" * 80, "with space"])
 async def test_a_new_folder_must_be_a_simple_name_under_the_root(tmp_path, world, name):
     root, live = world
     async with Client(bridge(tmp_path, world, Starter(live))) as c:
-        out = await c.call_tool("start_active_session", {"project": name, "create_folder": True})
+        out = await c.call_tool("start_active_session", {"folder": name, "create_folder": True})
     assert out.is_error and "simple name" in out.content[0].text
     assert sorted(p.name for p in root.iterdir()) == ["billing"]
 
@@ -404,7 +404,7 @@ async def test_an_existing_folder_is_used_as_it_is_and_nothing_is_made(tmp_path,
     (root / "billing" / "keep.txt").write_text("mine")
     async with Client(bridge(tmp_path, world, Starter(live))) as c:
         out = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "b", "create_folder": True})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "b", "create_folder": True})
         ).structured_content
     assert out["folder_created"] is False and (root / "billing" / "keep.txt").read_text() == "mine"
 
@@ -446,6 +446,6 @@ async def test_only_a_folder_the_bridge_just_made_is_trusted_for_claude_code(tmp
         trust_folder=trusted.append,
     )
     async with Client(server) as c:
-        await c.call_tool("start_active_session", {"project": "utgifter", "name": "u", "create_folder": True})
-        await c.call_tool("start_active_session", {"project": "billing", "name": "b", "create_folder": True})
+        await c.call_tool("start_active_session", {"folder": "utgifter", "name": "u", "create_folder": True})
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "b", "create_folder": True})
     assert trusted == [root / "utgifter"]  # an existing folder is never trusted on its own

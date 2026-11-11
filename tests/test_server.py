@@ -43,7 +43,7 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
     async with Client(server) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     assert {
-        "list_projects",
+        "list_folders",
         "list_active_sessions",
         "fleet_recap",
         "start_active_session",
@@ -70,7 +70,7 @@ async def test_exposes_the_voice_control_tools(tmp_path, root):
 async def test_mistakes_come_back_as_readable_tool_errors(tmp_path, root):
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
-        outside = await client.call_tool("start_active_session", {"project": str(tmp_path)})
+        outside = await client.call_tool("start_active_session", {"folder": str(tmp_path)})
         assert outside.is_error and "under" in outside.content[0].text
 
         unknown = await client.call_tool("read_session_output", {"session": "nope"})
@@ -122,8 +122,8 @@ async def test_http_refuses_requests_without_the_right_token(http_server, auth):
 async def test_http_serves_mcp_with_the_right_token(http_server):
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
     async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http)) as c:
-        out = await call(c, "list_projects", query="ap")
-    assert [p["name"] for p in out["projects"]] == ["app"]
+        out = await call(c, "list_folders", query="ap")
+    assert [p["name"] for p in out["folders"]] == ["app"]
 
 
 async def test_a_connection_that_skipped_the_guide_gets_it_with_its_first_result(http_server):
@@ -134,13 +134,13 @@ async def test_a_connection_that_skipped_the_guide_gets_it_with_its_first_result
 
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
     async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http), mode="legacy") as c:
-        first = await call(c, "list_projects", query="ap")
-        second = await call(c, "list_projects", query="ap")
+        first = await call(c, "list_folders", query="ap")
+        second = await call(c, "list_folders", query="ap")
     assert first["guide"] == INSTRUCTIONS
     # Said before the text, so an agent doesn't call guide for the same text again.
     assert list(first)[:2] == ["guide_note", "guide"]
     assert "no need to call guide" in first["guide_note"]
-    assert [p["name"] for p in first["projects"]] == ["app"]
+    assert [p["name"] for p in first["folders"]] == ["app"]
     assert "guide" not in second
 
 
@@ -156,7 +156,7 @@ async def test_a_connection_that_read_the_guide_does_not_get_it_again(http_serve
     http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
     async with http, Client(streamable_http_client(f"{http_server}/mcp", http_client=http), mode="legacy") as c:
         read = await call(c, "guide")
-        after = await call(c, "list_projects", query="ap")
+        after = await call(c, "list_folders", query="ap")
     assert "guide" not in after
     # An agent that has just called guide is not told it needn't have.
     assert "guide_note" not in read
@@ -167,7 +167,7 @@ async def test_a_call_with_no_session_to_remember_never_carries_the_guide(tmp_pa
     # one, so it would get the manual on every call: it gets none.
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as c:
-        out = await call(c, "list_projects", query="ap")
+        out = await call(c, "list_folders", query="ap")
     assert "guide" not in out
 
 
@@ -251,7 +251,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
     read_only = {
-        "list_projects",
+        "list_folders",
         "fleet_recap",
         "list_claude_conversations",
         "list_active_sessions",
@@ -318,7 +318,7 @@ def conversation(sid, cwd, title, minutes_ago=1):
     )
 
 
-async def test_conversations_from_every_project_under_the_root_are_listed(tmp_path, root):
+async def test_conversations_from_every_folder_under_the_root_are_listed(tmp_path, root):
     convs = FakeConversations(
         [
             conversation("t-1", str(root / "app"), "Fix login"),
@@ -329,7 +329,7 @@ async def test_conversations_from_every_project_under_the_root_are_listed(tmp_pa
     m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
     async with Client(build_server(m, conversations=convs)) as client:
         out = await call(client, "list_claude_conversations")
-    listed = [(c["claude_session_id"], c["project"]) for c in out["conversations"]]
+    listed = [(c["claude_session_id"], c["folder"]) for c in out["conversations"]]
     assert listed == [("t-1", "app"), ("t-2", "lib")]
     assert out["conversations"][0]["summary"] == "Fix login"
     assert out["conversations"][0]["minutes_ago"] == 1
@@ -383,7 +383,7 @@ async def test_active_sessions_are_the_running_claude_code_processes(tmp_path, r
         {
             "claude_session_id": "c-1",
             "name": "app-fix",
-            "project": "app",
+            "folder": "app",
             "status": "busy",
             "kind": "interactive",
             "minutes_since_update": 2,
@@ -420,10 +420,10 @@ async def test_tool_calls_are_logged_by_name(tmp_path, root, caplog):
     _, server = make(tmp_path, root, FakeClaude())
     with caplog.at_level(logging.INFO, logger="claude_voice"):
         async with Client(server) as client:
-            await call(client, "list_projects")
+            await call(client, "list_folders")
             await client.call_tool("read_session_output", {"session": "nope"})
     lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
-    assert any(line.startswith("mcp tools/call list_projects -> ok ") and "trace=-" in line for line in lines)
+    assert any(line.startswith("mcp tools/call list_folders -> ok ") and "trace=-" in line for line in lines)
     # A call aimed at a session says which, and every call says who made it.
     assert any(
         line.startswith("mcp tools/call read_session_output -> error ")
@@ -440,10 +440,10 @@ async def test_a_trace_id_sent_with_a_call_is_logged_with_it_and_its_time(tmp_pa
     _, server = make(tmp_path, root, FakeClaude())
     with caplog.at_level(logging.INFO, logger="claude_voice"):
         async with Client(server) as client:
-            await client.call_tool("list_projects", {}, meta={"trace_id": "ab12cd34ef56"})
+            await client.call_tool("list_folders", {}, meta={"trace_id": "ab12cd34ef56"})
     lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
     assert any(
-        re.fullmatch(r"mcp tools/call list_projects -> ok \d+ms trace=ab12cd34ef56 from=\w+", line) for line in lines
+        re.fullmatch(r"mcp tools/call list_folders -> ok \d+ms trace=ab12cd34ef56 from=\w+", line) for line in lines
     )
 
 
@@ -453,16 +453,14 @@ async def test_every_call_is_counted_with_its_time_and_outcome(tmp_path, root):
     METRICS.reset()
     _, server = make(tmp_path, root, FakeClaude())
     async with Client(server) as client:
-        await client.call_tool("list_projects", {})
-        await client.call_tool("list_projects", {})
+        await client.call_tool("list_folders", {})
+        await client.call_tool("list_folders", {})
         await client.call_tool("read_session_output", {"session": "nope"}, meta={"trace_id": "t1"})
     snap = METRICS.snapshot()
     tools = {t["name"]: t for t in snap["tools"]}
-    assert tools["list_projects"]["calls"] == 2 and tools["list_projects"]["errors"] == 0
+    assert tools["list_folders"]["calls"] == 2 and tools["list_folders"]["errors"] == 0
     assert tools["read_session_output"]["errors"] == 1
-    assert (
-        tools["list_projects"]["p50_ms"] >= 0 and tools["list_projects"]["p95_ms"] >= tools["list_projects"]["p50_ms"]
-    )
+    assert tools["list_folders"]["p50_ms"] >= 0 and tools["list_folders"]["p95_ms"] >= tools["list_folders"]["p50_ms"]
     err = snap["errors"][0]
     assert err["tool"] == "read_session_output" and err["trace_id"] == "t1" and err["kind"] == "tool_error"
     assert "nope" in err["error"] and len(err["error"]) <= 200

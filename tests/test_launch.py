@@ -129,7 +129,7 @@ def bridge(world, starter, sessions=None, find=GNOME, env=DESKTOP):
 async def test_a_started_session_runs_in_the_background_with_remote_control_by_default(world):
     starter = Starter(world / "live")
     async with Client(bridge(world, starter)) as c:
-        out = (await c.call_tool("start_active_session", {"project": "billing", "name": "inv"})).structured_content
+        out = (await c.call_tool("start_active_session", {"folder": "billing", "name": "inv"})).structured_content
     assert starter.calls[0]["remote_control"] is True
     assert starter.calls[0]["terminal"] is None
     assert out["started_in"] == "background"
@@ -139,9 +139,9 @@ async def test_one_start_can_open_in_a_window_without_changing_the_setting(world
     starter = Starter(world / "live")
     async with Client(bridge(world, starter)) as c:
         once = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "a", "start_in": "terminal"})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "a", "start_in": "terminal"})
         ).structured_content
-        after = (await c.call_tool("start_active_session", {"project": "billing", "name": "b"})).structured_content
+        after = (await c.call_tool("start_active_session", {"folder": "billing", "name": "b"})).structured_content
     assert starter.calls[0]["terminal"][0] == "gnome-terminal" and once["started_in"] == "window"
     assert after["started_in"] == "background"
 
@@ -150,7 +150,7 @@ async def test_with_no_terminal_to_open_the_session_starts_in_the_background_and
     starter = Starter(world / "live")
     async with Client(bridge(world, starter, find=finder())) as c:
         out = (
-            await c.call_tool("start_active_session", {"project": "billing", "name": "inv", "start_in": "terminal"})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "inv", "start_in": "terminal"})
         ).structured_content
     assert starter.calls[0]["terminal"] is None and out["started_in"] == "background"
     assert "terminal" in out["note"]
@@ -173,7 +173,7 @@ async def test_the_settings_page_reads_and_changes_how_new_sessions_start(world)
             event = events.get_nowait()
         again = (await c.get("/api/v1/settings", headers=BEARER)).json()
     async with Client(server) as mcp:
-        out = (await mcp.call_tool("start_active_session", {"project": "billing", "name": "x"})).structured_content
+        out = (await mcp.call_tool("start_active_session", {"folder": "billing", "name": "x"})).structured_content
     assert first["remote_control"] is True and first["start_in"] == "background"
     assert changed.status_code == 200 and again["start_in"] == "terminal" and again["remote_control"] is True
     assert event[0] == "settings" and event[1]["start_in"] == "terminal"

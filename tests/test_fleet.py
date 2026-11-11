@@ -111,7 +111,7 @@ async def test_one_call_covers_every_running_session(world):
     assert rows["export-1"]["doing"] == "waiting on a choice: Merge it now?"
     assert rows["export-1"]["question"]["options"] == ["Yes", "No"]
     assert set(rows) == {"billing-1", "export-1"}
-    assert set(rows["billing-1"]) >= {"id", "name", "kind", "project", "status", "doing", "minutes_since_update"}
+    assert set(rows["billing-1"]) >= {"id", "name", "kind", "folder", "status", "doing", "minutes_since_update"}
 
 
 def test_doing_leaves_out_web_addresses(world):

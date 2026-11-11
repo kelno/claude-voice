@@ -18,12 +18,12 @@ class Request:
 class Ctx:
     def __init__(self, headers=None):
         self.method = "tools/call"
-        self.params = {"name": "list_projects", "arguments": {}}
+        self.params = {"name": "list_folders", "arguments": {}}
         self.request = Request(headers or {})
 
 
 async def answer(ctx):
-    return {"structuredContent": {"projects": []}, "content": []}
+    return {"structuredContent": {"folders": []}, "content": []}
 
 
 def line(entry):
