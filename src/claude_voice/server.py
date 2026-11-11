@@ -1231,7 +1231,7 @@ def build_server(
                 "id": row["claude_session_id"],
                 "number": numbers.get(str(row["claude_session_id"])),
                 "name": row["name"],
-                "kind": session_kind({**d, "kind": row["kind"]}),
+                "kind": row["kind"],
                 "folder": row["folder"],
                 "status": row["status"],
                 "state": state,
@@ -1661,10 +1661,10 @@ def build_server(
     @tool(annotations=READ_ONLY)
     def list_active_sessions() -> dict[str, Any]:
         """Every session running now, with status; a waiting one carries its prompt.
-        Claude Code sessions on this machine, busy, idle or waiting; kind "interactive" is one
-        the user types in, "bg" one with no terminal window (the bridge's own are on Remote
-        Control); side_chat marks a desktop side chat ("btw: ..."), which gets no work unless
-        asked. A session outside the folders open to the bridge (the root and what's under it,
+        Claude Code sessions on this machine, busy, idle or waiting; kind is "desktop",
+        "terminal" or "background" (no window; the bridge's own are on Remote Control);
+        side_chat marks a desktop side chat ("btw: ..."), which gets no work unless asked.
+        A session outside the folders open to the bridge (the root and what's under it,
         and those opened with request_access; open in an app doesn't count) has access
         "folder_not_open" (request_access opens it once the owner confirms) or "folder_closed"
         (inside or holding a secret or system folder; never opened), and only its name, folder
@@ -1702,7 +1702,7 @@ def build_server(
                         "name": d.get("name"),
                         "folder": str(Path(str(d.get("cwd"))).resolve()),
                         "status": d.get("status"),
-                        "kind": d.get("kind"),
+                        "kind": session_kind(d),
                         "access": f"folder_{manager.access.state(str(d.get('cwd')))}",
                         "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
                     }
@@ -1713,7 +1713,7 @@ def build_server(
                 "name": d.get("name"),
                 "folder": name,
                 "status": d.get("status"),
-                "kind": d.get("kind"),
+                "kind": session_kind(d),
                 "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
             }
             if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
