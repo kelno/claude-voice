@@ -187,7 +187,7 @@ def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> 
     from .store import Store
 
     try:
-        cfg = load_config(env, "stdio")
+        cfg = load_config(env, "stdio", need_root=False)
     except ConfigError as exc:
         sys.stderr.write(f"claude-voice: {exc}\n")
         return 1

@@ -112,3 +112,12 @@ def test_a_passkey_is_added_from_a_one_time_link_made_at_the_pc(tmp_path, capsys
     assert main(["passkey", "list"], env=settings) == 0
     assert "No passkey" in capsys.readouterr().out
     assert main(["passkey", "remove", "nope"], env=settings) == 1
+
+
+def test_the_passkey_command_works_without_the_folder_of_work_folders(tmp_path, capsys):
+    """It keeps passkeys in the database; the root is only the bridge's, and may be unset in a plain shell."""
+    settings = {"CLAUDE_VOICE_ROOT": str(tmp_path / "missing"), "CLAUDE_VOICE_DB": str(tmp_path / "b.db")}
+    assert main(["passkey", "list"], env=settings) == 0
+    assert "No passkey" in capsys.readouterr().out
+    assert main(["passkey", "remove", "nope"], env=settings) == 1
+    assert capsys.readouterr().err.startswith("claude-voice: no passkey 'nope'")

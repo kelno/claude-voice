@@ -337,7 +337,9 @@ MAKE_TOKEN = (
 )
 
 
-def load_config(env: Mapping[str, str], transport: str) -> Config:
+def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = True) -> Config:
+    """The bridge's settings from `env`. A command that never touches the work folders, such as
+    `claude-voice passkey`, passes need_root=False, so a shell without CLAUDE_VOICE_ROOT can run it."""
     # RULE: an api key in the environment stops the bridge from starting
     if env.get("ANTHROPIC_API_KEY") and env.get("CLAUDE_VOICE_ALLOW_API_KEY") != "1":
         raise ConfigError(
@@ -345,7 +347,7 @@ def load_config(env: Mapping[str, str], transport: str) -> Config:
             "subscription. Unset it, or set CLAUDE_VOICE_ALLOW_API_KEY=1 if that is intended."
         )
     root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
-    if not root.is_dir():
+    if need_root and not root.is_dir():
         raise ConfigError(
             f"CLAUDE_VOICE_ROOT is not a directory: {root}. Make it with `mkdir -p {root}`, or set "
             "CLAUDE_VOICE_ROOT to the folder that holds your work folders."
