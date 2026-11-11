@@ -68,6 +68,8 @@ All of upstream's code is in; what is on or off here (owner):
 - Contribute role (`start_role`): on. Its folder, a separate worktree of the fork on upstream's `main` and never the clone the bridge runs from, is set for this PC in `~/.config/claude-voice/config.toml` (`[paths] contribute`). Its first message sends it to "How we check a pull request here", which wins where upstream's brief differs. No rules live in machine-local files (owner).
 - `check_dependencies`: on, as upstream has it.
 - Chosen session (`get_active_session`, `set_active_session`) and `refresh_session_summary`: off (see the table above).
+- Repository permission rules (`claude-voice permissions`): in, never run here. It only acts when typed.
+- The work page (`/api/v1/work`) and bringing a session's terminal to the front: in, as part of the companion API, which nothing here calls; the terminal part works only on a Linux desktop.
 - Companion app: off. Its API code is in, without its parts for sessions run inside the bridge; its event stream reads the watcher's events through `event_feed()`, a plain function, since `whats_new` is not a tool here.
 - Other machines, "the hub" (`agent.py`, `fleet.py`, `machines.py`, `tailnet.py`, ADR-CV-006 to 008): in, inactive. Nothing is paired on this PC and Tailscale isn't needed: with no machine, the fleet's middleware passes every call through. The agent's own bridge is built without the approval broker the fork retired, and offers only the session tools the fork's bridge has.
 - Plugins: code in, off; no other MCP servers on this PC for now. Their tools (restarting a plugin, developer mode, approving a changed plugin by voice) are switched off (see the table above).
