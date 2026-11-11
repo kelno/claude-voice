@@ -717,3 +717,27 @@ file = "src/claude_voice/server.py"
 find = 'seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds'
 replace = 'seconds = WAIT_SECONDS if wait_seconds is None else wait_seconds'
 
+
+[[rule]]
+name = "a background task runs until its completion note"
+file = "src/claude_voice/transcripts.py"
+find = 'return \[t for t in started if t not in ended\]'
+replace = 'return []'
+
+[[rule]]
+name = "a task started before the session's restart is not running"
+file = "src/claude_voice/transcripts.py"
+find = 'if task and not \(since_ms and at and'
+replace = 'if task:'
+
+[[rule]]
+name = "a background task's completion note is not a later message"
+file = "src/claude_voice/server.py"
+find = 't\["role"\] == "user" and t.get\("origin"\) != "task-notification" and answer and i > answer\[0\]'
+replace = 't["role"] == "user" and answer and i > answer[0]'
+
+[[rule]]
+name = "a session with a background task still running is not at rest"
+file = "src/claude_voice/server.py"
+find = 'return BACKGROUND$'
+replace = 'pass'

@@ -123,3 +123,54 @@ def test_a_model_claude_code_does_not_know_reads_as_a_clear_error_with_what_to_d
     [turn] = recent_turns(read_raw_transcript("sid-1", cwd, projects_dir=tmp_path), None)
     assert turn["text"].startswith(text)
     assert "stop_active_session" in turn["text"] and "start_active_session" in turn["text"]
+
+
+def _task_lines(started_at="2026-11-11T23:04:06.725Z"):
+    """A shell command and a helper agent started in the background; only the shell's note has come."""
+    return [
+        {"type": "user", "message": {"role": "user", "content": "sleep 90s, then say done"}},
+        {
+            "type": "user",
+            "timestamp": started_at,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "x"}]},
+            "toolUseResult": {"stdout": "", "backgroundTaskId": "bcwyg4e4s"},
+        },
+        {
+            "type": "user",
+            "timestamp": started_at,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "y"}]},
+            "toolUseResult": {"isAsync": True, "status": "async_launched", "agentId": "a694b47"},
+        },
+        {
+            "type": "user",
+            "timestamp": started_at,
+            "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t3", "content": "z"}]},
+            "toolUseResult": {"status": "completed", "agentId": "a111"},  # a helper that ran in the turn
+        },
+        {
+            "type": "user",
+            "origin": {"kind": "task-notification"},
+            "message": {"role": "user", "content": "<task-id>bcwyg4e4s</task-id>"},
+        },
+    ]
+
+
+def _read(tmp_path, lines):
+    path = tmp_path / project_key_for_directory("/w") / "s.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("".join(json.dumps(x) + "\n" for x in lines))
+    return transcripts.read_raw_transcript("s", "/w", tmp_path)
+
+
+def test_a_background_task_runs_until_its_completion_note(tmp_path):
+    msgs = _read(tmp_path, _task_lines())
+    assert transcripts.background_tasks(msgs) == ["a694b47"]
+    assert transcripts.background_tasks(msgs[:2]) == ["bcwyg4e4s"]
+
+
+def test_a_task_started_before_the_session_s_restart_is_not_running(tmp_path):
+    # A restart ends what the session ran in the background, and no note comes for it.
+    msgs = _read(tmp_path, _task_lines())
+    restarted = 1794438247000  # 2026-11-11T23:04:07Z, in milliseconds, as the registry keeps it
+    assert transcripts.background_tasks(msgs, since_ms=restarted) == []
+    assert transcripts.background_tasks(msgs, since_ms=restarted - 5000) == ["a694b47"]

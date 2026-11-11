@@ -164,7 +164,7 @@ SWITCHED_OFF = frozenset(
 )
 # The states of a followed session that keep the relay waiting on it: still working on its
 # message, or a finished turn not yet read. One paused on the owner's answer doesn't.
-ACTIVE = ("working", "unread")
+ACTIVE = ("working", "background", "unread")
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
@@ -190,6 +190,10 @@ NEXT_UNREAD = (
 NEXT_WORKING = (
     "{name} has been on your message{since}{last}: call wait_for_session again now, or once you have "
     "answered the owner if they just spoke."
+)
+NEXT_BACKGROUND = (
+    "{name} ended its turn with a background task still running{last}, so more is to come when it finishes: "
+    "call wait_for_session again now, or once you have answered the owner if they just spoke."
 )
 NEXT_DONE = "Nothing left to follow: every reply is read{left}. No need to tell the owner."
 # Said in the result of a send or a question to a session the owner typed in since the relay last
@@ -297,7 +301,8 @@ News
   across voice conversations and bridge restarts, so it may name a session an
   earlier conversation messaged.
 - News is three things only: "reply to you", once a followed session's turn
-  has ended; a permission prompt waiting, shown as just that, followed or
+  has ended (a turn that ends with a background task still running doesn't
+  count: the task's end starts another turn); a permission prompt waiting, shown as just that, followed or
   not; "ended", named once, then dropped ("ended before you read its reply":
   attach_conversation resumes it, to read it). Progress lines aren't news;
   read_session_output still shows them. "read with after=N" says where to
@@ -682,6 +687,9 @@ async def wake_interrupted(
 
 
 BUSY = ("busy", "shell")  # a session's statuses while it works
+# A session whose turn has ended while a task it started runs on in the background: the task's
+# completion note will start another turn, so it is not at rest (owner, 2026-11-12, ledger F58).
+BACKGROUND = "turn ended, background task still running"
 
 
 def _not_sent(target: dict[str, Any], outcome: dict[str, Any]) -> dict[str, Any]:
@@ -1034,9 +1042,12 @@ def build_server(
                     sentences.append(NEXT_WAITING.format(name=name, prompt=f": {prompt}" if prompt else ""))
             elif state == "unread":
                 sentences.append(NEXT_UNREAD.format(name=name))
-            elif state == "working":
+            elif state in ("working", "background"):
                 last = f' (latest: "{transcripts.clip(mark["last"], 100)}")' if mark.get("last") else ""
-                sentences.append(NEXT_WORKING.format(name=name, since=lasted(mark.get("since")), last=last))
+                if state == "background":
+                    sentences.append(NEXT_BACKGROUND.format(name=name, last=last))
+                else:
+                    sentences.append(NEXT_WORKING.format(name=name, since=lasted(mark.get("since")), last=last))
         active = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
         if active_before and not active:
             # RULE: the result where following ends says there is nothing left to follow
@@ -1098,7 +1109,7 @@ def build_server(
         elif where == "waiting":
             mark["state"] = "waiting"
         else:
-            mark.update(state="working", told=False, last=last)
+            mark.update(state="background" if state == BACKGROUND else "working", told=False, last=last)
         if state == "waiting on a permission prompt":
             return [f"{name}: {', '.join([state, *news])}"]
         return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
@@ -1111,8 +1122,10 @@ def build_server(
         answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
         # Its turn has ended once it rests, or asks its user something (not mid-turn on a
         # prompt), or once a later message came in after its reply.
+        # RULE: a background task's completion note is not a later message
         ended = session_state(d) in ("idle", "waiting for an answer") or any(
-            t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
+            t["role"] == "user" and t.get("origin") != "task-notification" and answer and i > answer[0]
+            for i, t in enumerate(turns)
         )
         mark["replied"] = mark["replied"] or (bool(answer) and ended)
         last = turns[answer[-1]]["text"] if answer else None
@@ -1131,7 +1144,18 @@ def build_server(
                 if d.get("waitingFor") == "permission prompt"
                 else "waiting for an answer"
             )
+        if d.get("status") in ("idle", "shell") and background_running(d):
+            # RULE: a session with a background task still running is not at rest
+            return BACKGROUND
         return "idle" if d.get("status") == "idle" else "busy"
+
+    def background_running(d: dict[str, Any]) -> bool:
+        """Whether a session's turn ended with a task it started still running in the background.
+        Claude Code says so ("shell") only for a background session; the desktop app's are "idle"."""
+        if d.get("status") == "shell":
+            return True
+        sid = str(d.get("sessionId"))
+        return bool(transcripts.background_tasks(read_transcript(sid, str(d.get("cwd"))), d.get("startedAt")))
 
     across = fleet.Fleet()  # the other machines, filled in once they are started below
     across.publish = api.HUB.publish
@@ -1751,9 +1775,9 @@ def build_server(
         """Follow a session the owner hands you, until you read the turn it finishes.
         For "tell me when it's done": a message or a question already follows a session by itself;
         this follows one you haven't written to. The news line names it, and any turn it finishes
-        counts, even one answering the owner's own typing. A session at rest has nothing to
-        finish: status "already_done", and nothing is followed: tell the owner it is done (read_session_output
-        shows what it last said)."""
+        counts, even one answering the owner's own typing. A session at rest (not one whose turn ended
+        with a background task still running) has nothing to finish: status "already_done", and
+        nothing is followed: tell the owner it is done (read_session_output shows what it last said)."""
         if not follow:
             sid = followed(session)
             if sid is None:
@@ -1763,7 +1787,7 @@ def build_server(
             return {"session": marks[sid].get("name") or sid, "status": "not_followed"}
         d = find_live(session)
         sid = str(d.get("sessionId"))
-        at_rest = d.get("status") == "idle"
+        at_rest = session_state(d) == "idle"
         # RULE: a session handed over at rest is already done, not followed
         if at_rest:
             return {"session": d.get("name"), "status": "already_done"}

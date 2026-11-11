@@ -542,3 +542,50 @@ async def test_a_wait_with_no_length_given_runs_to_the_caller_s_limit(served):
         took = asyncio.get_running_loop().time() - started
     assert tools["wait_for_session"].input_schema["properties"]["wait_seconds"].get("default") is None
     assert out["status"] == "still_working" and took >= 0.3  # the test bridge's limit is 0.3 s
+
+
+def started_in_background(task_id):
+    """The tool result that starts a task in the background, as the session's transcript keeps it."""
+    out = turn("user", "")
+    out.message = {"content": []}
+    out.task, out.at = task_id, None
+    return out
+
+
+def task_done(task_id):
+    return turn("user", f"<task-notification>\n<task-id>{task_id}</task-id>\n</task-notification>", "task-notification")
+
+
+async def test_a_session_with_a_background_task_still_running_is_not_at_rest(served):
+    # Its turn has ended, but the task's completion note will start another: more is to come.
+    url, desk = served
+    desk.transcript += [started_in_background("bcw"), turn("assistant", "I'll say done when it finishes.")]
+    http, client = conversation(url)
+    async with http, client as c:
+        handed = await call(c, "follow_session", session="billing-ab")
+        out = await call(c, "list_folders")
+    assert handed["status"] == "following"
+    assert out["news"] == "billing-ab (turn ended, background task still running): nothing new"
+    assert out["next_step"].startswith("billing-ab ended its turn with a background task still running")
+    assert "call wait_for_session again now" in out["next_step"]
+
+
+async def test_a_background_task_s_completion_note_is_not_a_later_message(served):
+    # The note starts the turn that finishes the work; until that turn ends, the reply isn't in.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Sleep 90 s, then say done.")
+        desk.transcript += [started_in_background("bcw"), turn("assistant", "I'll say done when it finishes.")]
+        running = await call(c, "wait_for_session", wait_seconds=0.1)
+        desk.transcript.append(task_done("bcw"))
+        desk.set("busy")
+        noted = await call(c, "wait_for_session", wait_seconds=0.1)
+        desk.transcript.append(turn("assistant", "Done."))
+        desk.set("idle")
+        done = await call(c, "wait_for_session")
+    assert running["status"] == "still_working"
+    assert noted["status"] == "still_working"
+    assert done["status"] == "idle"
+    assert done["reply"] == "Done."
+

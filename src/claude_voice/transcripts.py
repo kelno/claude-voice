@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -461,7 +462,37 @@ def _lean(raw: bytes) -> Any:
         message={"role": message.get("role"), "content": content},
         error=entry.get("error"),
         origin=(entry.get("origin") or {}).get("kind"),
+        task=_started_in_background(entry),
+        at=entry.get("timestamp"),
     )
+
+
+def _started_in_background(entry: dict[str, Any]) -> str | None:
+    """The id of the task a tool result started in the background, a shell command or a helper
+    agent, if it did."""
+    result = entry.get("toolUseResult")
+    if not isinstance(result, dict):
+        return None
+    task = result.get("backgroundTaskId") or (result.get("agentId") if result.get("isAsync") else None)
+    return str(task) if task else None
+
+
+def background_tasks(messages: Iterable[Any], since_ms: float | None = None) -> list[str]:
+    """The tasks a session started in the background that are still running: Claude Code notes
+    each one's end in the conversation, and that note starts a turn of its own. A task started
+    before `since_ms` (the session's process start, in milliseconds) ended with the old process."""
+    started: list[str] = []
+    ended: set[str] = set()
+    for m in messages:
+        task, at = getattr(m, "task", None), getattr(m, "at", None)
+        # RULE: a task started before the session's restart is not running
+        if task and not (since_ms and at and datetime.fromisoformat(at).timestamp() * 1000 < since_ms):
+            started.append(task)
+        content = (getattr(m, "message", None) or {}).get("content")
+        if getattr(m, "origin", None) == "task-notification" and isinstance(content, str):
+            ended.update(re.findall(r"<task-id>([^<]+)</task-id>", content))
+    # RULE: a background task runs until its completion note
+    return [t for t in started if t not in ended]
 
 
 def read_transcript(session_id: str, directory: str | None) -> list[Any]:
