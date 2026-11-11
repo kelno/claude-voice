@@ -126,10 +126,10 @@ SUMMARY_PARAM = (
     "file, text, command or permission string."
 )
 WAIT_AFTER_PARAM = (
-    "The next_after a send returned, to wait for the reply to it; left out, all you haven't "
-    "read of that session. With it, the wait holds even if the session hasn't picked the "
-    "message up yet; without it, unread counts from where you last read it in any "
-    "conversation (from this call if you never did), and an idle session returns at once."
+    "The next_after a send returned: the wait is for the reply to that send, even before the "
+    "session picks it up. Left out, it is for what you haven't read of the session, "
+    "from where you last read it in this conversation or an earlier one (from now if you never "
+    "did); a session at rest then returns at once."
 )
 
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
@@ -241,8 +241,8 @@ Roles
   relay. The Claude Code session doing the work at the owner's
   machine is the desk session. A read-only fork of it, asked one question while
   it works, is the side session (the forked_session tools).
-- The mode is per message: the same desk session may talk with the owner
-  directly when they are at the machine.
+- The owner may also type to a desk session at the machine; it answers them
+  there, not you.
 
 The central rule: the owner sees nothing that passes through these tools
 - Not what you send, not what a session answers, not what agents say to each
@@ -284,7 +284,8 @@ Waiting
   keeps running and its result arrives by itself; then wait again.
 - A session's reply is final only when its turn has ended (reply_final true,
   or status "idle" with turns_left 0). Before that it is its latest message so
-  far: don't report it as finished, or as cut off.
+  far: don't report it as finished, or as cut off. turns_left above 0 means
+  turns you haven't read yet: read_session_output(after=next_after) reads them.
 
 News
 - A result may start with news: an entry for each session you follow, with
@@ -301,9 +302,9 @@ News
   attach_conversation resumes it, to read it). Progress lines aren't news;
   read_session_output still shows them. "read with after=N" says where to
   read from.
-- What's new stays in the entry until you read that turn
-  (read_session_output, wait_for_session or ask_active_session returned it,
-  even cut), or the prompt is answered. Tell the owner once, at your next
+- What's new stays in the entry until a result has shown you that turn
+  (read_session_output, wait_for_session or ask_active_session), even one cut
+  short, or the prompt is answered. Tell the owner once, at your next
   reply, not during a silent wait. Read a session first,
   before telling the owner what it said.
   A waiting prompt is the owner's to answer, on the phone or at the PC: say
