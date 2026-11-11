@@ -215,13 +215,6 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Without the CI job, Windows support would rot; upstream's own rule ("every rule is enforced by something that can fail") argues for it.
 - Best offered first as an issue, asking whether Windows is wanted at all, before any pull request.
 
-### 9. Every mutation row checked to compile — fork "Check that every mutation row leaves code that compiles"
-
-- Open as [#129](https://github.com/roykollensvendsen/claude-voice/pull/129) (branch `pr/check-mutation-rows`), two commits: the test, then "Call a mutation row that breaks the code a broken row". Ready, rebased on upstream's `main`, waiting for the author.
-
-- What: `scripts/mutate.py` gains `switched_off` (the row applied, as the run applies it) and `broken` (why a mutated Python file no longer compiles). A run reports such a row as `BROKEN` and fails without running its tests, instead of reporting the rule as killed by another test. `tests/test_rules_have_evidence.py` applies every row and requires the result to compile, so a broken row shows on any run of the suite, not only in the mutation job.
-- Why: the runner replaces the whole matched line, keeping only its indentation. A row written as if it swapped part of the line leaves the line cut off: the module stops importing, every test in its files errors, and the run gives the wrong diagnosis. That happened on #109 (found by the author), and the new test found two more rows on the fork's main: the same one, and "an update runs the tests only when asked", whose `find` had unescaped parentheses and matched no line.
-
 ### 10. The owner's confirmation with a passkey — fork "Describe the owner's confirmation through the bridge", "Settle who may confirm and how exactly the words must match", "Pin the confirmation to the running commit", "Let the owner confirm a session's request from a voice chat", "Confirm with the owner's passkey on the bridge's page" (ADR-CV-105, ADR-CV-106)
 
 - What: a session calls `confirm_ask` with the exact summary of what it wants approved and gets a short code; the relay calls `confirm_with_owner` with the code and sends the owner the link it returns; the owner opens the bridge's own page, sees the request as the bridge stored it, and confirms with a passkey (fingerprint, face or PIN), whose signature the bridge checks; the session then calls `confirm_check` and acts only on "confirmed" with its own summary. `claude-voice passkey add` registers the passkey once, from a one-time link. Design, what each party can observe and the limits: `docs/owner-confirmation.md`.
@@ -240,5 +233,6 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 Our pull requests upstream merged, newest first.
 
+- [#129](https://github.com/roykollensvendsen/claude-voice/pull/129), every mutation row checked to compile (2026-11-10, `f12686d`): a row whose change leaves the code unable to load is reported as broken, and the suite applies every row and requires the result to compile, so a broken row shows on any run, not only in the mutation job.
 - [#109](https://github.com/roykollensvendsen/claude-voice/pull/109), `wait_for_session` (2026-11-10, `08fe40c`): a caller waits for a session's turn to end, or for it to need its user, without sending anything. Three rounds of review; the fork's version goes further without `after` (`UPSTREAM.md`, "Same tools, different behaviour").
 - [#108](https://github.com/roykollensvendsen/claude-voice/pull/108), each tool says what it is for in its first line (2026-11-10, `a3fa2ce`): every description opens with one whole sentence of at most 78 characters, since the Claude app shows only that much until a tool is loaded. Upstream keeps its own words for the lines; the author plans a follow-up for the connector-name prefix the app later put inside that cut.
