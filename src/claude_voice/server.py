@@ -159,6 +159,9 @@ SWITCHED_OFF = frozenset(
         "plugin_approve_confirm",
     }
 )
+# The states of a followed session that keep the relay waiting on it: still working on its
+# message, or a finished turn not yet read. One paused on the owner's answer doesn't.
+ACTIVE = ("working", "unread")
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
@@ -170,6 +173,22 @@ STARTING_TOOLS = ("start_active_session", "attach_conversation")
 # drop them; the older name is read once, from before following replaced watching.
 MARKS_SETTING = "read_marks"
 OLD_MARKS_SETTING = "watched_sessions"
+# The next step for the relay, at the end of a result, in the states where one applies: it slipped
+# despite the guide's Waiting section (offering to check, stopping the wait early: ledger F58),
+# so the result says the situation and what follows from it, at the moment of choice. Each
+# names the situation, so the line varies with it rather than repeating one order.
+NEXT_WAITING = (
+    "{name} is paused on a permission prompt only the owner can answer{prompt}. Tell the owner once "
+    "what it asks; don't wait on it until they have answered."
+)
+NEXT_UNREAD = (
+    "{name} has finished its turn: read it, with the after= the news gives, before you tell the owner what it said."
+)
+NEXT_WORKING = (
+    "{name} has been on your message{since}{last}: call wait_for_session again now, or once you have "
+    "answered the owner if they just spoke."
+)
+NEXT_DONE = "Nothing left to follow: every reply is read{left}. No need to tell the owner."
 # Said in the result of a send or a question to a session the owner typed in since the relay last
 # read it: the moment it matters, rather than news on every result.
 OWNER_TYPED_NOTE = (
@@ -255,6 +274,9 @@ Waiting
   until the reply comes: the owner interrupts if they have something to say.
 - Wait in silence: nothing between waits, no heads-up, no progress, even when
   the app asks you to say it is taking a while. Speak once, with the reply.
+- A result may end with next_step: what follows for the sessions you follow,
+  in the states where something does. It is for you: say aloud only what it
+  asks you to tell the owner.
 - When the owner speaks during a wait, answer them. The call they talked over
   keeps running and its result arrives by itself; then wait again.
 - A session's reply is final only when its turn has ended (reply_final true,
@@ -539,7 +561,7 @@ def mcp_session(ctx: Any) -> str | None:
 
 
 def result_notes(
-    news: Callable[[str, str, dict[str, Any], dict[str, Any]], str | None] | None = None,
+    news: Callable[[str, str, dict[str, Any], dict[str, Any]], dict[str, str]] | None = None,
     claude_code_transcript: Callable[[], Path | None] | None = None,
 ) -> Any:
     """Middleware adding notes to results: the manual to the first result of a conversation that
@@ -601,9 +623,11 @@ def result_notes(
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
         if news is not None and connection:
-            line = news(str(connection), str(params.get("name") or ""), args, structured)
-            if line:
-                manual["news"] = line
+            told = news(str(connection), str(params.get("name") or ""), args, structured)
+            if "news" in told:
+                manual["news"] = told["news"]
+            if "next_step" in told:
+                notes["next_step"] = told["next_step"]
         if pending:
             notes["pending"] = PENDING_NOTE
         if time.monotonic() - started >= LATE_SECONDS:
@@ -934,7 +958,7 @@ def build_server(
         mark.update(name=d.get("name") or mark.get("name") or sid, cwd=str(d.get("cwd")))
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
-            mark.update(sent=sent, replied=False)
+            mark.update(sent=sent, replied=False, since=manager.clock(), told=False)
 
     def followed(session: str) -> str | None:
         """The id of a session the relay follows, by name or id, or None."""
@@ -952,9 +976,10 @@ def build_server(
         typed = any(i > mark["seen"] and t.get("origin") == "human" for i, t in enumerate(turns))
         return int(mark["seen"]) if typed else None
 
-    def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> str | None:
-        """How the followed sessions stand, in one line, and any session waiting on a permission
-        prompt; None when there is neither.
+    def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> dict[str, str]:
+        """How the followed sessions stand, in one line (`news`), and any session waiting on a
+        permission prompt; and what follows for the relay (`next_step`), in the states where
+        something does.
 
         A message or a question to a session follows it, and so does follow_session; reading one
         only moves the read mark. News is a finished turn the relay hasn't read, a permission prompt
@@ -963,6 +988,7 @@ def build_server(
         time made a busy session drown the rest.
         """
         before = json.dumps(marks, sort_keys=True)
+        active_before = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
         items = []
@@ -975,9 +1001,43 @@ def build_server(
             unfollowed = marks.get(sid, {}).get("sent") is None
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
+        step = next_step(active_before, live)
         if json.dumps(marks, sort_keys=True) != before:
             manager.store.set_setting(MARKS_SETTING, marks)
-        return " | ".join(items) if items else None
+        return {**({"news": " | ".join(items)} if items else {}), **({"next_step": step} if step else {})}
+
+    def lasted(since: float | None) -> str:
+        """How long a session has been on the relay's message, as said in a sentence."""
+        if not since:
+            return ""
+        took = manager.clock() - since
+        return f" for {round(took / 60)} min" if took >= 90 else f" for {round(took)} s"
+
+    def next_step(active_before: bool, live: dict[str, dict[str, Any]]) -> str | None:
+        """What follows for the relay from the state of the sessions it follows, or None."""
+        sentences, paused = [], []
+        for sid, mark in marks.items():
+            if mark.get("sent") is None:
+                continue
+            name, state = mark.get("name"), mark.get("state")
+            if state == "waiting":
+                paused.append(str(name))
+                if not mark.get("told"):
+                    # RULE: a session paused on the owner is told once, not waited on
+                    mark["told"] = True
+                    prompt = permission_prompt(live[sid]) if sid in live else None
+                    sentences.append(NEXT_WAITING.format(name=name, prompt=f": {prompt}" if prompt else ""))
+            elif state == "unread":
+                sentences.append(NEXT_UNREAD.format(name=name))
+            elif state == "working":
+                last = f' (latest: "{transcripts.clip(mark["last"], 100)}")' if mark.get("last") else ""
+                sentences.append(NEXT_WORKING.format(name=name, since=lasted(mark.get("since")), last=last))
+        active = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
+        if active_before and not active:
+            # RULE: the result where following ends says there is nothing left to follow
+            left = f"; {', '.join(paused)} waits on the owner's answer" if paused else ""
+            sentences.append(NEXT_DONE.format(left=left))
+        return " ".join(sentences) or None
 
     def mark_after_call(
         tool: str, args: dict[str, Any], structured: dict[str, Any], live: dict[str, dict[str, Any]]
@@ -1028,13 +1088,19 @@ def build_server(
             t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
         )
         mark["replied"] = mark["replied"] or (bool(answer) and ended)
+        state = session_state(d)
         if mark["replied"] and any(i > mark["seen"] for i in answer):
             news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
+            mark["state"] = "unread"
         elif mark["replied"]:
             # RULE: following a session ends once its finished turn is read
-            mark.update(sent=None, replied=False)
+            mark.update(sent=None, replied=False, state=None)
             return []
-        state = session_state(d)
+        elif state == "waiting on a permission prompt":
+            mark["state"] = "waiting"
+        else:
+            mark.update(state="working", told=False)
+            mark["last"] = turns[answer[-1]]["text"] if answer else None
         if state == "waiting on a permission prompt":
             return [f"{name}: {', '.join([state, *news])}"]
         return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]

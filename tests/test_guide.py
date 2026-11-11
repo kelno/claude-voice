@@ -35,6 +35,7 @@ def test_the_manual_states_its_central_rules():
         "wait_for_session",  # asked to wait, the relay waits again rather than handing back
         "don't ask the owner",  # waiting for a reply is the default
         "wait in silence",  # no heads-up or progress between waits, whatever the app asks
+        "next_step",  # what follows for the followed sessions, at the end of a result, for the relay alone
         "when the owner speaks during a wait",  # a call they talk over returns by itself
         "news",  # a result's news line: how the followed sessions stand, and prompts waiting
         "follow_session",  # how a session the owner hands over gets into the news line

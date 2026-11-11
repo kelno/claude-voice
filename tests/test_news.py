@@ -408,3 +408,67 @@ async def test_after_a_read_a_new_send_waits_only_for_its_own_reply(served):
         done = await call(c, "list_folders")
     assert again["news"] == "billing-ab (busy): nothing new"
     assert done["news"] == f"billing-ab (idle): reply to you, read with after={again['next_after']}"
+
+
+# The next step, at the end of a result: the relay slipped on the guide's Waiting rules (offering
+# to check instead of checking, stopping the wait early; ledger F58), so the result says the
+# situation and what follows, in the states where something does.
+
+
+async def test_a_session_still_on_the_relays_message_says_to_wait_again(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        desk.transcript.append(turn("assistant", "Exporting the second table."))
+        out = await call(c, "list_folders")
+    step = out["next_step"]
+    assert step.startswith("billing-ab has been on your message for ")
+    assert '(latest: "Exporting the second table.")' in step
+    assert "call wait_for_session again now" in step
+    assert list(out)[-1] == "next_step"  # after the result itself
+
+
+async def test_a_finished_turn_not_yet_read_says_to_read_it(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "list_folders")
+    assert out["next_step"].startswith("billing-ab has finished its turn: read it")
+
+
+async def test_a_session_paused_on_the_owner_is_told_once_not_waited_on(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Delete the old exports.")
+        desk.set("waiting", waiting_for="permission prompt")
+        first = await call(c, "list_folders")
+        second = await call(c, "list_folders")
+    assert first["next_step"].startswith("billing-ab is paused on a permission prompt only the owner can answer")
+    assert "next_step" not in second
+    assert second["news"] == "billing-ab: waiting on a permission prompt"  # still named until answered
+
+
+async def test_the_result_where_following_ends_says_there_is_nothing_left_to_follow(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "list_folders")
+        read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        later = await call(c, "list_folders")
+    assert read["next_step"] == "Nothing left to follow: every reply is read. No need to tell the owner."
+    assert "next_step" not in later
+
+
+async def test_nothing_followed_means_no_next_step(served):
+    url, _ = served
+    http, client = conversation(url)
+    async with http, client as c:
+        out = await call(c, "list_folders")
+    assert "next_step" not in out
