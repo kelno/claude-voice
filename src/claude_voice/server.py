@@ -65,7 +65,7 @@ from . import (
     usage,
     work,
 )
-from .channel_hub import ChannelHub, ancestor_session
+from .channel_hub import ChannelHub, ancestor_session, started_with_channel
 from .metrics import METRICS
 from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
 from .sessions import SessionManager
@@ -2968,7 +2968,10 @@ def serve_forever(cfg: Config) -> None:
         bridge_port=cfg.port,
         bridge_host=cfg.host,
         channels=ChannelHub(
-            channel.LINK, session_of=lambda pid: ancestor_session(pid, lambda: events.read_live(LIVE_DIR))
+            channel.LINK,
+            session_of=lambda pid: ancestor_session(
+                pid, lambda: events.read_live(LIVE_DIR), accepts=started_with_channel
+            ),
         ),
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)

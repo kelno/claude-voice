@@ -24,6 +24,8 @@ import psutil
 log = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
+# The relay channel's plugin, as Claude Code names it in --channels and enabledPlugins.
+CHANNEL_PLUGIN = "relay-channel@claude-voice"
 ACK_SECONDS = 5.0  # how long a channel has to confirm it passed a message on
 
 
@@ -34,17 +36,36 @@ def _parents(pid: int) -> list[int] | None:
         return None
 
 
+def _cmdline(pid: int) -> list[str] | None:
+    try:
+        return psutil.Process(pid).cmdline()
+    except psutil.Error:
+        return None
+
+
+def started_with_channel(pid: int, cmdline: Callable[[int], list[str] | None] = _cmdline) -> bool:
+    """Whether Claude Code process `pid` was started with the relay channel in --channels.
+
+    Without it, Claude Code still runs an enabled plugin's channel, which connects here, but
+    drops its events: a message handed to it would be lost without a word."""
+    return any(arg == f"plugin:{CHANNEL_PLUGIN}" for arg in cmdline(pid) or [])
+
+
 def ancestor_session(
     pid: int,
     live: Callable[[], list[dict[str, Any]]],
     parents: Callable[[int], list[int] | None] = _parents,
+    accepts: Callable[[int], bool] = lambda pid: True,
 ) -> str | None:
-    """The session whose Claude Code process is the nearest parent of process `pid`, if any."""
+    """The session whose Claude Code process is the nearest parent of process `pid`, if any,
+    and if `accepts` takes that process."""
     chain = parents(pid)
     if not chain:
         return None
     by_pid = {int(d["pid"]): str(d["sessionId"]) for d in live() if "pid" in d and "sessionId" in d}
-    return next((by_pid[p] for p in chain if p in by_pid), None)
+    found = next((p for p in chain if p in by_pid), None)
+    # RULE: a channel whose session was started without channels is passed over
+    return by_pid[found] if found is not None and accepts(found) else None
 
 
 class _Link:

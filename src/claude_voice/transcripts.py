@@ -38,7 +38,7 @@ from claude_agent_sdk import (
     project_key_for_directory,
 )
 
-from . import procs
+from . import channel_hub, procs
 
 MESSAGING_TOOLS = frozenset({"ListAgents", "SendMessage", "ToolSearch"})
 # Claude Code accepts any model name at start and only refuses it at the first message, with
@@ -858,7 +858,7 @@ async def open_in_desktop(session_id: str, cwd: str, title: str) -> None:
 BRIDGE_SETTINGS: dict[str, Any] = {"worktree": {"bgIsolation": "none"}}
 # The relay channel (docs/channel.md): a plugin enabled for the bridge's own sessions only, whose
 # channel carries the relay's messages in. Claude Code lists the plugins installed for the user here.
-CHANNEL_PLUGIN = "relay-channel@claude-voice"
+CHANNEL_PLUGIN = channel_hub.CHANNEL_PLUGIN
 INSTALLED_PLUGINS = Path("~/.claude/plugins/installed_plugins.json")
 
 

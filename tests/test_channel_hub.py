@@ -9,6 +9,7 @@ is found from its process: the Claude Code session that started it is one of its
 import asyncio
 import json
 
+from claude_voice import channel_hub
 from claude_voice.channel_hub import ChannelHub, ancestor_session
 
 
@@ -138,3 +139,16 @@ def test_a_channels_session_is_the_claude_code_session_among_its_parents():
     assert ancestor_session(300, lambda: live, parents=parents.get) == "sess-1"
     assert ancestor_session(300, lambda: [], parents=parents.get) is None
     assert ancestor_session(5, lambda: live, parents=lambda pid: None) is None
+
+
+def test_a_channel_whose_session_was_started_without_channels_is_passed_over():
+    # A session with the plugin enabled but no --channels runs the channel, which connects,
+    # yet Claude Code drops its events: the message would be lost. The courier takes it.
+    parents = {300: [100, 1]}
+    live = [{"pid": 100, "sessionId": "sess-1"}]
+    flags = {100: ["claude.exe", "--session-id", "x"]}
+    started_with = lambda pid: channel_hub.started_with_channel(pid, cmdline=flags.get)  # noqa: E731
+    assert ancestor_session(300, lambda: live, parents=parents.get, accepts=started_with) is None
+    flags[100] = ["claude.exe", "--channels", "plugin:relay-channel@claude-voice", "--settings", "{}"]
+    assert ancestor_session(300, lambda: live, parents=parents.get, accepts=started_with) == "sess-1"
+    assert channel_hub.started_with_channel(100, cmdline=lambda pid: None) is False
