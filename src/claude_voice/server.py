@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from claude_agent_sdk import SDKSessionInfo, project_key_for_directory
 from claude_agent_sdk import list_sessions as list_claude_sessions
@@ -28,7 +28,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.subscriptions import ToolsListChanged
 from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl
+from pydantic import AnyHttpUrl, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp
@@ -96,6 +96,38 @@ WAIT_SECONDS = 5.0
 # The model a session starts on when none is asked for. Claude Code's own default follows the
 # account, which can be a model the owner doesn't want for everyday work.
 DEFAULT_MODEL = "opus"
+
+# What a parameter several tools share means, said once and used by every tool that takes it.
+# The model sees a parameter's own description next to it, while a result's schema never
+# reaches it (Claude Code and the Claude app, tested 2026-11-11): so what concerns one
+# parameter goes there, and what a result means stays in the tool's description.
+SESSION_PARAM = "A running session's name or id, from list_active_sessions."
+WAIT_PARAM = (
+    "Seconds to wait: 5 by default, at most the caller's limit (20 s for the Claude app). In "
+    "the Claude app keep the default: the app sends a call past about 10 s to the background."
+)
+MAX_CHARS_PARAM = "How long each message or excerpt in the result may be before it is cut."
+LANGUAGE_PARAM = 'The language to answer in, such as "norsk".'
+CREATE_FOLDER_PARAM = (
+    "True first makes the folder under the root when it does not exist; only for a plain name"
+    " (letters, digits, '.', '_', '-'), and only when asked."
+)
+OPEN_FOLDER_PARAM = (
+    "A full path, to open a folder no session runs in yet, so start_active_session can work "
+    "there. Claude Code's trust is then marked too, and covers the whole repository when the "
+    "folder is inside one, which the owner should hear."
+)
+SUMMARY_PARAM = (
+    "For someone with no context: exactly what is approved (the file, text, command or "
+    "permission string), at most 300 characters."
+)
+WAIT_AFTER_PARAM = (
+    "The next_after a send returned: waits for a reply past that turn, even if the session "
+    "hasn't picked the message up yet. Left out: all you haven't read of that session, from "
+    "where you last read it in any conversation (from this call if you never did); an idle "
+    "session returns at once."
+)
+
 # Voice mode also moves a call to the background when the owner talks over it, a few seconds
 # in, and later delivers its result inside a call the assistant seems to have written itself,
 # carrying a field only the app may write; assistants copy it to fetch results, and are
@@ -169,8 +201,10 @@ Roles
   needs only the note on each message, not this guide. A session that starts or
   messages other sessions through the bridge is a relay for that work and reads
   it.
-- Voice relay: the owner talks to you, a voice assistant, and sees no screen.
-  You are the relay. The Claude Code session doing the work at the owner's
+- Voice relay: the owner talks to you, a voice assistant, and mostly works
+  without looking at a screen, so keep to what works by ear; when a step needs
+  the screen (a link to open, a passkey to confirm), say so aloud. You are the
+  relay. The Claude Code session doing the work at the owner's
   machine is the desk session. A read-only fork of it, asked one question while
   it works, is the side session (the forked_session tools).
 - The mode is per message: the same desk session may talk with the owner
@@ -198,10 +232,10 @@ The relay's scope
   on the side.
 - When a session already holds the context for new work, have it write the
   brief, start the new session itself if it can (see Sessions), and send the
-  brief; then ask it for the new session's name. It stays reachable for the new session's
-  questions. If it can't start one, start it yourself with the first message
-  it wrote: the relay only works from summaries, so its briefs lose details
-  and add mistakes.
+  brief; then ask it for the new session's name. It stays reachable for the
+  new session's questions. If it can't start one, start it yourself with the
+  first message it wrote: the relay only works from summaries, so its briefs
+  lose details and add mistakes.
 
 Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
@@ -214,9 +248,6 @@ Waiting
 - A session's reply is final only when its turn has ended (reply_final true,
   or status "idle" with turns_left 0). Before that it is its latest message so
   far: don't report it as finished, or as cut off.
-- wait_for_session, ask_active_session and the side session's tools wait 5 s
-  by default, up to 20 s: the Claude app sends a call past about 10 s to the
-  background, so keep to the default there.
 
 News
 - A result may start with news: an entry for each session you watch, with
@@ -1067,13 +1098,17 @@ def build_server(
         return {"guide": INSTRUCTIONS}
 
     @tool(annotations=READ_ONLY)
-    def list_folders(query: str | None = None) -> dict[str, Any]:
+    def list_folders(
+        query: Annotated[
+            str | None,
+            Field(description="A word from a folder's name; it also finds folders under the root never used."),
+        ] = None,
+    ) -> dict[str, Any]:
         """Folders to start a session in: used by Claude Code lately, or found by a word.
         The folders Claude Code was used in during the last 30 days, anywhere on this machine,
-        newest first, from its own history; a word (`query`) also finds folders under the root
-        never used. At most 20, with `root`, the folder open to the bridge without asking, with
-        everything under it. A folder's name is relative to it when under it, else its full path; its
-        access is as list_active_sessions says."""
+        newest first, from its own history; at most 20. `root` is the folder open to the bridge
+        without asking, with everything under it. A folder's name is relative to the root when
+        under it, else its full path; its access is as list_active_sessions says."""
         children = [p for p in manager.root.iterdir() if p.is_dir() and not p.name.startswith(".")]
         by_key = {project_key_for_directory(str(p)): p for p in children}
         found: dict[Path, tuple[float, int]] = {p.resolve(): (0.0, 0) for p in children}
@@ -1234,24 +1269,34 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_active_session(
-        folder: str,
-        name: str | None = None,
-        model: str | None = None,
-        effort: str | None = None,
-        start_in: str | None = None,
-        remote_control: bool | None = None,
-        create_folder: bool = False,
+        folder: Annotated[str, Field(description="A folder from list_folders, by its name there, or a full path.")],
+        name: Annotated[
+            str | None, Field(description="The session's name; left out, it is named after the folder.")
+        ] = None,
+        model: Annotated[
+            str | None, Field(description="An alias such as opus or sonnet, or a full model name; left out, opus.")
+        ] = None,
+        effort: Annotated[
+            str | None, Field(description="low, medium, high, xhigh or max; left out, Claude Code's default.")
+        ] = None,
+        start_in: Annotated[
+            str | None,
+            Field(
+                description='"terminal" opens a window on the PC for this one session; left out, the settings decide.'
+            ),
+        ] = None,
+        remote_control: Annotated[
+            bool | None,
+            Field(description="True or false overrides the settings on Remote Control for this one session."),
+        ] = None,
+        create_folder: Annotated[
+            bool,
+            Field(description=CREATE_FOLDER_PARAM),
+        ] = False,
     ) -> dict[str, Any]:
         """Start new work: a session in a folder, on Remote Control on phone and PC.
-        `folder`: a name from list_folders, or a full path; the session is named `name` or after
-        the folder, listed at once so ask_active_session reaches it, with no window unless the
-        settings say otherwise; `start_in` ("terminal" for a window on the PC) and `remote_control`
-        change that once.
-        `create_folder=true` first makes that folder under the root when it does not exist; only
-        for a plain name (letters, digits, '.', '_', '-'), never by default.
-        Optional: `model` (an alias such as opus or sonnet, or a full name) and `effort` (low,
-        medium, high, xhigh or max); left out, the model is opus and the effort Claude Code's
-        default."""
+        It is listed at once, so ask_active_session reaches it, and has no window unless the
+        settings say otherwise."""
         # RULE: only a well-formed model name and a known effort reach Claude Code
         if model is not None and not transcripts.MODEL_NAME.fullmatch(model):
             raise ToolError(f"Not a model name: {model!r}. Use an alias such as opus, or a full model name.")
@@ -1388,11 +1433,17 @@ def build_server(
         return {"role": role, "name": name, "claude_session_id": found.get("sessionId"), "status": found.get("status")}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def start_role(role: str, task: str | None = None) -> dict[str, Any]:
+    async def start_role(
+        role: Annotated[
+            str,
+            Field(description='The role, such as "contribute".'),
+        ],
+        task: Annotated[str | None, Field(description="What the owner wants it to do.")] = None,
+    ) -> dict[str, Any]:
         """Start a session for a role, such as "contribute", on Remote Control.
         A contribute session changes claude-voice in its own clone and opens a pull request to
-        upstream, as its settings say; `task` is what the owner wants. Returns the session's name:
-        reach it like any session started here, with message_active_session, then a wait."""
+        upstream, as its settings say. Returns the session's name: reach it like any session started here, with
+        message_active_session, then a wait."""
         try:
             return await launch_role(role, task)
         except LookupError as exc:
@@ -1451,10 +1502,14 @@ def build_server(
         updater.launch(folder, log, bridge_port, bridge_host, tests=tests)
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
-    def update_bridge(run_tests: bool = False) -> dict[str, Any]:
+    def update_bridge(
+        run_tests: Annotated[
+            bool, Field(description="True runs the tests before the restart, for changes not tested yet.")
+        ] = False,
+    ) -> dict[str, Any]:
         """Update claude-voice to the latest version, rolling back if anything fails.
-        It pulls, installs and restarts; run_tests runs the tests first, for changes not tested yet.
-        Say first that the voice drops for a few seconds while it restarts."""
+        It pulls, installs and restarts. Say first that the voice drops for a few seconds while it
+        restarts."""
         try:
             return start_update(run_tests)
         except (LookupError, RuntimeError) as exc:
@@ -1544,7 +1599,7 @@ def build_server(
         return {"roles": out}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def stop_active_session(name: str) -> dict[str, Any]:
+    async def stop_active_session(name: Annotated[str, Field(description=SESSION_PARAM)]) -> dict[str, Any]:
         """Stop a session the bridge started; any other session is refused.
         A refused one gets status not_started_here."""
         target = renames.find(live_sessions(), name)
@@ -1569,11 +1624,15 @@ def build_server(
         return {"name": name, "status": "stopped"}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
-    def watch_session(session: str, watch: bool = True) -> dict[str, Any]:
-        """Put a session in the news line on every result, or take it out (watch=false).
-        `session` is a name or id from list_active_sessions. Use it for a session you haven't
-        touched, such as one the owner hands you, or to drop one (touching it again watches it
-        again). A newly watched session starts with nothing new."""
+    def watch_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        watch: Annotated[
+            bool, Field(description="False takes the session out of the news; touching it again puts it back.")
+        ] = True,
+    ) -> dict[str, Any]:
+        """Put a session in the news line on every result, or take it out.
+        For a session you haven't touched, such as one the owner hands you, or to drop one. A newly
+        watched session starts with nothing new."""
         if not watch:
             name = unwatch(session)
             if name is None:
@@ -1679,10 +1738,14 @@ def build_server(
         return sessions
 
     @tool(annotations=READ_ONLY)
-    def list_claude_conversations(folder: str | None = None, limit: int = 10) -> dict[str, Any]:
+    def list_claude_conversations(
+        folder: Annotated[
+            str | None, Field(description="Only conversations in this folder, by its name in list_folders.")
+        ] = None,
+        limit: Annotated[int, Field(description="How many conversations, at most 50.")] = 10,
+    ) -> dict[str, Any]:
         """Earlier conversations, newest first; resume one with attach_conversation.
-        Recent Claude Code conversations on this machine, including ones started in a terminal;
-        optionally only in one folder (`folder`, a name from list_folders)."""
+        Recent Claude Code conversations on this machine, including ones started in a terminal."""
         directory = None
         if folder:
             try:
@@ -1716,14 +1779,15 @@ def build_server(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
     async def attach_conversation(
-        claude_session_id: str, folder: str | None = None, label: str | None = None
+        claude_session_id: Annotated[str, Field(description="The conversation's id, from list_claude_conversations.")],
+        folder: Annotated[str | None, Field(description="Its folder; left out, the folder it ran in.")] = None,
+        label: Annotated[str | None, Field(description="The name it runs under; left out, its title.")] = None,
     ) -> dict[str, Any]:
         """Resume an earlier conversation on Remote Control; then talk to it.
-        Continues an existing Claude Code conversation (from list_claude_conversations) like
-        start_active_session, under `label` or its title, in its own permission mode and folders.
-        If Claude Code can't continue it in place, as when it is still open elsewhere, it starts a
-        copy under a new id, and copied_from names the original: say so; a claude_code_note is
-        Claude Code's own remark on the start."""
+        Continues it like start_active_session, in its own permission mode and folders. If Claude
+        Code can't continue it in place, as when it is still open elsewhere, it starts a copy under
+        a new id, and copied_from names the original: say so; a claude_code_note is Claude Code's
+        own remark on the start."""
         if folder is None:
             live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
             match = None
@@ -1809,14 +1873,18 @@ def build_server(
         return f"{page_url}/confirm/r/{req['link']}"
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def request_access(session: str | None = None, folder: str | None = None) -> dict[str, Any]:
+    def request_access(
+        session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
+        folder: Annotated[
+            str | None,
+            Field(description=OPEN_FOLDER_PARAM),
+        ] = None,
+    ) -> dict[str, Any]:
         """Open a folder to the bridge, once the owner confirms with a passkey.
-        Give one of `session`, a listed session, to open its folder, or `folder`, a full path, to
-        open one no session runs in yet, so start_active_session can work there (Claude Code's
-        trust is then marked too, and covers the whole repository when the folder is inside one,
-        which the owner should hear); it stays open until revoke_access takes it back. Send the owner the
-        returned link in the chat: the page shows the code and the folder, which opens with
-        everything under it once they confirm there with their passkey."""
+        Give `session`, to open the folder it runs in, or `folder`. It stays open, with everything
+        under it, until revoke_access takes it back. Send the owner
+        the returned link in the chat: the page shows the code and the folder, and they confirm
+        there with their passkey."""
         target, d = folder_to_open(session, folder)
         resolved = Path(target).resolve()
         if manager.access.state(resolved) == "closed":
@@ -1864,14 +1932,18 @@ def build_server(
         raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def confirm_ask(summary: str) -> dict[str, Any]:
+    async def confirm_ask(
+        summary: Annotated[
+            str,
+            Field(description=SUMMARY_PARAM),
+        ],
+    ) -> dict[str, Any]:
         """Get the owner's own OK on your summary, which a relayed message can't give.
-        Write `summary` for someone with no context, exactly what is approved (the file, text,
-        command or permission string), at most 300 characters; put the result's tell_the_relay
-        line in your reply and end your turn. The owner confirms on the bridge's page with their
-        passkey and the bridge then messages you, but you act only on your own confirm_check, which
-        you may call at any time; the result's running.design link says how it works and why. Ask
-        at once, not after reporting back, also when Claude Code's auto mode refuses an action."""
+        Put the result's tell_the_relay line in your reply and end your turn. The owner confirms on
+        the bridge's page with their passkey and the bridge then messages you, but you act only on
+        your own confirm_check, which you may call at any time; the result's running.design link
+        says how it works and why. Ask at once, not after reporting back, also when Claude Code's
+        auto mode refuses an action."""
         d = await asking_session()
         try:
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
@@ -1890,7 +1962,9 @@ def build_server(
         }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def confirm_with_owner(code: str) -> dict[str, Any]:
+    def confirm_with_owner(
+        code: Annotated[str, Field(description="The code the session's confirm_ask gave it.")],
+    ) -> dict[str, Any]:
         """Get the link where the owner confirms a session's confirm_ask request.
         Send the owner the link in the chat and tell them in a few words what the returned summary
         asks, since the page shows the request as the bridge stored it and the owner confirms it
@@ -1913,14 +1987,15 @@ def build_server(
         }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def confirm_check(code: str) -> dict[str, Any]:
+    async def confirm_check(
+        code: Annotated[str, Field(description="The code confirm_ask gave you.")],
+    ) -> dict[str, Any]:
         """Whether the owner confirmed your confirm_ask request: act only on this result.
-        `code` is the one confirm_ask gave you; status confirmed (shown once, with the summary as
-        stored, which is what the owner confirmed), pending (the owner can still confirm it until
-        it expires), declined, expired, used (only you can check it, so an earlier check of yours was
-        shown the confirmation: act on that one if you haven't yet, else ask again) or unknown. A
-        confirmation can't answer a permission prompt at the PC; it does clear a refusal from Claude
-        Code's auto mode."""
+        status confirmed (shown once, with the summary as stored, which is what the owner
+        confirmed), pending (the owner can still confirm it until it expires), declined, expired,
+        used (only you can check it, so an earlier check of yours was shown the confirmation: act on
+        that one if you haven't yet, else ask again) or unknown. A confirmation can't answer a
+        permission prompt at the PC; it does clear a refusal from Claude Code's auto mode."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 
@@ -2043,9 +2118,10 @@ def build_server(
         return JSONResponse({"status": "added"})
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def revoke_access(folder: str) -> dict[str, Any]:
-        """Take back a folder opened with request_access: it is folder_not_open again.
-        health lists the folders opened this way."""
+    def revoke_access(
+        folder: Annotated[str, Field(description="A folder opened with request_access, as health lists it.")],
+    ) -> dict[str, Any]:
+        """Take back a folder opened with request_access: it is folder_not_open again."""
         try:
             closed = manager.access.revoke(folder)
         except ValueError as exc:
@@ -2072,13 +2148,15 @@ def build_server(
         return {**await deliver(address(target), text), "path": "courier"}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def rename_session(session: str, new_name: str) -> dict[str, Any]:
+    async def rename_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        new_name: Annotated[str, Field(description="Any text on one line, up to 64 characters.")],
+    ) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
-        A name is any text on one line, up to 64 characters. A session the bridge started is renamed in
-        Claude Code too when it is idle, and the phone and the desktop app show it within seconds;
-        for any other, only the bridge's lists know the new name. claude_code: renamed, busy
-        (mid-turn: renamed in the bridge only; rename it again once idle), bridge_only, or already
-        (Claude Code had that name); note says more."""
+        A session the bridge started is renamed in Claude Code too when it is idle, and the phone
+        and the desktop app show it within seconds; for any other, only the bridge's lists know the
+        new name. claude_code: renamed, busy (mid-turn: renamed in the bridge only; rename it again
+        once idle), bridge_only, or already (Claude Code had that name); note says more."""
         new_name = renames.clean(new_name)
         if not renames.valid(new_name):
             raise ToolError("A session name needs at least one visible character.")
@@ -2125,10 +2203,12 @@ def build_server(
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
-    async def message_active_session(session: str, message: str) -> dict[str, Any]:
+    async def message_active_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        message: Annotated[str, Field(description="What to send; the session answers you, the relay.")],
+    ) -> dict[str, Any]:
         """Send to a session and return at once; wait_for_session then gets the reply.
-        A message into a running Claude Code session (name or id from list_active_sessions),
-        returned once delivered, a few seconds; use it when your next step doesn't depend on the
+        Returns once delivered, in a few seconds; use it when your next step doesn't depend on the
         answer, then wait_for_session(after=next_after), or read_session_output(after=next_after)
         later."""
         target = find_live(session)
@@ -2246,22 +2326,22 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
-        session: str, wait_seconds: float = WAIT_SECONDS, after: int | None = None, max_chars: int = 600
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        after: Annotated[
+            int | None,
+            Field(description=WAIT_AFTER_PARAM),
+        ] = None,
+        max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
         """Wait for a session's turn to end or need input, up to 20 s; then its reply.
-        Sends nothing. With `after` (the next_after a send returned) it waits for a reply past
-        that turn, so a session that hasn't picked the message up yet is still waited for; without
-        it, it gives all you haven't read of that session (from where you last read it, in any
-        conversation, or from this call if you never did), and an idle session returns at once.
-        reply is the newest message among those, so it is empty when the session wrote nothing
-        new (with `after`, its turn ended with nothing written; without, nothing was unread).
-        At most 30 turns come back; read the rest with read_session_output(after=next_after) while
-        turns_left is above 0; status: "idle" (its turn has ended), "needs_input" or
-        "needs_choice" (it waits for its user; prompt or question says what for),
-        "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
+        Sends nothing; reply is the newest message among those returned, empty when the session
+        wrote nothing new; at most 30 turns come back, and read_session_output(after=next_after)
+        reads the rest while turns_left is above 0. status: "idle" (its turn
+        has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question says
+        what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
         conversation now lives in moved_to); reply_final: its turn ended with something new, and
-        reply is whole up to 12,000 characters (reply_cut past that), while max_chars cuts each
-        message in turns."""
+        reply is whole up to 12,000 characters (reply_cut past that)."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -2327,16 +2407,19 @@ def build_server(
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def ask_active_session(
-        session: str, message: str, wait_seconds: float = WAIT_SECONDS, max_chars: int = 600
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        message: Annotated[str, Field(description="What to ask; the session answers you, the relay.")],
+        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
         """Ask a session and wait, up to 20 s, for its answer; only when needed now.
         reply_final: its turn ended with an answer, whole up to 12,000 characters (reply_cut past
-        that; max_chars cuts turns). status: "answered", "needs_input" (it waits for its user;
-        prompt is the permission prompt, if one; before sending, nothing was sent), "still_working"
-        (the wait ran out before its turn ended; continue with wait_for_session(after=next_after)),
-        "session_ended" (it exited meanwhile), "not_received" (the message never reached its
-        conversation), "moved" (the conversation now lives in moved_to; nothing sent), or
-        "needs_choice" (it waits for its user to pick one of question.options)."""
+        that). status: "answered", "needs_input" (it waits for its user; prompt is the permission
+        prompt, if one; before sending, nothing was sent), "still_working" (the wait ran out before
+        its turn ended; continue with wait_for_session(after=next_after)), "session_ended" (it
+        exited meanwhile), "not_received" (the message never reached its conversation), "moved"
+        (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
+        user to pick one of question.options)."""
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -2370,22 +2453,32 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     def read_session_output(
-        session: str,
-        limit: int | None = None,
-        max_chars: int = 600,
-        after: int | None = None,
-        turn: int | None = None,
-        offset: int = 0,
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        limit: Annotated[
+            int | None, Field(description="How many turns; left out, as many as fit in about 3,000 characters.")
+        ] = None,
+        max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
+        after: Annotated[
+            int | None, Field(description="The next_after a send or a read returned: the turns after it, oldest first.")
+        ] = None,
+        turn: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "A turn's index, as a read numbers its turns (from 0), to read that one turn whole, "
+                    "page by page with offset."
+                )
+            ),
+        ] = None,
+        offset: Annotated[
+            int, Field(description="Where to start in that turn: the next_offset the last page returned.")
+        ] = 0,
     ) -> dict[str, Any]:
         """A session's latest turns, or those after `after`, until turns_left is 0.
-        The latest turns of a running Claude Code session (name or id from list_active_sessions),
-        as many as fit in about 3,000 characters unless `limit` sets a count. Turns are
-        numbered: pass next_after back as `after` for the next ones, oldest first, with
-        turns_left saying how many more follow (read on until it is 0; when far behind, `latest`
-        holds its newest reply); the first turn that doesn't fit is still started. A turn
-        longer than max_chars, or than the room left, is cut and says so (cut, length; a
-        finished turn's last message only past 12,000, even beyond 3,000), and `turn` (its
-        index) with `offset` reads it whole, page by page via next_offset."""
+        Turns are numbered: pass next_after back as `after` for the next ones, with turns_left
+        saying how many more follow (read on until it is 0; when far behind, `latest` holds its
+        newest reply). The first turn that doesn't fit is still included, cut. A cut turn says so (cut,
+        length); a finished turn's last message is cut only past 12,000 characters."""
         target = find_live(session)
         turns = every = numbered_turns(target)
         size = max(max_chars, 20)
@@ -2483,11 +2576,14 @@ def build_server(
         return kept, lines[: len(lines) - len(kept)]
 
     @tool(annotations=READ_ONLY)
-    async def peek_session(session: str, question: str, language: str | None = None) -> dict[str, Any]:
+    async def peek_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        question: Annotated[str, Field(description="What to ask about its last turns; it never enters the session.")],
+        language: Annotated[str | None, Field(description=LANGUAGE_PARAM)] = None,
+    ) -> dict[str, Any]:
         """A small model answers about a session's last turns in 3-7 s; it reads no code.
-        A quick look at a running session: a small separate model with no tools answers
-        `question` from the last 8,000 characters of its conversation, a few turns of words and
-        tool names, never tool results or files. The question never enters the session; for the
+        A small separate model with no tools answers from the last 8,000 characters of the
+        conversation, a few turns of words and tool names, never tool results or files. For the
         whole conversation use digest_session, which is slower."""
         target = find_live(session)
         kept, skipped = conversation_end(target, side_chars)
@@ -2533,16 +2629,26 @@ def build_server(
         return {**head, **task.result()}
 
     @tool(annotations=READ_ONLY)
-    async def ask_forked_session(session: str, question: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+    async def ask_forked_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        question: Annotated[
+            str, Field(description="What to ask; each question forks the session anew, from its latest state.")
+        ],
+        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+    ) -> dict[str, Any]:
         """Ask the side session, a read-only fork that reads code; waits up to 20 s.
-        Each question forks the session's whole conversation anew, from its latest state, and can
-        read the files in its folder; the session keeps working, untouched. status "answered",
-        "still_working" (read it later with read_forked_session(fork_id)), "timed_out", or "error"
-        with `detail`."""
+        The fork can read the files in the session's folder; the session keeps working, untouched.
+        status "answered", "still_working" (read it later with read_forked_session(fork_id)),
+        "timed_out", or "error" with `detail`."""
         return await collect_fork(start_fork(session, question), wait_seconds)
 
     @tool(annotations=READ_ONLY)
-    async def message_forked_session(session: str, question: str) -> dict[str, Any]:
+    async def message_forked_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        question: Annotated[
+            str, Field(description="What to ask; each question forks the session anew, from its latest state.")
+        ],
+    ) -> dict[str, Any]:
         """Send the side session a question and return; read it with read_forked_session.
         Like ask_forked_session, but returns at once; read_forked_session(fork_id) gets the
         answer."""
@@ -2550,7 +2656,12 @@ def build_server(
         return {"fork_id": fork_id, "session": forks[fork_id]["session"], "status": "started"}
 
     @tool(annotations=READ_ONLY)
-    async def read_forked_session(fork_id: str, wait_seconds: float = WAIT_SECONDS) -> dict[str, Any]:
+    async def read_forked_session(
+        fork_id: Annotated[
+            str, Field(description="The fork_id ask_forked_session or message_forked_session returned.")
+        ],
+        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+    ) -> dict[str, Any]:
         """The side session's answer, waiting up to 20 s; call again on still_working.
         status "answered", "still_working" (call again), "timed_out" (it worked five minutes and
         was stopped) or "error" with `detail`; answers are kept for an hour, and forgotten when
@@ -2558,10 +2669,15 @@ def build_server(
         return await collect_fork(fork_id, wait_seconds)
 
     @tool(annotations=READ_ONLY)
-    async def digest_session(session: str, question: str | None = None, language: str | None = None) -> dict[str, Any]:
+    async def digest_session(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        question: Annotated[str | None, Field(description="A question to answer instead of a summary.")] = None,
+        language: Annotated[str | None, Field(description=LANGUAGE_PARAM)] = None,
+    ) -> dict[str, Any]:
         """Sum up a session's whole conversation, or answer a question on it, in ~10 s.
         Like peek_session over up to the last 150,000 characters, so slower: a few speakable
-        sentences, in `language` if given (for example "norsk"); none of it fills your context."""
+        sentences; none of it fills your context. cut and skipped_chars say when the start of the
+        conversation was left out: say so."""
         target = find_live(session)
         kept, skipped = conversation_end(target, digest_chars)
         digest = await summarize("\n".join(kept), question, language)
@@ -2575,11 +2691,13 @@ def build_server(
         }
 
     @tool(annotations=READ_ONLY)
-    def search_session_history(session: str, query: str, max_chars: int = 300) -> dict[str, Any]:
+    def search_session_history(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        query: Annotated[str, Field(description="Keywords to look for.")],
+        max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 300,
+    ) -> dict[str, Any]:
         """Search a session's whole conversation for keywords: only relevant excerpts.
-        The whole conversation of a running Claude Code session (name or id from
-        list_active_sessions); use it instead of reading long output when looking for something
-        said earlier."""
+        Use it instead of reading long output when looking for something said earlier."""
         target = find_live(session)
         turns = transcripts.recent_turns(read_transcript(target["sessionId"], target.get("cwd")), None)
         size = max(max_chars, 40)
