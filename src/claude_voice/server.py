@@ -975,7 +975,12 @@ def build_server(
 
     def followed(session: str) -> str | None:
         """The id of a session the relay follows, by name or id, or None."""
-        return next((k for k, m in marks.items() if m.get("sent") is not None and session in (k, m.get("name"))), None)
+        rows = [{"sessionId": k, "name": m.get("name")} for k, m in marks.items() if m.get("sent") is not None]
+        try:
+            found = renames.find(rows, session)
+        except renames.Ambiguous as exc:
+            raise ToolError(f"{exc}: give one exactly") from exc
+        return str(found["sessionId"]) if found else None
 
     def owner_typed_since_read(d: dict[str, Any]) -> int | None:
         """The relay's read mark, when the owner typed in this session after it; else None.
@@ -1063,7 +1068,8 @@ def build_server(
         target = None
         named = args.get("session") or (structured.get("session") if tool == "wait_for_session" else None)
         if tool in READ_MARKING_TOOLS and named:
-            target = next((d for d in live.values() if named in (d.get("name"), d.get("sessionId"))), None)
+            with contextlib.suppress(renames.Ambiguous):  # the call itself was refused
+                target = renames.find(list(live.values()), str(named))
         elif tool in STARTING_TOOLS and structured.get("claude_session_id"):
             target = live.get(str(structured["claude_session_id"]))
         reached = structured.get("next_after")
@@ -1973,7 +1979,10 @@ def build_server(
 
     def find_any_live(session: str) -> dict[str, Any]:
         session = by_number(session)
-        found = renames.find([d for d in live_sessions() if not is_courier(d)], session)
+        try:
+            found = renames.find([d for d in live_sessions() if not is_courier(d)], session)
+        except renames.Ambiguous as exc:
+            raise ToolError(f"{exc}: give one exactly; see list_active_sessions") from exc
         if found is not None:
             return found
         raise ToolError(f"No running session called {session!r}; see list_active_sessions")
@@ -3012,9 +3021,10 @@ def build_server(
     def resolve_session(session: str) -> dict[str, Any]:
         """A running session or one of the bridge's own, by name or id, as the page shows it."""
         session = by_number(session)
-        for row in fleet_recap()["sessions"]:
-            if session in (row["id"], row["name"]):
-                return {"id": row["id"], "number": row.get("number"), "name": row["name"], "kind": row["kind"]}
+        rows = fleet_recap()["sessions"]
+        found = renames.find([{**row, "sessionId": row["id"]} for row in rows], session)  # Ambiguous is a LookupError
+        if found is not None:
+            return {"id": found["id"], "number": found.get("number"), "name": found["name"], "kind": found["kind"]}
         raise LookupError(f"No session called {session!r}")
 
     def set_active(session: str, by: str) -> dict[str, Any]:

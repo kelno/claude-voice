@@ -11,6 +11,7 @@ import os
 import pytest
 from mcp.client import Client
 
+from claude_voice import renames
 from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
@@ -218,3 +219,19 @@ async def test_a_name_set_in_claude_code_afterwards_wins(tmp_path, root, live, j
         await call(c, "rename_session", session="math-quest", new_name="mq")
         write(live, os.getpid(), "mq-id", "typed-by-roy", root)
         assert await names(c) == ["typed-by-roy"]
+
+
+def test_a_session_name_is_found_whatever_its_capitals():
+    # By voice, a name comes back with the capitals the transcription chose.
+    rows = [{"name": "Test engine session", "sessionId": "a"}]
+    assert renames.find(rows, "Test Engine Session")["sessionId"] == "a"
+    renamed = {"name": "x", "sessionId": "b", "aliases": ["Old Name"]}
+    assert renames.find([*rows, renamed], "old name")["sessionId"] == "b"
+
+
+def test_names_that_differ_only_by_capitals_are_all_refused_unless_one_is_exact():
+    rows = [{"name": "Billing", "sessionId": "a"}, {"name": "billing", "sessionId": "b"}]
+    with pytest.raises(renames.Ambiguous) as refused:
+        renames.find(rows, "BILLING")
+    assert refused.value.names == ["Billing", "billing"]
+    assert renames.find(rows, "billing")["sessionId"] == "b"

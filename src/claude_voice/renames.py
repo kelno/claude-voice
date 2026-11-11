@@ -43,21 +43,44 @@ def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], ali
     return out
 
 
-def called(d: dict[str, Any], session: str, old_names: bool = False) -> bool:
+def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: bool = False) -> bool:
     """Whether `session` names this running session: by name or id, or with `old_names`
-    by a name it had before."""
-    if session in (d.get("name"), str(d.get("sessionId"))):
+    by a name it had before; with `any_case`, whatever the capitals."""
+
+    def same(a: Any) -> bool:
+        # RULE: a session name is found whatever its capitals
+        return a is not None and (str(a).casefold() == session.casefold() if any_case else a == session)
+
+    if same(d.get("name")) or same(str(d.get("sessionId"))):
         return True
     # RULE: a message to an old name reaches the renamed session
-    return old_names and (session in d.get("aliases", []) or session == d.get("deliver_to"))
+    return old_names and (any(same(n) for n in d.get("aliases", [])) or same(d.get("deliver_to")))
+
+
+class Ambiguous(LookupError):
+    """A name that, its capitals aside, names more than one running session."""
+
+    def __init__(self, session: str, names: list[str]) -> None:
+        listed = ", ".join(repr(n) for n in names)
+        super().__init__(f"{session!r} could be any of {listed}, which differ only by capitals")
+        self.names = names
 
 
 def find(rows: list[dict[str, Any]], session: str) -> dict[str, Any] | None:
-    """The running session `session` names: its own name first, then a name it had."""
+    """The running session `session` names: its own name first, then a name it had; then the same
+    whatever the capitals, as a name said aloud comes back with the capitals the transcription chose.
+    Raises Ambiguous when, capitals aside, it names more than one session and none exactly."""
     for old_names in (False, True):
         for d in rows:
             if called(d, session, old_names):
                 return d
+    for old_names in (False, True):
+        found = [d for d in rows if called(d, session, old_names, any_case=True)]
+        # RULE: names that differ only by capitals are all refused unless one is exact
+        if len(found) > 1:
+            raise Ambiguous(session, [str(d.get("name")) for d in found])
+        if found:
+            return found[0]
     return None
 
 

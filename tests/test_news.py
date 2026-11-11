@@ -589,3 +589,14 @@ async def test_a_background_task_s_completion_note_is_not_a_later_message(served
     assert done["status"] == "idle"
     assert done["reply"] == "Done."
 
+
+async def test_a_followed_session_is_named_whatever_its_capitals(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="BILLING-AB", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "list_folders")
+        stopped = await call(c, "follow_session", session="Billing-Ab", follow=False)
+    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+    assert stopped["status"] == "not_followed"

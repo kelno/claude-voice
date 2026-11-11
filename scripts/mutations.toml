@@ -426,7 +426,7 @@ replace = 'if False:'
 [[rule]]
 name = "a message to an old name reaches the renamed session"
 file = "src/claude_voice/renames.py"
-find = 'return old_names and \(session in d.get\("aliases", \[\]\) or session == d.get\("deliver_to"\)\)'
+find = 'return old_names and \(any\(same\(n\) for n in d.get\("aliases", \[\]\)\)'
 replace = 'return False'
 
 [[rule]]
@@ -741,3 +741,15 @@ name = "a session with a background task still running is not at rest"
 file = "src/claude_voice/server.py"
 find = 'return BACKGROUND$'
 replace = 'pass'
+
+[[rule]]
+name = "a session name is found whatever its capitals"
+file = "src/claude_voice/renames.py"
+find = 'return a is not None and \(str\(a\).casefold\(\) == session.casefold\(\) if any_case else a == session\)'
+replace = 'return a is not None and a == session'
+
+[[rule]]
+name = "names that differ only by capitals are all refused unless one is exact"
+file = "src/claude_voice/renames.py"
+find = 'if len\(found\) > 1:'
+replace = 'if False:'
