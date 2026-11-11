@@ -102,9 +102,11 @@ DEFAULT_MODEL = "opus"
 # reaches it (Claude Code and the Claude app, tested 2026-11-11): so what concerns one
 # parameter goes there, and what a result means stays in the tool's description.
 SESSION_PARAM = "A running session's name or id, from list_active_sessions."
+# A template: build_server fills in the configured limit as each tool is registered, so the text
+# says what the bridge it runs in is set to.
 WAIT_PARAM = (
-    "Keep the default, 5 s, in the Claude app, which sends a call past about 10 s to the "
-    "background. At most the caller's limit (20 s for the Claude app)."
+    "At most the caller's limit, {claude_app:g} s for the Claude app. That app sends a call past "
+    "about 10 s to the background and brings its result back later."
 )
 MAX_CHARS_PARAM = "How long each message or excerpt in the result may be before it is cut."
 LANGUAGE_PARAM = 'The language to answer in, such as "norsk".'
@@ -1048,7 +1050,19 @@ def build_server(
     def tool(**kwargs: Any) -> Callable[[Callable[..., Any]], Any]:
         """Register a tool, unless the fork switched it off: then its code stays, offered to no one."""
         register = titled(**kwargs)
-        return lambda fn: fn if fn.__name__ in switched_off else register(fn)
+
+        def add(fn: Callable[..., Any]) -> Any:
+            if fn.__name__ in switched_off:
+                return fn
+            out = register(fn)
+            # RULE: a wait's description gives the limit the bridge is configured with
+            added = mcp._tool_manager.get_tool(fn.__name__)
+            wait = added.parameters.get("properties", {}).get("wait_seconds") if added else None
+            if wait and "description" in wait:
+                wait["description"] = wait["description"].format(claude_app=repos.budgets.seconds("claude_app"))
+            return out
+
+        return add
 
     # The tool list changes when a plugin is started again or approved, so say so up front
     # (tools.listChanged), and tell connected clients each time it does.
@@ -2338,7 +2352,7 @@ def build_server(
         ] = None,
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
-        """Wait for a session's turn to end or need input, up to 20 s; then its reply.
+        """Wait for a session's turn to end or need input; then its reply.
         Sends nothing; reply is the newest message among those returned, empty when the session
         wrote nothing new; at most 30 turns come back, and read_session_output(after=next_after)
         reads the rest while turns_left is above 0. status: "idle" (its turn
@@ -2416,7 +2430,7 @@ def build_server(
         wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
-        """Ask a session and wait, up to 20 s, for its answer; only when needed now.
+        """Ask a session and wait for its answer; only when needed now.
         reply_final: its turn ended with an answer, whole up to 12,000 characters (reply_cut past
         that). status: "answered", "needs_input" (it waits for its user; prompt is the permission
         prompt, if one; before sending, nothing was sent), "still_working" (the wait ran out before
@@ -2640,7 +2654,7 @@ def build_server(
         ],
         wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
     ) -> dict[str, Any]:
-        """Ask the side session, a read-only fork that reads code; waits up to 20 s.
+        """Ask the side session, a read-only fork that reads code, and wait for it.
         The fork can read the files in the session's folder; the session keeps working, untouched.
         status "answered", "still_working" (read it later with read_forked_session(fork_id)),
         "timed_out", or "error" with `detail`."""
@@ -2666,7 +2680,7 @@ def build_server(
         ],
         wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
     ) -> dict[str, Any]:
-        """The side session's answer, waiting up to 20 s; call again on still_working.
+        """The side session's answer, waiting for it; call again on still_working.
         status "answered", "still_working" (call again), "timed_out" (it worked five minutes and
         was stopped) or "error" with `detail`; answers are kept for an hour, and forgotten when
         the bridge restarts."""

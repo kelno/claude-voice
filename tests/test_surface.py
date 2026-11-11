@@ -178,3 +178,21 @@ async def test_a_parameter_descriptions_first_sentence_fits_before_the_cut(world
             if len(first) > PARAM_FIRST_SENTENCE_CHARS:
                 long[f"{t.name}.{name}"] = len(first)
     assert long == {}
+
+
+async def test_a_wait_s_description_gives_the_limit_the_bridge_is_configured_with(tmp_path):
+    # The Claude app's cap went from 20 s to 180 s in the config while the descriptions still
+    # said 20 s (2026-11-11): the text says what the bridge it runs in is set to.
+    from claude_voice import config
+
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path, client_factory=FakeClaude())
+    budgets = config.Budgets({"claude_app": 180})
+    repos = config.Config(config.Repos(), config.Paths(None, None, None, None), None, budgets=budgets)
+    srv = build_server(
+        m, conversations=lambda **k: [], live_dir=tmp_path / "live", projects_dir=tmp_path, repo_config=repos
+    )
+    async with Client(srv) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+    for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
+        assert "180 s for the Claude app" in tools[name].input_schema["properties"]["wait_seconds"]["description"]
+        assert "20 s" not in (tools[name].description or "")

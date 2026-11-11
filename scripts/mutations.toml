@@ -668,3 +668,9 @@ name = "a turn that seems to end with nothing new is believed only after a short
 file = "src/claude_voice/server.py"
 find = 'ended_silent = quiet_since is not None and clock\(\) - quiet_since >= silent_grace'
 replace = 'ended_silent = quiet_since is not None'
+
+[[rule]]
+name = "a wait's description gives the limit the bridge is configured with"
+file = "src/claude_voice/server.py"
+find = 'if wait and "description" in wait:'
+replace = 'if False:'
