@@ -162,21 +162,6 @@ LOG_KEPT = 3
 # and may never call guide, so the manual also comes with the first result of any MCP session that
 # hasn't read it (result_notes).
 INSTRUCTIONS = """\
-The claude-voice bridge: lets an assistant work with the Claude Code sessions on
-the owner's computer, for an owner who usually talks to it by voice.
-
-Who reads the guide
-- The relay, an assistant that starts, messages, asks or waits on sessions
-  through these tools, reads the whole guide: call guide before any other call,
-  and call it again after every compaction, even if it still seems to be there.
-  The bridge's rules (roles, what the owner sees, waiting, news) are in the
-  guide only.
-- A session that only answers relayed messages doesn't need the guide: the note
-  on each message says what it needs. A session that calls one of these tools for
-  itself, such as confirm_ask, needs only that tool's description.
-"""
-
-INSTRUCTIONS = """\
 Read this first, before any other call: how the claude-voice bridge is used.
 
 Roles
