@@ -1,13 +1,14 @@
 """A news line on every result: how the sessions the relay watches stand, without a call of its own.
 
-With several sessions running, a relay misses replies, most of all when the owner talks to a
-session directly. Counting every unread message turned into noise when one session posted many
-progress lines, and the relay stopped reading the line. So the relay watches the sessions it
-started, resumed, messaged or read (or chose with watch_session), and only four things are news:
-a reply to its message, something the owner typed in the session, a waiting permission prompt,
-and the session having ended. Every watched session gets a short entry even with nothing new, so
-"nothing new" can't be mistaken for "not watched". A permission prompt shows for every session,
-watched or not, since only the owner can answer it.
+With several sessions running, a relay misses replies. Counting every unread message turned into
+noise when one session posted many progress lines, and the relay stopped reading the line; a set
+of every session ever touched went stale. So the relay follows a session from its message or
+question (or a hand-off, follow_session) until it has read the turn that answers it, and only
+three things are news: a finished turn it hasn't read, a waiting permission prompt, and a followed
+session having ended. Every followed session gets a short entry even with nothing new, so
+"nothing new" can't be mistaken for "not followed". A permission prompt shows for every session,
+followed or not, since only the owner can answer it. Reading a session only moves the relay's read
+mark; what the owner typed in a session is said when the relay next writes to it.
 """
 
 import asyncio
@@ -123,7 +124,7 @@ async def call(client, name, **args):
     return res.structured_content
 
 
-async def test_a_reply_to_the_relays_message_is_news_until_it_is_read(served):
+async def test_following_a_session_ends_once_its_finished_turn_is_read(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
@@ -134,7 +135,19 @@ async def test_a_reply_to_the_relays_message_is_news_until_it_is_read(served):
         after = await call(c, "list_folders")
     assert later["news"] == "billing-ab (idle): reply to you, read with after=1"
     assert list(later)[-1] != "news" and "news" in list(later)[:3]  # given before the result itself
-    assert read["news"] == after["news"] == "billing-ab (idle): nothing new"
+    assert "news" not in read and "news" not in after  # read: following it ends
+
+
+async def test_reading_a_session_does_not_follow_it(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "read_session_output", session="billing-ab")
+        desk.set("busy")
+        desk.transcript.append(turn("assistant", "Working on something else."))
+        desk.set("idle")
+        out = await call(c, "list_folders")
+    assert "news" not in out
 
 
 async def test_a_reply_to_a_session_with_no_turns_yet_is_news_too(served):
@@ -144,7 +157,7 @@ async def test_a_reply_to_a_session_with_no_turns_yet_is_news_too(served):
     desk.transcript = []
     http, client = conversation(url)
     async with http, client as c:
-        await call(c, "watch_session", session="billing-ab")  # as start_active_session does
+        await call(c, "read_session_output", session="billing-ab")  # as start_active_session marks it
         sent = await call(c, "message_active_session", session="billing-ab", message="Here is your brief.")
         desk.transcript.append(turn("assistant", "Report: all done."))
         later = await call(c, "list_folders")
@@ -204,7 +217,8 @@ async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(ser
     assert out["news"] == f"billing-ab (idle): reply to you, read with after={asked['next_after']}"
 
 
-async def test_what_the_owner_typed_in_the_session_is_news(served):
+async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_so(served):
+    # Not news on every result: it matters when the relay writes to that session again.
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
@@ -213,9 +227,10 @@ async def test_what_the_owner_typed_in_the_session_is_news(served):
         await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         desk.transcript.append(turn("user", "I ran it myself.", "human"))  # on the phone, directly
         desk.transcript.append(turn("assistant", "Then it is done."))
-        desk.set("busy")
-        out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab (busy): the owner typed here, read with after=3"
+        quiet = await call(c, "list_folders")
+        again = await call(c, "message_active_session", session="billing-ab", message="And the invoices?")
+    assert "news" not in quiet
+    assert "read_session_output(after=3)" in again["owner_typed"]
 
 
 async def test_only_what_the_owner_typed_counts_as_theirs(served):
@@ -231,11 +246,11 @@ async def test_only_what_the_owner_typed_counts_as_theirs(served):
         desk.transcript.append(turn("user", "From another session.", "peer"))
         desk.transcript.append(turn("user", "no origin recorded", None))
         desk.transcript.append(turn("assistant", "Noted."))
-        out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab (idle): nothing new"
+        out = await call(c, "message_active_session", session="billing-ab", message="Next.")
+    assert "owner_typed" not in out
 
 
-async def test_a_session_waiting_on_a_permission_prompt_is_news_even_unwatched(served):
+async def test_a_session_waiting_on_a_permission_prompt_is_news_even_unfollowed(served):
     url, desk = served
     desk.set("waiting", waiting_for="permission prompt")
     http, client = conversation(url)
@@ -244,7 +259,7 @@ async def test_a_session_waiting_on_a_permission_prompt_is_news_even_unwatched(s
     assert out["news"] == "billing-ab: waiting on a permission prompt"
 
 
-async def test_a_watched_session_that_ended_says_so_once_then_leaves_the_line(served):
+async def test_a_followed_session_that_ended_says_so_once_then_leaves_the_line(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
@@ -283,21 +298,47 @@ async def test_two_sessions_are_set_apart_in_one_line(served):
     )
 
 
-async def test_watch_session_watches_a_session_without_messaging_it(served):
+async def test_a_session_handed_over_is_followed_until_any_turn_it_finishes(served):
+    # "Tell me when it's done": the owner hands over a session they are driving themselves, so a
+    # turn answering their own typing counts.
+    url, desk = served
+    desk.set("busy")
+    http, client = conversation(url)
+    async with http, client as c:
+        handed = await call(c, "follow_session", session="billing-ab")
+        working = await call(c, "list_folders")
+        desk.transcript.append(turn("user", "Start on the invoices.", "human"))
+        desk.transcript.append(turn("assistant", "Invoices done."))
+        desk.set("idle")
+        done = await call(c, "list_folders")
+    assert handed["status"] == "following"
+    assert working["news"] == "billing-ab (busy): nothing new"  # what came before isn't news
+    assert done["news"] == "billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_a_session_handed_over_at_rest_is_already_done_not_followed(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
-        watched = await call(c, "watch_session", session="billing-ab")
-        desk.transcript.append(turn("user", "Start on the invoices.", "human"))
-        typed = await call(c, "list_folders")
-        await call(c, "watch_session", session="billing-ab", watch=False)
-        dropped = await call(c, "list_folders")
-    assert watched["news"] == "billing-ab (idle): nothing new"  # what came before isn't news
-    assert typed["news"] == "billing-ab (idle): the owner typed here, read with after=1"
-    assert "news" not in dropped
+        handed = await call(c, "follow_session", session="billing-ab")
+        out = await call(c, "list_folders")
+    assert handed["status"] == "already_done"
+    assert "news" not in out
 
 
-async def test_a_new_conversation_and_a_restarted_bridge_watch_the_same_sessions(tmp_path, world):
+async def test_following_can_be_stopped(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        stopped = await call(c, "follow_session", session="billing-ab", follow=False)
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "list_folders")
+    assert stopped["status"] == "not_followed"
+    assert "news" not in out
+
+
+async def test_a_new_conversation_and_a_restarted_bridge_follow_the_same_sessions(tmp_path, world):
     # The relay is one role across calls: after a bridge restart, which leaves the voice call
     # running, or in a new call, it still needs the reply to the message sent before.
     root, live = world
@@ -314,7 +355,21 @@ async def test_a_new_conversation_and_a_restarted_bridge_watch_the_same_sessions
     assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
 
 
-async def test_nothing_watched_and_no_prompt_means_no_news_field(served):
+async def test_what_the_bridge_kept_under_the_old_name_is_still_followed(tmp_path, world):
+    # The marks were kept as "watched_sessions" before following replaced watching.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    store = Store(tmp_path / "bridge.db")
+    store.set_setting("watched_sessions", {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}})
+    desk.transcript.append(turn("assistant", "Export done."))
+    async with bridge(tmp_path, desk, store) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            out = await call(c, "list_folders")
+    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_nothing_followed_and_no_prompt_means_no_news_field(served):
     url, _ = served
     http, client = conversation(url)
     async with http, client as c:

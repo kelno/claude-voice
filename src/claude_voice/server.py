@@ -162,12 +162,20 @@ SWITCHED_OFF = frozenset(
 # The header naming a call's MCP session, and how many sessions are remembered as having the manual.
 MCP_SESSION_HEADER = "mcp-session-id"
 GUIDED_KEPT = 1000
-# Tools after which a conversation follows a session: by its `session` argument and the turn its
-# result reached (`next_after`), or by the `claude_session_id` it started or resumed.
+# Tools after which the relay's read mark on a session moves: by its `session` argument and the
+# turn its result reached (`next_after`), or by the `claude_session_id` it started or resumed.
 READ_MARKING_TOOLS = ("message_active_session", "read_session_output", "wait_for_session", "ask_active_session")
-FOLLOWING_TOOLS = ("start_active_session", "attach_conversation")
-# Where the sessions the relay watches are kept, so a bridge restart doesn't drop them.
-WATCHED_SETTING = "watched_sessions"
+STARTING_TOOLS = ("start_active_session", "attach_conversation")
+# Where the relay's read marks and the sessions it follows are kept, so a bridge restart doesn't
+# drop them; the older name is read once, from before following replaced watching.
+MARKS_SETTING = "read_marks"
+OLD_MARKS_SETTING = "watched_sessions"
+# Said in the result of a send or a question to a session the owner typed in since the relay last
+# read it: the moment it matters, rather than news on every result.
+OWNER_TYPED_NOTE = (
+    "The owner typed in this session since you last read it: read_session_output(after={after}) shows it, "
+    "to catch up; don't tell the owner what they wrote."
+)
 GUIDE_NOTE = "This is the bridge's guide in full, the same text the guide tool returns: no need to call guide."
 # How much text a read of a session's turns returns when no count is asked for: many short
 # progress turns fit, a few long reports don't flood the reply.
@@ -254,29 +262,27 @@ Waiting
   far: don't report it as finished, or as cut off.
 
 News
-- A result may start with news: an entry for each session you watch, with
-  its state and what's new, or "nothing new". You watch the sessions you
-  started, resumed, messaged, asked (ask_active_session) or read
-  (read_session_output, wait_for_session); watch_session adds one, such as one
-  the owner hands you, or drops one. The set is the relay's, kept across
-  voice conversations and bridge restarts, so it may name sessions an earlier
-  conversation touched.
-- News is four things only: "reply to you", once a session's turn after your
-  message has ended (its answers to the owner's own typing aren't one); "the
-  owner typed here", when the owner wrote to it directly; a permission prompt
-  waiting, shown as just that, watched or not; "ended", named once, then
-  dropped ("ended before you read its reply": attach_conversation resumes it,
-  to read it). Progress lines aren't news; read_session_output still shows
-  them. "read with after=N" says where to read from.
+- A result may start with news: an entry for each session you follow, with
+  its state and what's new, or "nothing new". A message or a question
+  follows a session until you have read the turn that answers it;
+  follow_session follows one the owner hands you, or stops following one.
+  Reading a session doesn't follow it. What you follow is the relay's, kept
+  across voice conversations and bridge restarts, so it may name a session an
+  earlier conversation messaged.
+- News is three things only: "reply to you", once a followed session's turn
+  has ended; a permission prompt waiting, shown as just that, followed or
+  not; "ended", named once, then dropped ("ended before you read its reply":
+  attach_conversation resumes it, to read it). Progress lines aren't news;
+  read_session_output still shows them. "read with after=N" says where to
+  read from.
 - What's new stays in the entry until you read the session
   (read_session_output, wait_for_session or ask_active_session returned it,
   even cut), or the prompt is answered. Tell the owner once, at your next
   reply, not during a silent wait. Read a session first,
-  before telling the owner what it said, and before writing to it again.
-  "the owner typed here" asks nothing aloud: read it to catch up, and don't
-  tell the owner what they wrote. A waiting prompt is the owner's to answer,
-  on the phone or at the PC: say what it asks (list_active_sessions shows
-  it), before a wait if one is coming.
+  before telling the owner what it said.
+  A waiting prompt is the owner's to answer, on the phone or at the PC: say
+  what it asks (list_active_sessions shows it), before a wait if one is
+  coming.
 - When a topic with the owner wraps up, check the news yourself, without
   asking: any call returns it, list_active_sessions is a cheap one. Speak
   only if something is new. About to offer the owner to check on the
@@ -611,9 +617,9 @@ def result_notes(
     return note
 
 
-def load_watched(store: Store) -> dict[str, dict[str, Any]]:
-    """The sessions the relay watches, as the database kept them; none at first."""
-    return store.get_setting(WATCHED_SETTING) or {}
+def load_marks(store: Store) -> dict[str, dict[str, Any]]:
+    """The relay's read marks and what it follows, as the database kept them; none at first."""
+    return store.get_setting(MARKS_SETTING) or store.get_setting(OLD_MARKS_SETTING) or {}
 
 
 async def wake_interrupted(
@@ -893,13 +899,14 @@ def build_server(
             if channels is not None:
                 await channels.stop()
 
-    # The sessions the relay watches, by Claude session id: the last turn it has read (`seen`),
-    # the turn its last message went in after while no reply to it has been read (`sent`), and
-    # whether that reply's turn was seen to end (`replied`). One set for the relay, whichever
-    # conversation it calls from, kept in the database: a bridge restart doesn't end the voice
-    # call, which runs in the Claude app's cloud, and the relay, in that call or a new one, still
-    # needs the reply to the message it sent.
-    watched = load_watched(manager.store)
+    # The relay's marks on each session it has touched, by Claude session id: the last turn it has
+    # read (`seen`), its read mark, and, while it follows the session, the turn after which it
+    # expects a finished turn (`sent`: its message, its question, or a hand-off) and whether that
+    # turn was seen to end (`replied`). Following ends once that turn is read, or the session
+    # ends. One set for the relay, whichever conversation it calls from, kept in the database: a
+    # bridge restart doesn't end the voice call, which runs in the Claude app's cloud, and the
+    # relay, in that call or a new one, still needs the reply to the message it sent.
+    marks = load_marks(manager.store)
     # Turns per session, kept while its conversation file is unchanged.
     turns_seen: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
 
@@ -917,110 +924,120 @@ def build_server(
             turns_seen[sid] = (stamp, turns)
         return turns
 
-    def watch_live(d: dict[str, Any], seen: int | None = None, sent: int | None = None) -> None:
-        """Watch a session, from the last turn read (its whole history when not given); a message
-        sent after turn `sent` waits for its reply."""
+    def mark_read(d: dict[str, Any], seen: int | None = None, sent: int | None = None) -> None:
+        """Move a session's read mark (to the end of its history when not given); with `sent`,
+        follow it: a finished turn after that one is expected."""
         sid = str(d.get("sessionId"))
         if seen is None:
             seen = len(all_turns(sid, str(d.get("cwd")))) - 1
-        mark = watched.setdefault(sid, {"seen": seen, "sent": None, "replied": False})
+        mark = marks.setdefault(sid, {"seen": seen, "sent": None, "replied": False})
         mark.update(name=d.get("name") or mark.get("name") or sid, cwd=str(d.get("cwd")))
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
             mark.update(sent=sent, replied=False)
 
-    def unwatch(session: str) -> str | None:
-        """Stop watching a session, by name or id; its name, or None when it wasn't watched."""
-        sid = next((k for k, m in watched.items() if session in (k, m.get("name"))), None)
-        return watched.pop(sid).get("name") or sid if sid else None
+    def followed(session: str) -> str | None:
+        """The id of a session the relay follows, by name or id, or None."""
+        return next((k for k, m in marks.items() if m.get("sent") is not None and session in (k, m.get("name"))), None)
+
+    def owner_typed_since_read(d: dict[str, Any]) -> int | None:
+        """The relay's read mark, when the owner typed in this session after it; else None.
+
+        Only a turn Claude Code marks "human" is the owner's: not a message from another session,
+        nor a background task's completion note."""
+        mark = marks.get(str(d.get("sessionId")))
+        if mark is None:
+            return None
+        turns = all_turns(str(d.get("sessionId")), str(d.get("cwd")))
+        typed = any(i > mark["seen"] and t.get("origin") == "human" for i, t in enumerate(turns))
+        return int(mark["seen"]) if typed else None
 
     def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> str | None:
-        """How the watched sessions stand, in one line, and any session waiting on a permission
+        """How the followed sessions stand, in one line, and any session waiting on a permission
         prompt; None when there is neither.
 
-        A call that starts, resumes, messages or reads a session watches it. Four things are news:
-        a reply to the relay's message, once that turn has ended; something the owner typed in the
-        session (Claude Code marks it "human"; not a message from another session, nor a background
-        task's completion note); a permission prompt waiting; the session having ended, said once.
-        Progress lines are not news: the relay can read them, but naming them every time made a
-        busy session drown the rest.
+        A message or a question to a session follows it, and so does follow_session; reading one
+        only moves the read mark. News is a finished turn the relay hasn't read, a permission prompt
+        waiting, and a followed session having ended, said once. Following ends once the finished
+        turn is read. Progress lines are not news: the relay can read them, but naming them every
+        time made a busy session drown the rest.
         """
-        before = json.dumps(watched, sort_keys=True)
+        before = json.dumps(marks, sort_keys=True)
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
-        watch_after_call(tool, args, structured, live)
+        mark_after_call(tool, args, structured, live)
         items = []
-        for sid, mark in list(watched.items()):
-            items.append(watched_entry(sid, mark, live.get(sid)))
+        for sid, mark in list(marks.items()):
+            if mark.get("sent") is not None:
+                items.extend(followed_entry(sid, mark, live.get(sid)))
+            elif sid not in live:
+                del marks[sid]  # a read mark on a session that can't be read any more
         for sid, d in live.items():
-            if sid not in watched and session_state(d) == "waiting on a permission prompt":
+            unfollowed = marks.get(sid, {}).get("sent") is None
+            if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
-        if json.dumps(watched, sort_keys=True) != before:
-            manager.store.set_setting(WATCHED_SETTING, watched)
+        if json.dumps(marks, sort_keys=True) != before:
+            manager.store.set_setting(MARKS_SETTING, marks)
         return " | ".join(items) if items else None
 
-    def watch_after_call(
+    def mark_after_call(
         tool: str, args: dict[str, Any], structured: dict[str, Any], live: dict[str, dict[str, Any]]
     ) -> None:
-        """Watch the session a call started, resumed, messaged, asked or read, from where it read."""
+        """Move the read mark on the session a call started, resumed, messaged, asked or read, and
+        follow it after a message or a question still unanswered."""
         target = None
         if tool in READ_MARKING_TOOLS and args.get("session"):
             target = next((d for d in live.values() if args["session"] in (d.get("name"), d.get("sessionId"))), None)
-        elif tool in FOLLOWING_TOOLS and structured.get("claude_session_id"):
+        elif tool in STARTING_TOOLS and structured.get("claude_session_id"):
             target = live.get(str(structured["claude_session_id"]))
         reached = structured.get("next_after")
-        if target is not None and tool in FOLLOWING_TOOLS:
-            watch_live(target)  # a session started or resumed: its history so far isn't news
+        if target is not None and tool in STARTING_TOOLS:
+            mark_read(target)  # a session started or resumed: its history so far isn't news
         elif target is not None and isinstance(reached, int):
             if tool == "message_active_session":
                 # A send reads nothing: what came before stays unread, and while an earlier
                 # message's reply is unread, the wait for a reply starts from that message.
-                mark = watched.get(str(target.get("sessionId")))
+                mark = marks.get(str(target.get("sessionId")))
                 if mark is None:
-                    watch_live(target, seen=reached, sent=reached)  # its history so far isn't news
+                    mark_read(target, seen=reached, sent=reached)  # its history so far isn't news
                 elif mark.get("sent") is None:
-                    watch_live(target, seen=mark["seen"], sent=reached)
+                    mark_read(target, seen=mark["seen"], sent=reached)
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
-                watch_live(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
+                mark_read(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
             else:
-                watch_live(target, seen=reached)
+                mark_read(target, seen=reached)
 
-    def watched_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> str:
-        """One watched session's entry in the news line; an ended one is dropped after it."""
+    def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
+        """A followed session's entry in the news line, or none once its finished turn is read
+        (following ends there); an ended one is named once, then dropped."""
         name = (d or {}).get("name") or mark.get("name") or sid
         if d is None:
-            del watched[sid]  # said once, then dropped, since it can't be read any more
-            last = mark.get("sent")
-            unread = last is not None and any(
-                t["role"] == "assistant" and i > max(last, mark["seen"])
+            del marks[sid]  # said once, then dropped, since it can't be read any more
+            unread = any(
+                t["role"] == "assistant" and i > max(mark["sent"], mark["seen"])
                 for i, t in enumerate(all_turns(sid, str(mark.get("cwd"))))
             )
-            return f"{name}: ended" + (" before you read its reply" if unread else "")
+            return [f"{name}: ended" + (" before you read its reply" if unread else "")]
         mark["name"] = name
         turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
-        news, read_from = [], []
-        if mark.get("sent") is not None:
-            answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
-            # Its turn has ended once it rests, or asks its user something (not mid-turn on a
-            # prompt), or once a later message came in after its reply.
-            ended = session_state(d) in ("idle", "waiting for an answer") or any(
-                t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
-            )
-            mark["replied"] = mark["replied"] or (bool(answer) and ended)
-            if mark["replied"] and any(i > mark["seen"] for i in answer):
-                news.append("reply to you")
-                read_from.append(max(mark["sent"], mark["seen"]))
-            elif mark["replied"]:
-                mark.update(sent=None, replied=False)  # read: the message has its answer
-        if any(i > mark["seen"] and t.get("origin") == "human" for i, t in enumerate(turns)):
-            news.append("the owner typed here")
-            read_from.append(mark["seen"])
-        if read_from:
-            news.append(f"read with after={min(read_from)}")
+        news = []
+        answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
+        # Its turn has ended once it rests, or asks its user something (not mid-turn on a
+        # prompt), or once a later message came in after its reply.
+        ended = session_state(d) in ("idle", "waiting for an answer") or any(
+            t["role"] == "user" and answer and i > answer[0] for i, t in enumerate(turns)
+        )
+        mark["replied"] = mark["replied"] or (bool(answer) and ended)
+        if mark["replied"] and any(i > mark["seen"] for i in answer):
+            news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
+        elif mark["replied"]:
+            # RULE: following a session ends once its finished turn is read
+            mark.update(sent=None, replied=False)
+            return []
         state = session_state(d)
         if state == "waiting on a permission prompt":
-            return f"{name}: {', '.join([state, *news])}"
-        return f"{name} ({state}): {', '.join(news) or 'nothing new'}"
+            return [f"{name}: {', '.join([state, *news])}"]
+        return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
 
     def session_state(d: dict[str, Any] | None) -> str:
         if d is None:
@@ -1642,25 +1659,34 @@ def build_server(
         return {"name": name, "status": "stopped"}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))
-    def watch_session(
+    def follow_session(
         session: Annotated[str, Field(description=SESSION_PARAM)],
-        watch: Annotated[
-            bool, Field(description="False takes the session out of the news; touching it again puts it back.")
+        follow: Annotated[
+            bool, Field(description="False stops following it; a message or a question to it follows it again.")
         ] = True,
     ) -> dict[str, Any]:
-        """Put a session in the news line on every result, or take it out.
-        For a session you haven't touched, such as one the owner hands you, or to drop one. A newly
-        watched session starts with nothing new."""
-        if not watch:
-            name = unwatch(session)
-            if name is None:
-                raise ToolError(f"{session!r} isn't watched; the news line names the watched sessions")
-            store.set_setting(WATCHED_SETTING, watched)
-            return {"session": name, "watched": False}
+        """Follow a session until its current turn ends, as if you had messaged it.
+        For a session the owner hands you ("tell me when it's done"): the news line names it, and
+        any turn it finishes counts, even one answering the owner's own typing. A session at rest
+        has nothing to finish: status "already_done", and nothing is followed."""
+        if not follow:
+            sid = followed(session)
+            if sid is None:
+                raise ToolError(f"{session!r} isn't followed; the news line names the sessions you follow")
+            marks[sid].update(sent=None, replied=False)
+            store.set_setting(MARKS_SETTING, marks)
+            return {"session": marks[sid].get("name") or sid, "status": "not_followed"}
         d = find_live(session)
-        watch_live(d)
-        store.set_setting(WATCHED_SETTING, watched)
-        return {"session": d.get("name"), "watched": True}
+        sid = str(d.get("sessionId"))
+        at_rest = d.get("status") == "idle"
+        # RULE: a session handed over at rest is already done, not followed
+        if at_rest:
+            return {"session": d.get("name"), "status": "already_done"}
+        if followed(sid) is None:
+            mark = marks.get(sid)
+            mark_read(d, seen=mark["seen"] if mark else None, sent=len(all_turns(sid, str(d.get("cwd")))) - 1)
+            store.set_setting(MARKS_SETTING, marks)
+        return {"session": d.get("name"), "status": "following"}
 
     def under_root(cwd: str | None) -> str | None:
         """Folder name: relative to the root, the full path in a granted folder, or None
@@ -2235,16 +2261,29 @@ def build_server(
             return {"session": target["name"], "delivered": False, "status": "moved", "moved_to": moved}
         sid = str(target["sessionId"])
         before = len(numbered_turns(target))
+        typed = owner_typed(target)
         budget = repos.budgets.seconds(transcripts.current_client.get())
         delivery = asyncio.ensure_future(send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
             # RULE: a delivery slower than the clients budget is answered as sending
-            return {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1}
+            return {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1, **typed}
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
-        return {"session": target["name"], "status": "delivered", "delivered": True, "next_after": before - 1}
+        return {
+            "session": target["name"],
+            "status": "delivered",
+            "delivered": True,
+            "next_after": before - 1,
+            **typed,
+        }
+
+    def owner_typed(target: dict[str, Any]) -> dict[str, str]:
+        """The note for a send to a session the owner typed in since the relay last read it."""
+        # RULE: a send to a session the owner typed in since the last read says so
+        seen = owner_typed_since_read(target)
+        return {} if seen is None else {"owner_typed": OWNER_TYPED_NOTE.format(after=seen)}
 
     def sending_on(sid: str, name: str, message: str, delivery: asyncio.Future[Any]) -> dict[str, Any]:
         """Leave a slow delivery running; it shows on the session's card until Claude Code has sent
@@ -2366,7 +2405,7 @@ def build_server(
             return {"session": target["name"], "status": "moved", "moved_to": moved, "session_ended": False}
         # Without `after`, the wait starts where the relay last read this session, so it never skips
         # anything unread; a session never read starts where its transcript ends now.
-        mark = watched.get(str(target.get("sessionId")))
+        mark = marks.get(str(target.get("sessionId")))
         if after is not None:
             start = after
         elif mark is not None:
@@ -2447,6 +2486,7 @@ def build_server(
             # A message would only queue behind what it waits for; send nothing.
             return _not_sent(target, blocked)
         before = len(numbered_turns(target))
+        typed = owner_typed(target)
         was_busy = target.get("status") in BUSY
         out = await send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
         if not out.get("delivered"):
@@ -2467,6 +2507,7 @@ def build_server(
             "turns": new,
             "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
+            **typed,
         }
 
     @tool(annotations=READ_ONLY)
