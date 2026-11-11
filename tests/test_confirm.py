@@ -222,6 +222,7 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         code = asked["code"]
         assert asked["running"]["design"].endswith("/docs/owner-confirmation.md")
         assert code in asked["tell_the_relay"]
+        assert 'at the PC, ask them to type their OK in the session "desk"' in asked["tell_the_relay"]
 
         handed = outcome(await call(app, "confirm_with_owner", {"code": code}))
         assert handed["summary"] == "Allow Bash(git push:*)" and handed["from"] == "desk"

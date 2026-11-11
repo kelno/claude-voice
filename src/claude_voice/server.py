@@ -2102,9 +2102,12 @@ def build_server(
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
+        name = str(d.get("name") or d["sessionId"])
         relay = (
-            f'Please get the owner\'s confirmation: call confirm_with_owner with code "{asked["code"]}" and send'
-            f" the owner the link it returns. It expires at {asked['expires_at']}."
+            "Please get the owner's confirmation. If the owner has told you they're at the PC, ask them to"
+            f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
+            f' can\'t; otherwise call confirm_with_owner with code "{asked["code"]}" and send the owner the'
+            f" link it returns. It expires at {asked['expires_at']}."
         )
         return {
             "code": asked["code"],
