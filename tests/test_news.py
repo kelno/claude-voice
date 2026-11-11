@@ -526,3 +526,19 @@ async def test_a_session_paused_on_the_owner_wakes_a_wait_once(served):
     assert first["session"] == "billing-ab" and first["status"] == "needs_input"
     assert second["status"] == "nothing_to_wait_for"
     assert "billing-ab waits on the owner's answer" in second["next_step"]
+
+
+async def test_a_wait_with_no_length_given_runs_to_the_caller_s_limit(served):
+    # The long wait is the plan in the Claude app: it goes to the background and its result wakes
+    # the relay, so the relay shouldn't have to pick a length (owner, 2026-11-11).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        started = asyncio.get_running_loop().time()
+        out = await call(c, "wait_for_session", session="billing-ab")
+        took = asyncio.get_running_loop().time() - started
+    assert tools["wait_for_session"].input_schema["properties"]["wait_seconds"].get("default") is None
+    assert out["status"] == "still_working" and took >= 0.3  # the test bridge's limit is 0.3 s

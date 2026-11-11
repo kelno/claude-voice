@@ -161,10 +161,12 @@ async def test_a_wait_asked_without_a_length_ends_before_voice_mode_backgrounds_
     # Claude's voice mode moves a call still running after about 10 s to the background and
     # asks the assistant to speak; a default wait comes back before that, so waits chain silently.
     # With the server proxy's overhead an 8 s wait crossed it once (2026-11-06), so 5 s.
+    # wait_for_session runs to the caller's limit instead, going to the background on purpose:
+    # its result wakes the relay (owner, 2026-11-11), tested in test_news.py.
     _, server = bridge(tmp_path, root, live, FakeClaude())
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
+    for name in ("ask_active_session", "ask_forked_session", "read_forked_session"):
         assert tools[name].input_schema["properties"]["wait_seconds"]["default"] == 5, name
 
 

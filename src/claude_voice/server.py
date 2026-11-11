@@ -89,10 +89,13 @@ RELAYED_MESSAGE_NOTE = (
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
-# A wait asked without a length: Claude's voice mode moves a call still running after about
-# 10 seconds to the background and asks the assistant to speak, so a default wait ends first.
+# A question asked without a length of wait: Claude's voice mode moves a call still running after
+# about 10 seconds to the background and asks the assistant to speak, so a default one ends first.
 # With the server proxy's overhead an 8 s wait crossed it once (2026-11-06), so 5 s.
+# wait_for_session is the exception: its wait runs to the caller's limit, going to the background
+# on purpose, since its result wakes the relay (owner, 2026-11-11; ledger Q14, F58).
 WAIT_SECONDS = 5.0
+MAX_WAIT_SECONDS = 300.0  # no wait runs longer, whatever the caller's limit
 # The model a session starts on when none is asked for. Claude Code's own default follows the
 # account, which can be a model the owner doesn't want for everyday work.
 DEFAULT_MODEL = "opus"
@@ -179,7 +182,7 @@ OLD_MARKS_SETTING = "watched_sessions"
 # names the situation, so the line varies with it rather than repeating one order.
 NEXT_WAITING = (
     "{name} is paused on a permission prompt only the owner can answer{prompt}. Tell the owner once "
-    "what it asks; don't wait on it until they have answered."
+    "what it asks; don't wait on it until they have answered: once it works again, a result says so."
 )
 NEXT_UNREAD = (
     "{name} has finished its turn: read it, with the after= the news gives, before you tell the owner what it said."
@@ -834,7 +837,7 @@ def build_server(
         budget of the client calling (the Claude app drops a call after about 30 seconds)."""
         budget = repos.budgets.seconds(transcripts.current_client.get())
         # RULE: a wait never runs past the callers time budget
-        return max(min(seconds, 300, budget), 0)
+        return max(min(seconds, MAX_WAIT_SECONDS, budget), 0)
 
     start_settings = launch.Settings(manager.store, repos.sessions)
     desktop = os.environ if desktop_env is None else desktop_env
@@ -1743,10 +1746,11 @@ def build_server(
             bool, Field(description="False stops following it; a message or a question to it follows it again.")
         ] = True,
     ) -> dict[str, Any]:
-        """Follow a session until its current turn ends, as if you had messaged it.
-        For a session the owner hands you ("tell me when it's done"): the news line names it, and
-        any turn it finishes counts, even one answering the owner's own typing. A session at rest
-        has nothing to finish: status "already_done", and nothing is followed."""
+        """Follow a session the owner hands you, until you read the turn it finishes.
+        For "tell me when it's done": a message or a question already follows a session by itself;
+        this follows one you haven't written to. The news line names it, and any turn it finishes
+        counts, even one answering the owner's own typing. A session at rest has nothing to
+        finish: status "already_done", and nothing is followed."""
         if not follow:
             sid = followed(session)
             if sid is None:
@@ -2462,7 +2466,7 @@ def build_server(
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
         session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
-        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        wait_seconds: Annotated[float | None, Field(description=WAIT_PARAM)] = None,
         after: Annotated[
             int | None,
             Field(description=WAIT_AFTER_PARAM),
@@ -2470,18 +2474,21 @@ def build_server(
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
         """Wait for a session's turn to end or need input; then its reply.
-        With no session named, it waits on every session you follow and returns the first with
-        news. Sends nothing; reply is the newest message among those returned, empty when the session
-        wrote nothing new; at most 30 turns come back, and read_session_output(after=next_after)
-        reads the rest while turns_left is above 0. status: "idle" (its turn
-        has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question says
-        what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
-        conversation now lives in moved_to), or, with no session named, "nothing_to_wait_for" (at
-        once: none you follow is working); reply_final: its turn ended with something new, and reply is
-        whole up to 12,000 characters (reply_cut past that)."""
+        With no session named, it waits on every session you follow and returns the first with news (`after`
+        then plays no part); left out, wait_seconds is the caller's limit: keep it so, since in the Claude app
+        the wait goes to the background and its result wakes you. Sends nothing; reply is the newest message
+        among those returned, empty when the session wrote nothing new; at most 30 turns come back, and
+        read_session_output(after=next_after) reads the rest while turns_left is above 0; status: "idle" (its
+        turn has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question says what
+        for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the conversation now
+        lives in moved_to), or, with no session named, "nothing_to_wait_for" (at once: no session you follow
+        is working or has a turn you haven't read); reply_final: its turn ended with something new, and reply
+        is whole up to 12,000 characters (reply_cut past that)."""
+        # RULE: a wait with no length given runs to the caller's limit
+        seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds
         if session is None:
-            return await wait_on_followed(wait_seconds, max_chars)
-        return await wait_on(session, wait_seconds, after, max_chars)
+            return await wait_on_followed(seconds, max_chars)
+        return await wait_on(session, seconds, after, max_chars)
 
     async def wait_on_followed(wait_seconds: float, max_chars: int) -> dict[str, Any]:
         """Wait on every session the relay follows until one has news: a finished turn it hasn't
