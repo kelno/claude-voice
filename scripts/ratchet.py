@@ -50,7 +50,9 @@ NEW_MODULE_CEILING = 15  # the most tangled function a new module may have
 BLOCK = 6  # lines in a row that count as a copied block
 # Each module's layer: a module may use, when it loads, only modules in the layers below it.
 LAYERS = {
-    **dict.fromkeys(("procs", "config", "store", "metrics", "titles", "access", "tailnet"), 0),  # foundations
+    **dict.fromkeys(
+        ("procs", "config", "store", "metrics", "titles", "access", "tailnet", "channel", "channel_hub"), 0
+    ),  # foundations
     **dict.fromkeys(
         (
             "transcripts",

@@ -1,0 +1,12 @@
+{
+  "name": "relay-channel",
+  "version": "0.1.0",
+  "description": "Carries the claude-voice bridge's messages into the sessions it starts, as a Claude Code channel. Enabled per session by the bridge; keep it disabled otherwise.",
+  "mcpServers": {
+    "claude-voice": {
+      "command": "uv",
+      "args": ["run", "--no-project", "--quiet", "python", "-I", "${CLAUDE_PLUGIN_ROOT}/../../src/claude_voice/channel.py"]
+    }
+  },
+  "channels": [{"server": "claude-voice"}]
+}

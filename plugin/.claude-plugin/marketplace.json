@@ -1,0 +1,11 @@
+{
+  "name": "claude-voice",
+  "owner": {"name": "claude-voice"},
+  "plugins": [
+    {
+      "name": "relay-channel",
+      "source": "./relay-channel",
+      "description": "Carries the claude-voice bridge's messages into the sessions it starts, as a Claude Code channel"
+    }
+  ]
+}

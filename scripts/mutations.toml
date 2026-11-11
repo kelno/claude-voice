@@ -644,3 +644,9 @@ name = "the log says why a plugin could not be listed"
 file = "src/claude_voice/plugins.py"
 find = 'return f"\{said\} \(\{type\(exc\)\.__name__\}\)" if said else type\(exc\)\.__name__'
 replace = 'return str(exc)'
+
+[[rule]]
+name = "a channel connection without the bridge's secret is refused"
+file = "src/claude_voice/channel_hub.py"
+find = 'if not secrets\.compare_digest\(given\.encode\(\), self\._secret\.encode\(\)\):'
+replace = 'if False:'
