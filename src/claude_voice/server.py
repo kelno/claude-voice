@@ -702,7 +702,8 @@ def build_server(
     digest_chars: int = 150_000,
     side_answer: Callable[[str, str, str | None], Awaitable[str]] | None = None,
     side_chars: int = 8_000,
-    poll_seconds: float = 1.0,
+    poll_seconds: float = 0.25,
+    silent_grace: float = 1.0,
     receive_seconds: float = 15.0,
     projects_dir: Path = PROJECTS_DIR,
     public_url: str = "http://localhost",
@@ -2244,6 +2245,7 @@ def build_server(
         pid, seen_busy = target.get("pid"), False
         loop = asyncio.get_running_loop()
         started = loop.time()
+        quiet_since: float | None = None
         deadline = started + within_budget(wait_seconds)
         while True:
             now = live_by_pid(pid)
@@ -2256,6 +2258,12 @@ def build_server(
             new_turns = numbered_turns(now)[before:]
             received_late = loop.time() - started >= receive_seconds
             settled = _settled(now, new_turns, probe, was_busy, seen_busy, received_late)
+            if settled == "answered" and not _reply_turns(new_turns, probe, before, "idle", was_busy)[0]:
+                # Idle with no answer to read yet: its last message may still be on its way.
+                quiet_since = quiet_since if quiet_since is not None else loop.time()
+                settled = settled if loop.time() - quiet_since >= silent_grace else None
+            else:
+                quiet_since = None
             if settled == "waiting":
                 blocked = waiting(now)
                 return target, (blocked["status"] if blocked else "needs_input"), blocked
@@ -2302,13 +2310,20 @@ def build_server(
             return [t for t in numbered_turns(d) if t["role"] == role and t["index"] > start]
 
         pid, blocked, done, taken = target.get("pid"), None, False, False
-        deadline = asyncio.get_running_loop().time() + within_budget(wait_seconds)
+        clock = asyncio.get_running_loop().time
+        deadline = clock() + within_budget(wait_seconds)
+        quiet_since: float | None = None
         while (now := live_by_pid(pid)) is not None:
             target, blocked = now, waiting(now)
             idle = now.get("status") == "idle"
             # A message is in the transcript and the session idle on two looks running, or after
-            # it was seen busy: its turn has ended, even if it wrote nothing.
-            ended_silent = idle and taken and bool(past(now, "user"))
+            # it was seen busy: its turn has ended, even if it wrote nothing. Claude Code may mark
+            # it idle a moment before its last message can be read, so a turn that seems to have
+            # ended with nothing new is believed only once it has looked that way for a while.
+            quiet = idle and taken and bool(past(now, "user"))
+            quiet_since = (quiet_since if quiet_since is not None else clock()) if quiet else None
+            # RULE: a turn that seems to end with nothing new is believed only after a short while
+            ended_silent = quiet_since is not None and clock() - quiet_since >= silent_grace
             taken = not idle or bool(past(now, "user"))
             done = blocked is not None or (idle and (after is None or bool(past(now, "assistant")) or ended_silent))
             if done or asyncio.get_running_loop().time() >= deadline:

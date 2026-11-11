@@ -662,3 +662,9 @@ name = "a channel whose session was started without channels is passed over"
 file = "src/claude_voice/channel_hub.py"
 find = 'return by_pid\[found\] if found is not None and accepts\(found\) else None'
 replace = 'return by_pid[found] if found is not None else None'
+
+[[rule]]
+name = "a turn that seems to end with nothing new is believed only after a short while"
+file = "src/claude_voice/server.py"
+find = 'ended_silent = quiet_since is not None and clock\(\) - quiet_since >= silent_grace'
+replace = 'ended_silent = quiet_since is not None'
