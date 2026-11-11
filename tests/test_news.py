@@ -137,6 +137,21 @@ async def test_a_reply_to_the_relays_message_is_news_until_it_is_read(served):
     assert read["news"] == after["news"] == "billing-ab (idle): nothing new"
 
 
+async def test_a_reply_to_a_session_with_no_turns_yet_is_news_too(served):
+    # Seen live: a relay started a session with no first message, then sent its brief; the
+    # send returned next_after -1, and the reply never showed as news.
+    url, desk = served
+    desk.transcript = []
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "watch_session", session="billing-ab")  # as start_active_session does
+        sent = await call(c, "message_active_session", session="billing-ab", message="Here is your brief.")
+        desk.transcript.append(turn("assistant", "Report: all done."))
+        later = await call(c, "list_folders")
+    assert sent["next_after"] == -1
+    assert later["news"] == "billing-ab (idle): reply to you, read with after=-1"
+
+
 async def test_a_wait_without_after_gives_the_relay_all_it_has_not_read(served):
     # The owner's call: a wait never skips what the relay hasn't seen, so without `after` it
     # starts where the relay last read the session, not where the transcript ends.

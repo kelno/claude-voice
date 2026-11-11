@@ -922,7 +922,7 @@ def build_server(
         mark = watched.setdefault(sid, {"seen": seen, "sent": None, "replied": False})
         mark.update(name=d.get("name") or mark.get("name") or sid, cwd=str(d.get("cwd")))
         mark["seen"] = max(mark["seen"], seen)
-        if sent is not None and sent >= 0:
+        if sent is not None:  # -1 too: a message to a session with no turns yet
             mark.update(sent=sent, replied=False)
 
     def unwatch(session: str) -> str | None:
