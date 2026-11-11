@@ -264,26 +264,14 @@ News
   decision), the rest once they ask or that thing is done.
 
 Sessions
-- New work: start_active_session, or attach_conversation to resume an earlier
-  conversation, then give it its task. A session the bridge started can start
-  one itself with the bridge's tools. A desktop session (one the owner opened
-  in the desktop app) can't: the app refuses a start from a relayed message
-  and puts a card in front of the owner, so never ask one to.
-- Sessions run in folders on the PC (list_folders); the desktop app's Code
-  tab groups them by folder. claude.ai Projects, the named workspaces in the
-  Chat tab and on the phone, are something else: the bridge can't see them or
-  act in them. When the owner asks for work in a "project", look for a folder
-  by that name with list_folders; if none matches, say the bridge works only
-  in folders on the PC, and that the name may be one of their claude.ai
-  Projects.
-- The bridge works only in folders open to it: those under the root (the
-  folder list_folders gives as root, which its names are relative to) and
-  those the owner opened with request_access. "Open" means open to the
-  bridge, not open in an app. A folder or session outside them has access
-  "folder_not_open" (request_access opens it once the owner confirms) or
-  "folder_closed" (it is inside, or contains, a folder the bridge keeps
-  closed for good: secrets under the home folder, the system's own folders;
-  nothing opens it).
+- New work: start_active_session in a folder (list_folders), or
+  attach_conversation to resume an earlier conversation, then give it its
+  task. A "project" the owner names is a folder to the bridge; claude.ai
+  Projects, the chat workspaces, are out of its reach.
+  A session the bridge started can start one itself with the bridge's tools.
+  A desktop session (one the owner opened in the desktop app) can't: the app
+  refuses a start from a relayed message and puts a card in front of the
+  owner, so never ask one to.
 - A session's first task is a self-contained brief: the goal, what is known
   so far (problems found, the owner's words), the notes or files involved, and
   how much care it deserves. Unless the owner said otherwise, ask it to
@@ -1098,9 +1086,9 @@ def build_server(
         """Folders to start a session in: used by Claude Code lately, or found by a word.
         The folders Claude Code was used in during the last 30 days, anywhere on this machine,
         newest first, from its own history; a word (`query`) also finds folders under the root
-        never used. At most 20, with `root`, the root's full path. A folder's name is relative to
-        the root when under it, else its full path; its access is as list_active_sessions says,
-        absent when it is open to the bridge."""
+        never used. At most 20, with `root`, the folder open to the bridge without asking, with
+        everything under it. A folder's name is relative to it when under it, else its full path; its
+        access is as list_active_sessions says."""
         children = [p for p in manager.root.iterdir() if p.is_dir() and not p.name.startswith(".")]
         by_key = {project_key_for_directory(str(p)): p for p in children}
         found: dict[Path, tuple[float, int]] = {p.resolve(): (0.0, 0) for p in children}
@@ -1675,13 +1663,14 @@ def build_server(
         """Every session running now, with status; a waiting one carries its prompt.
         Claude Code sessions on this machine, busy, idle or waiting; kind "interactive" is one
         the user types in, "bg" one with no terminal window (the bridge's own are on Remote
-        Control); side_chat marks a desktop side chat ("btw:
-        ..."), which gets no work unless asked. A session outside the folders open to the bridge has access
-        "folder_not_open" (open it with request_access, which the owner approves in their app) or
-        "folder_closed" (never opened; a refusal names the closed folder), and only its name,
-        folder and status; access is absent when the session is open to the bridge, and a
-        session waiting on a permission prompt carries it as prompt, which the owner
-        answers on the phone or in the desktop app."""
+        Control); side_chat marks a desktop side chat ("btw: ..."), which gets no work unless
+        asked. A session outside the folders open to the bridge (the root and what's under it,
+        and those opened with request_access; open in an app doesn't count) has access
+        "folder_not_open" (request_access opens it once the owner confirms) or "folder_closed"
+        (inside or holding a secret or system folder; never opened), and only its name, folder
+        and status; access is absent when the session is open to the bridge, and a session
+        waiting on a permission prompt carries it as prompt, which the owner answers on the
+        phone or in the desktop app."""
         return {"sessions": running()}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
