@@ -68,11 +68,11 @@ All of upstream's code is in; what is on or off here (owner):
 - Contribute role (`start_role`): on. Its folder, a separate worktree of the fork on upstream's `main` and never the clone the bridge runs from, is set for this PC in `~/.config/claude-voice/config.toml` (`[paths] contribute`). Its first message sends it to "How we check a pull request here", which wins where upstream's brief differs. No rules live in machine-local files (owner).
 - `check_dependencies`: on, as upstream has it.
 - Chosen session (`get_active_session`, `set_active_session`) and `refresh_session_summary`: off (see the table above).
-- Repository permission rules (`claude-voice permissions`): in, never run here. It only acts when typed.
-- The work page (`/api/v1/work`) and bringing a session's terminal to the front: in, as part of the companion API, which nothing here calls; the terminal part works only on a Linux desktop.
+- Repository permission rules (`claude-voice permissions`): in, upstream's table never applied here (owner): its rules cover only the Bash tool and forward-slash paths, and most sessions here open in a folder it doesn't write to. The command may later apply a table of the fork's own.
+- The work page (`/api/v1/work`) and bringing a session's terminal to the front: in, as part of the companion API, unused here (owner): the page lives in the companion app, which isn't installed, and what waits on the owner is kept in the owner's own notes; the terminal part needs a Linux GNOME desktop, and on Windows a desk session can raise a window when asked.
 - Companion app: off. Its API code is in, without its parts for sessions run inside the bridge; its event stream reads the watcher's events through `event_feed()`, a plain function, since `whats_new` is not a tool here.
 - Other machines, "the hub" (`agent.py`, `fleet.py`, `machines.py`, `tailnet.py`, ADR-CV-006 to 008): in, inactive. Nothing is paired on this PC and Tailscale isn't needed: with no machine, the fleet's middleware passes every call through. The agent's own bridge is built without the approval broker the fork retired, and offers only the session tools the fork's bridge has.
-- Plugins: code in, off; no other MCP servers on this PC for now. Their tools (restarting a plugin, developer mode, approving a changed plugin by voice) are switched off (see the table above).
+- Plugins: code in, off; no other MCP servers on this PC for now. Their tools (restarting a plugin, developer mode, approving a changed plugin by voice) are switched off until a plugin runs here (owner; see the table above). The bridge declares MCP's `listChanged` and tells clients when its tool list changes, which upstream does when a plugin is restarted or approved: on (owner).
 - Quality levels: as upstream (ADR-CV-009). Continuous integration keeps main's levels with each run, and the software panel shows them.
 
 ### Same tools, different behaviour
