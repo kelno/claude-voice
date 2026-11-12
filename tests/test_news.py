@@ -880,8 +880,8 @@ async def test_a_handle_not_in_use_counts_as_none(served):
         read = await call(c, "read_session_output", session="billing-ab", handle="Rowen")
         out = await call(c, "list_active_sessions", handle="Rowan")
     step = sent["next_step"]
-    unknown = 'Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing). '
-    assert step.startswith(f'{unknown}Your handle is "{sent["handle"]}"'), step
+    assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing)')
+    assert "your earlier follows are under that one" in step and f'Your handle is "{sent["handle"]}"' in step
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
     assert "Rowen" not in [h["handle"] for h in out["handles"]]

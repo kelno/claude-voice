@@ -231,7 +231,11 @@ NO_HANDLE = (
     "you had one in this conversation, pass it; after a compaction, take yours back (the one following your "
     "sessions){in_use}. Machinery, not your name: don't say it to the owner."
 )
-UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing). '
+UNKNOWN_HANDLE = (
+    'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing): if it was a typo '
+    "for one in use below, your earlier follows are under that one, so pass it from now on and wait on this "
+    "session by name for this reply. "
+)
 # The calling relay, during a call: its handle (given, handed out by this call, or a Claude Code
 # session's own name; None without), whether a handle is wanted (calls news reaches, those with an
 # MCP session), a handle given that isn't in use, and one this call handed out. One dict per call,
@@ -289,7 +293,8 @@ RELAYED_STUB_CHARS = 80
 # Said when a result leaves part of the reply unread: the relay told the owner a reply it had only
 # part of (seen live, 2026-11-12).
 NEXT_PARTIAL = (
-    "You don't have the whole reply yet: read_session_output(after={after}) before telling the owner what it said."
+    "You don't have the whole reply yet: read_session_output(after={after}) before telling the owner what it "
+    "said, and say nothing meanwhile."
 )
 NEXT_PARTIAL_CUT = (
     "You don't have the whole reply yet: it is cut at 12,000 characters; read_session_output(turn={index}) "
@@ -373,7 +378,8 @@ Waiting
 - A session's reply is final only when its turn has ended (reply_final true,
   or status "idle" with turns_left 0). Before that it is its latest message so
   far: don't report it as finished, or as cut off. turns_left above 0 means
-  turns you haven't read yet: read_session_output(after=next_after) reads them.
+  turns you haven't read yet: read_session_output(after=next_after) reads them;
+  with reply_final true, those are earlier lines and the reply is already whole.
 
 News
 - Your handle: several relays use the bridge at once, so the bridge gives
@@ -381,14 +387,16 @@ News
   under it. Your first send, question or follow without one goes ahead and
   gets one (the result's handle and next_step): pass it as handle on every
   call that takes one from then on. Calls made together without one each get
-  one; the first you pass back takes the others over. A handle the bridge doesn't know (a
+  one: pass any one of them next, and the bridge moves the others into it.
+  A handle the bridge doesn't know (a
   typo, or one dropped after a day following nothing) counts as none, with
   the handles in use listed. It is
   machinery between you and the bridge, not your name: never say it to the
   owner (name the sessions instead). Keep yours for the whole conversation.
   Pass an earlier relay's handle only to carry on its work when the owner
-  asks, or to take yours back after a compaction: list_active_sessions lists
-  the handles in use, with the sessions each follows. (Claude Code sessions
+  asks, or to take yours back after a compaction (the one following the
+  sessions you were working with): list_active_sessions lists the handles in
+  use, with the sessions each follows. (Claude Code sessions
   get none: theirs is their own session name.)
 - A result of a call with your handle may start with news, after your handle
   in brackets: an entry for each session you follow, with its state and
@@ -3174,8 +3182,8 @@ def build_server(
         Turns are numbered: pass next_after back as `after` for the next ones, with turns_left
         saying how many more follow (read on until it is 0; when far behind, `latest` holds its
         newest reply). The first turn that doesn't fit is still included, cut. A cut turn says so (cut,
-        length); a relayed message shows as one line, and reply is the newest message, whole up to 12,000
-        characters once its turn has ended (reply_final), past the page too."""
+        length); a relayed message shows as one line, and reply is the newest message: once its turn has ended
+        (reply_final true), whole up to 12,000 characters, even past the page."""
         target = find_live(session)
         turns = every = numbered_turns(target)
         size = max(max_chars, 20)
