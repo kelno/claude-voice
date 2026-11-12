@@ -81,8 +81,9 @@ async def test_read_returns_the_last_message_of_a_finished_turn_whole(tmp_path, 
     target.says(REPORT)
     async with Client(bridge(tmp_path, root, live, target, nothing)) as c:
         out = await call(c, "read_session_output", session="billing-ab", after=1)
+    assert out["reply"] == REPORT and out["reply_final"] is True  # whole once, in reply
     last = out["turns"][-1]
-    assert last["text"] == REPORT and last["cut"] is False
+    assert last["cut"] is False or last["whole_in"] == "reply"
 
 
 async def test_a_final_reply_past_the_high_cap_is_cut_there_and_says_so(tmp_path, root, live):

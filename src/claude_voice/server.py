@@ -279,8 +279,22 @@ READ_BUDGET = 3_000
 # Reading forward, a turn that doesn't fit the budget still shows at least this much of its
 # start, so an unread reply can't be mistaken for no reply.
 READ_START = 300
-# A finished turn's last message, a report most often, comes back whole up to this length.
+# A finished turn's last message, a report most often, comes back whole up to this length, from a
+# read as from a wait, even past the read's page (owner, 2026-11-12).
 FINAL_CHARS = 12_000
+# A relayed message in a read: the relay knows what it sent, and a long one took the page from the
+# reply (seen live, 2026-11-12).
+RELAYED_STUB = "[relayed message] "
+RELAYED_STUB_CHARS = 80
+# Said when a result leaves part of the reply unread: the relay told the owner a reply it had only
+# part of (seen live, 2026-11-12).
+NEXT_PARTIAL = (
+    "You don't have the whole reply yet: read_session_output(after={after}) before telling the owner what it said."
+)
+NEXT_PARTIAL_CUT = (
+    "You don't have the whole reply yet: it is cut at 12,000 characters; read_session_output(turn={index}) "
+    "pages through it before you tell the owner what it said."
+)
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
@@ -1325,6 +1339,8 @@ def build_server(
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
         step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
+        if tool in ("read_session_output", "wait_for_session", "ask_active_session"):
+            step = " ".join(filter(None, [partial_reply(structured), step])) or None
         if state.get("merged"):
             step = " ".join(filter(None, [MERGED.format(sessions=", ".join(state["merged"])), step]))
         if state.get("minted"):
@@ -1339,6 +1355,15 @@ def build_server(
         news = (f"[{handle}] " if handle else "") + " | ".join(items)
         minted = {"handle": state["minted"]} if state.get("minted") else {}
         return {**({"news": news} if items else {}), **minted, **({"next_step": step} if step else {})}
+
+    def partial_reply(structured: dict[str, Any]) -> str | None:
+        """The next step when a result leaves part of the reply unread, else None."""
+        # RULE: a reply not yet whole says to read the rest
+        if structured.get("reply_cut") and isinstance(structured.get("reply_index"), int):
+            return NEXT_PARTIAL_CUT.format(index=structured["reply_index"])
+        if structured.get("turns_left") and not structured.get("reply_final"):
+            return NEXT_PARTIAL.format(after=structured.get("next_after"))
+        return None
 
     def lasted(since: float | None) -> str:
         """How long a session has been on the relay's message, as said in a sentence."""
@@ -1390,6 +1415,9 @@ def build_server(
         elif tool in STARTING_TOOLS and structured.get("claude_session_id"):
             target = live.get(str(structured["claude_session_id"]))
         reached = structured.get("next_after")
+        whole = isinstance(structured.get("reply_index"), int) and structured.get("reply_final")
+        if isinstance(reached, int) and whole and not structured.get("reply_cut"):
+            reached = max(reached, structured["reply_index"])  # the reply came whole: it is read
         if target is not None and tool in STARTING_TOOLS:
             mark_read(target)  # a session started or resumed: its history so far isn't news
         elif target is not None and isinstance(reached, int):
@@ -2891,6 +2919,24 @@ def build_server(
             turn["text"] = transcripts.clip(turn["text"], max(max_chars, 20))
         return out
 
+    def final_reply(written: list[dict[str, Any]], status: str, max_chars: int) -> dict[str, Any]:
+        """The reply among a session's messages `written` since a point, for a read and a wait alike:
+        the newest, whole once its turn has ended (reply_final), whatever else the result holds."""
+        # RULE: a finished turn's reply comes back whole in a read past the page
+        final = reply_is_final(status, written)
+        reply = reply_of([dict(t) for t in written[-1:]], max_chars, final)
+        return {**reply, "reply_final": final, **({"reply_index": written[-1]["index"]} if written else {})}
+
+    def stubbed(t: dict[str, Any]) -> dict[str, Any]:
+        """A turn as a read shows it: a relayed message as one line, the relay's own words begun."""
+        text = str(t.get("text") or "")
+        cut = text.find(RELAYED_MESSAGE_NOTE[:30])
+        # RULE: a relayed message shows in a read as one line
+        if t.get("role") != "user" or cut < 0:
+            return t
+        words = text[:cut].strip()
+        return {**t, "text": RELAYED_STUB + transcripts.clip(words, RELAYED_STUB_CHARS), "relayed": True}
+
     async def await_reply(
         target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float
     ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
@@ -3032,8 +3078,8 @@ def build_server(
             status = blocked["status"] if blocked else ("idle" if done else "still_working")
         # A session that ended keeps its transcript, so what it wrote before it went is still read.
         written = past(target, "assistant")
-        final = reply_is_final(status, written)
-        reply = reply_of([dict(t) for t in written[-1:]], max_chars, final)
+        reply = final_reply(written, status, max_chars)
+        final = reply["reply_final"]
         new = [dict(t) for t in written[:30]]
         reply_of(new, max_chars, False)  # cuts each message in turns to max_chars
         left = len(written) - len(new)
@@ -3128,7 +3174,8 @@ def build_server(
         Turns are numbered: pass next_after back as `after` for the next ones, with turns_left
         saying how many more follow (read on until it is 0; when far behind, `latest` holds its
         newest reply). The first turn that doesn't fit is still included, cut. A cut turn says so (cut,
-        length); a finished turn's last message is cut only past 12,000 characters."""
+        length); a relayed message shows as one line, and reply is the newest message, whole up to 12,000
+        characters once its turn has ended (reply_final), past the page too."""
         target = find_live(session)
         turns = every = numbered_turns(target)
         size = max(max_chars, 20)
@@ -3151,6 +3198,8 @@ def build_server(
                 "length": len(whole["text"]),
             }
 
+        turns = [stubbed(t) for t in turns]  # a turn read by its index above stays whole
+
         def taken(candidates: list[dict[str, Any]], forward: bool) -> list[tuple[dict[str, Any], int]]:
             """The turns a read takes from `candidates`, in order, each with the size it is cut to:
             `limit` of them, or what fits the budget. Reading forward, the first turn that doesn't
@@ -3169,31 +3218,30 @@ def build_server(
                 used += need
             return picked
 
-        # The last message of a finished turn comes back whole, up to FINAL_CHARS.
-        final_index = (
-            turns[-1]["index"]
-            if turns and turns[-1]["role"] == "assistant" and target.get("status") == "idle"
-            else None
-        )
         left = 0
         if after is None:
             picked = taken(turns[::-1], forward=False)[::-1]
+            written = [t for t, _ in picked if t["role"] == "assistant"]
         else:
             later = [t for t in turns if t["index"] > after]
             picked = taken(later, forward=True)
             left = len(later) - len(picked)  # read on with next_after until this is 0
+            written = [t for t in later if t["role"] == "assistant"]
+        # The newest message, whole once its turn has ended, even past the page: given once, in reply.
+        reply = final_reply(written, "idle" if target.get("status") == "idle" else "still_working", size)
         turns = []
         for t, room in picked:
-            if t["index"] == final_index:
-                room = FINAL_CHARS
             t["length"] = len(t["text"])
             t["cut"] = t["length"] > room
+            if t["cut"] and reply["reply_final"] and t["index"] == reply.get("reply_index"):
+                t["whole_in"] = "reply"
             t["text"] = transcripts.clip(t["text"], room)
             turns.append(t)
         next_after = turns[-1]["index"] if turns else (after if after is not None else -1)
         out = {
             "session": target["name"],
             "status": target.get("status"),
+            **reply,
             "turns": turns,
             "next_after": next_after,
             "turns_left": left,

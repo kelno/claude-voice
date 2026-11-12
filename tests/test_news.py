@@ -909,3 +909,70 @@ async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path
     )
     assert out["next_step"].startswith("Also following ledger, from calls you made at the same moment")
     assert second["handle"] not in [h["handle"] for h in out["handles"]]
+
+
+# A read came back cut: the relay's own long message took most of the page, and the reply was left
+# for another read, which the relay skipped before telling the owner (seen live, 2026-11-12). So a
+# relayed message shows as one line, a finished turn's reply comes back whole whatever the page,
+# the same way from a read as from a wait, and a reply not yet whole says to read the rest (owner).
+
+
+async def test_a_relayed_message_shows_in_a_read_as_one_line(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export. " + "x" * 2900)
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+    mine = out["turns"][0]
+    assert mine["role"] == "user" and mine["text"].startswith("[relayed message] Run the export. xxx")
+    assert len(mine["text"]) < 120
+    assert out["turns"][1]["text"] == "Export done." and out["turns_left"] == 0
+
+
+def long_turn(desk, progress=12):
+    """A turn of many progress lines, more than a page holds, ending in a long report."""
+    desk.transcript += [turn("assistant", f"Step {i}: " + "p" * 300) for i in range(progress)]
+    report = "Report: " + "r" * 5000
+    desk.transcript.append(turn("assistant", report))
+    return report
+
+
+async def test_a_finished_turn_s_reply_comes_back_whole_in_a_read_past_the_page(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        report = long_turn(desk)
+        out = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        later = await call(c, "list_active_sessions")
+    assert out["reply"] == report and out["reply_final"] is True
+    assert out["turns_left"] > 0  # the progress lines still page as before
+    assert all(t["text"].startswith("Step") for t in out["turns"][1:])
+    assert "next_step" not in later and "news" not in later  # the reply is read: following it is over
+
+
+async def test_a_read_and_a_wait_give_a_finished_turn_s_reply_the_same_way(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        long_turn(desk)
+        read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        waited = await call(c, "wait_for_session", session="billing-ab", after=sent["next_after"])
+    for key in ("reply", "reply_final", "reply_index"):
+        assert read[key] == waited[key], key
+
+
+async def test_a_reply_not_yet_whole_says_to_read_the_rest(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.set("busy")
+        desk.transcript += [turn("assistant", f"Step {i}: " + "p" * 300) for i in range(12)]
+        out = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+    assert out["turns_left"] > 0 and out["reply_final"] is False
+    assert out["next_step"].startswith(
+        f"You don't have the whole reply yet: read_session_output(after={out['next_after']}) before telling the owner"
+    ), out["next_step"]
