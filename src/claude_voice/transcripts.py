@@ -510,12 +510,14 @@ def _completion_note(entry: dict[str, Any]) -> list[str]:
 
 
 def _started_in_background(entry: dict[str, Any]) -> str | None:
-    """The id of the task a tool result started in the background, a shell command or a helper
-    agent, if it did."""
+    """The id of the task a tool result started in the background, if it did: a shell command, a
+    helper agent, or a finished helper agent resumed (SendMessage), which runs on in the background."""
     result = entry.get("toolUseResult")
     if not isinstance(result, dict):
         return None
     task = result.get("backgroundTaskId") or (result.get("agentId") if result.get("isAsync") else None)
+    # RULE: a helper agent resumed runs again until its next note
+    task = task or result.get("resumedAgentId")
     return str(task) if task else None
 
 
@@ -523,16 +525,16 @@ def background_tasks(messages: Iterable[Any], since_ms: float | None = None) -> 
     """The tasks a session started in the background that are still running: Claude Code notes
     each one's end in the conversation, and that note starts a turn of its own. A task started
     before `since_ms` (the session's process start, in milliseconds) ended with the old process."""
-    started: list[str] = []
-    ended: set[str] = set()
+    running: dict[str, None] = {}  # in the order they started; a task started again counts anew
     for m in messages:
         task, at = getattr(m, "task", None), getattr(m, "at", None)
         # RULE: a task started before the session's restart is not running
         if task and not (since_ms and at and datetime.fromisoformat(at).timestamp() * 1000 < since_ms):
-            started.append(task)
-        ended.update(getattr(m, "ended", None) or ())
-    # RULE: a background task runs until its completion note
-    return [t for t in started if t not in ended]
+            running[task] = None
+        for ended in getattr(m, "ended", None) or ():
+            # RULE: a background task runs until its completion note
+            running.pop(ended, None)
+    return list(running)
 
 
 def read_transcript(session_id: str, directory: str | None) -> list[Any]:

@@ -236,3 +236,17 @@ def test_a_completion_note_counts_in_every_form_claude_code_records_it(tmp_path)
     msgs = _read(tmp_path, lines)
     assert transcripts.background_tasks(msgs) == []
     assert [t["text"] for t in recent_turns(msgs, None)][0] == "sleep 90s, then say done"  # the notes are no turns
+
+
+def test_a_helper_agent_resumed_runs_again_until_its_next_note(tmp_path):
+    # SendMessage to a finished helper agent resumes it in the background; its earlier note
+    # doesn't cover the new run.
+    resumed = {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t4", "content": "r"}]},
+        "toolUseResult": {"success": True, "resumedAgentId": "a694b47"},
+    }
+    done = {"type": "queue-operation", "operation": "enqueue", "content": NOTE.format("a694b47")}
+    lines = _task_lines()[:3] + [done, resumed]
+    assert transcripts.background_tasks(_read(tmp_path, lines)) == ["bcwyg4e4s", "a694b47"]
+    assert transcripts.background_tasks(_read(tmp_path / "again", [*lines, done])) == ["bcwyg4e4s"]

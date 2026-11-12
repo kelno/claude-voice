@@ -739,8 +739,8 @@ replace = 'seconds = WAIT_SECONDS if wait_seconds is None else wait_seconds'
 [[rule]]
 name = "a background task runs until its completion note"
 file = "src/claude_voice/transcripts.py"
-find = 'return \[t for t in started if t not in ended\]'
-replace = 'return []'
+find = 'running.pop\(ended, None\)'
+replace = 'pass'
 
 [[rule]]
 name = "a task started before the session's restart is not running"
@@ -983,3 +983,9 @@ name = "a send after every reply is read waits for its own reply"
 file = "src/claude_voice/server.py"
 find = 'elif mark.get\("sent"\) is None or not unread_reply\(target, mark\):'
 replace = 'elif mark.get("sent") is None:'
+
+[[rule]]
+name = "a helper agent resumed runs again until its next note"
+file = "src/claude_voice/transcripts.py"
+find = 'task = task or result.get\("resumedAgentId"\)'
+replace = 'pass'
