@@ -3,25 +3,20 @@
 How this fork, [kelno/claude-voice](https://github.com/kelno/claude-voice), differs from [claude-voice](https://github.com/roykollensvendsen/claude-voice) by Roy Kollen Svendsen and why, upstream's rules for a pull request, and how one is checked here. What could go back upstream is in `UPSTREAM-CANDIDATES.md`. Written to be picked up cold, by people and agents.
 
 - "The owner" is kelno, who maintains this fork; "the relay" is the voice assistant in the Claude app that talks to the bridge for them; "agents" are the Claude sessions that do the work.
-- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (the fork's `CLAUDE.md` says how), so fork commits keep their hashes; the last merge took upstream's `39b4f4a`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
+- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (kelno's rules for forks say how), so fork commits keep their hashes; the last merge took upstream's `39b4f4a`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
 
 ## Upstream's rules
 
-A pull request follows upstream's own rules, read from upstream's `main` each time, since they change often: [`CONTRIBUTING.md`](https://github.com/roykollensvendsen/claude-voice/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](https://github.com/roykollensvendsen/claude-voice/blob/main/AGENTS.md) (in the contribute worktree: `git show upstream/main:CONTRIBUTING.md`). The procedure below adds only what applies to the owner's PC and to what upstream's author has asked of our pull requests.
+Upstream's own rules for a pull request: [`CONTRIBUTING.md`](https://github.com/roykollensvendsen/claude-voice/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](https://github.com/roykollensvendsen/claude-voice/blob/main/AGENTS.md) (in the contribute worktree: `git show upstream/main:CONTRIBUTING.md`). The procedure below adds only what applies to the owner's PC and to what upstream's author has asked of our pull requests.
 
 ## How we check a pull request here
 
-The full ratchet switches every rule off in turn, one test run per rule in `scripts/mutations.toml`, and gets stopped for low memory on this PC, so the mutation sweep is left to upstream's CI, which runs the full ratchet on every pull request. Work in a separate worktree of the fork on upstream's `main`, never in the checkout the bridge runs from. When upstream asks for something on one of our pull requests that would apply to the next one too, add it to this procedure in the same change as the fix (owner, 2026-11-10). Locally, for each pull request:
+The full ratchet switches every rule off in turn, one test run per rule in `scripts/mutations.toml`, and gets stopped for low memory on this PC, so the mutation sweep is left to upstream's CI, which runs the full ratchet on every pull request. The general procedure for a pull request to upstream (its own branch and worktree from upstream's `main`, a draft opened from the fork, replies to reviews posted by the owner) is in kelno's rules for forks; what is specific here, for each pull request:
 
 1. The tests the change touches, `ruff check`, `ruff format --check` and `mypy src`; each new test seen failing at the `test:` commit. A row added or changed in `scripts/mutations.toml` is checked by `tests/test_rules_have_evidence.py`, which applies every row and checks the file still compiles (the runner replaces the whole matched line, so a replacement written as part of a line breaks the import). Whether the rule's own test goes red is only seen in a mutation run, so for a new row, apply it by hand and run that one test. On #109 (2026-11-10), a row cut off mid-expression went unnoticed until upstream's CI. A change that adds a copy of a line a row looks for can also make that rule's mutation miss (seen on `wait_for_session`).
 2. Commit bodies wrapped at 72 characters: the author asked for it on #129 (2026-11-10), though their commit lint allows 100.
-3. Push the branch to the fork (`origin`, push URL `github-agents:`), never to `upstream`. The session opens the pull request itself, as a draft (`gh pr create --draft --repo roykollensvendsen/claude-voice`), and the owner reviews it, edits it and marks it ready. Its text opens with a disclaimer saying an AI wrote it on kelno's behalf, and doesn't speak as the owner. If CI then reports a mutation that survived, fix it and push again.
-4. Replies to the author's reviews are drafted in the owner's private notes and posted by the owner, from their own account, after editing them (owner, 2026-11-08); the agents' account doesn't post them.
-5. This is done in the contribute session (`start_role`; see "Upstream features, and how they're set here") (owner). Opening the draft uses the GitHub command-line tool (`gh`), signed in with the agents' GitHub account.
-
-## How the fork follows upstream
-
-The owner's rule: align with upstream, reworking the fork to match it, as long as every fork feature is kept. Where the two still differ, it is listed below with the reason.
+3. The session opens the draft itself, with `gh pr create --draft --repo roykollensvendsen/claude-voice`, signed in with the agents' GitHub account. If CI then reports a mutation that survived, fix it and push again.
+4. This is done in the contribute session (`start_role`; see "Upstream features, and how they're set here") (owner).
 
 ## Differences from upstream
 
