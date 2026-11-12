@@ -1001,3 +1001,9 @@ name = "a wait on every followed session from a Claude Code session is refused"
 file = "src/claude_voice/server.py"
 find = 'raise ToolError\(WAIT_ALL_FROM_CLAUDE_CODE\)'
 replace = 'pass'
+
+[[rule]]
+name = "a send while a reply is unread is followed once that reply is read"
+file = "src/claude_voice/server.py"
+find = 'elif where == "read" and mark.get\("then"\) is not None:'
+replace = 'elif False:'

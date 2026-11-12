@@ -681,3 +681,27 @@ async def test_a_wait_on_every_followed_session_from_a_claude_code_session_is_re
         out = await call(c, "list_folders")
     assert refused.is_error and "name the session" in refused.content[0].text
     assert out["news"] == "billing-ab (idle): reply to you, read with after=1"  # still the voice relay's
+
+
+async def test_a_send_while_a_reply_is_unread_is_followed_once_that_reply_is_read(served):
+    # The relay sends again before reading the reply to its earlier message, while the session
+    # answers another session: reading up to that answer reads the earlier reply, and the follow
+    # moves on to the later send instead of ending.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        desk.transcript.append(turn("user", "Another session: which folder?", "peer"))
+        desk.set("busy")
+        desk.transcript.append(turn("assistant", "In billing."))
+        sent = await call(c, "message_active_session", session="billing-ab", message="Now the archive.")
+        read = await call(c, "read_session_output", session="billing-ab", after=1)
+        desk.transcript.append(turn("assistant", "Archive done."))
+        desk.set("idle")
+        out = await call(c, "list_folders")
+    assert "In billing." in [t["text"] for t in read["turns"]]
+    assert read["news"] == "billing-ab (busy): nothing new"
+    assert "Nothing left to follow" not in read.get("next_step", "")
+    assert out["news"].startswith("billing-ab (idle): reply to you")
+    assert sent["status"] == "delivered"

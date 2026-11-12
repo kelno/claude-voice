@@ -1075,6 +1075,7 @@ def build_server(
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
             mark.update(sent=sent, replied=False, since=manager.clock(), told=False)
+            mark.pop("then", None)
 
     def followed(session: str) -> str | None:
         """The id of a session the relay follows, by name or id, or None."""
@@ -1188,6 +1189,8 @@ def build_server(
                 elif mark.get("sent") is None or not unread_reply(target, mark):
                     # RULE: a send after every reply is read waits for its own reply
                     mark_read(target, seen=mark["seen"], sent=reached)
+                else:
+                    mark["then"] = reached  # followed once the earlier reply is read
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
                 mark_read(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
@@ -1217,6 +1220,10 @@ def build_server(
         if where == "unread":
             news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
             mark["state"] = "unread"
+        elif where == "read" and mark.get("then") is not None:
+            # RULE: a send while a reply is unread is followed once that reply is read
+            mark.update(sent=mark.pop("then"), replied=False, since=manager.clock(), told=False)
+            return followed_entry(sid, mark, d)
         elif where == "read":
             # RULE: following a session ends once its finished turn is read
             mark.update(sent=None, replied=False, state=None)
@@ -1968,6 +1975,7 @@ def build_server(
             if sid is None:
                 raise ToolError(f"{session!r} isn't followed; the news line names the sessions you follow")
             marks[sid].update(sent=None, replied=False)
+            marks[sid].pop("then", None)
             store.set_setting(MARKS_SETTING, marks)
             return {"session": marks[sid].get("name") or sid, "status": "not_followed"}
         d = find_live(session)
