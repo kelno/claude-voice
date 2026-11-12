@@ -650,3 +650,34 @@ async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
     assert read["turns"][-1]["text"] == "Exporting the archive."
     assert mid["news"] == "billing-ab (busy): nothing new"
     assert out["news"].startswith("billing-ab (idle): reply to you")
+
+
+# What the relay follows is one list, the Claude app's: a Claude Code session using the bridge to
+# brief other sessions would otherwise follow sessions in it, and the voice relay would hear of
+# replies that were never its own. A call from Claude Code carries its tool-call id.
+FROM_CLAUDE_CODE = {"claudecode/toolUseId": "toolu_desk_relay"}
+
+
+async def test_follow_session_from_a_claude_code_session_is_refused(served):
+    url, desk = served
+    desk.set("busy")
+    http, client = conversation(url)
+    async with http, client as c:
+        refused = await c.call_tool("follow_session", {"session": "billing-ab"}, meta=FROM_CLAUDE_CODE)
+        stop = await c.call_tool("follow_session", {"session": "billing-ab", "follow": False}, meta=FROM_CLAUDE_CODE)
+        out = await call(c, "list_folders")
+    assert refused.is_error and "wait_for_session" in refused.content[0].text
+    assert stop.is_error
+    assert "news" not in out  # the voice relay's list is untouched
+
+
+async def test_a_wait_on_every_followed_session_from_a_claude_code_session_is_refused(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        refused = await c.call_tool("wait_for_session", {}, meta=FROM_CLAUDE_CODE)
+        out = await call(c, "list_folders")
+    assert refused.is_error and "name the session" in refused.content[0].text
+    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"  # still the voice relay's

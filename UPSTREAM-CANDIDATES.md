@@ -159,6 +159,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why: a polling tool nobody called; the relay kept missing replies, most of all when the owner wrote to a session directly.
 - Later fix ("Keep a reply as news until the relay reads it, even after another send"): only a read marks a reply read, not a send, and a reply followed by a later message counts as ended even while the session works again. Seen live: the relay sent several messages without reading in between, a report ended between two of them, and every send said "nothing new".
 - Later rework ("Follow a session from a message until its answer is read"): the line names only the sessions the relay follows, from its message or question (or `follow_session`, for one the owner hands over) until it has read the answer; reading a session no longer adds it, and what the owner typed in a session moved into the result of the next send to it. A set of every session touched went stale.
+- Later fix ("Refuse following from a Claude Code session"): `follow_session`, and `wait_for_session` with no session named, are refused for a call carrying Claude Code's tool-call id, since the list they use is the voice relay's and a session briefing others would fill it.
 - Expect pushback: an extra field on every result, and a removed tool; depends on 6n's per-conversation identity and on transcript `origin` entries. Test first: `tests/test_news.py`, over HTTP.
 
 ### 6v. A finished turn's last message whole — fork "Return a finished turn's last message whole"

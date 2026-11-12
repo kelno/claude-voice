@@ -989,3 +989,15 @@ name = "a helper agent resumed runs again until its next note"
 file = "src/claude_voice/transcripts.py"
 find = 'task = task or result.get\("resumedAgentId"\)'
 replace = 'pass'
+
+[[rule]]
+name = "follow_session from a Claude Code session is refused"
+file = "src/claude_voice/server.py"
+find = 'raise ToolError\(FOLLOW_FROM_CLAUDE_CODE\)'
+replace = 'pass'
+
+[[rule]]
+name = "a wait on every followed session from a Claude Code session is refused"
+file = "src/claude_voice/server.py"
+find = 'raise ToolError\(WAIT_ALL_FROM_CLAUDE_CODE\)'
+replace = 'pass'

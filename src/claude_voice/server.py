@@ -181,6 +181,18 @@ STARTING_TOOLS = ("start_active_session", "attach_conversation")
 # Where the relay's read marks and the sessions it follows are kept, so a bridge restart doesn't
 # drop them; the older name is read once, from before following replaced watching.
 MARKS_SETTING = "read_marks"
+# What a Claude Code session is told when it reaches for the voice relay's follow list: a session
+# briefing other sessions through the bridge would otherwise follow them in it, and the voice relay
+# would hear of replies that were never its own.
+FOLLOW_FROM_CLAUDE_CODE = (
+    "follow_session is for the voice relay: what it follows is one list, the Claude app's, which a Claude"
+    " Code session would change. To wait for a session's turn to end, call wait_for_session with that"
+    " session named."
+)
+WAIT_ALL_FROM_CLAUDE_CODE = (
+    "With no session named, wait_for_session waits on the voice relay's follow list, which a Claude Code"
+    " session doesn't use: name the session to wait on."
+)
 OLD_MARKS_SETTING = "watched_sessions"
 # The next step for the relay, at the end of a result, in the states where one applies: it slipped
 # despite the guide's Waiting section (offering to check, stopping the wait early: ledger F58),
@@ -1945,7 +1957,12 @@ def build_server(
         this follows one you haven't written to. The news line names it, and any turn it finishes
         counts, even one answering the owner's own typing. A session at rest (not one whose turn ended
         with a background task still running) has nothing to finish: status "already_done", and
-        nothing is followed: tell the owner it is done (read_session_output shows what it last said)."""
+        nothing is followed: tell the owner it is done (read_session_output shows what it last said).
+        Not from a Claude Code session: what is followed is the voice relay's list; name the session
+        in wait_for_session instead."""
+        # RULE: follow_session from a Claude Code session is refused
+        if from_claude_code():
+            raise ToolError(FOLLOW_FROM_CLAUDE_CODE)
         if not follow:
             sid = followed(session)
             if sid is None:
@@ -2252,6 +2269,10 @@ def build_server(
             "uncommitted_changes": running_uncommitted,
             "design": confirm.DESIGN.format(commit=running_version),
         }
+
+    def from_claude_code() -> bool:
+        """Whether a Claude Code session made this call: its calls carry their tool-call id."""
+        return bool(confirm.current_caller.get().tool_use_id)
 
     def calling_transcript() -> Path | None:
         """The transcript of the Claude Code session on this PC that made this call, if one did."""
@@ -2690,19 +2711,22 @@ def build_server(
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
     ) -> dict[str, Any]:
         """Wait for a session's turn to end or need input; then its reply.
-        With no session named, it waits on every session you follow and returns the first with news (`after`
-        then plays no part); left out, wait_seconds is the caller's limit: keep it so, since in the Claude app
-        the wait goes to the background and its result wakes you. Sends nothing; reply is the newest message
-        among those returned, empty when the session wrote nothing new; at most 30 turns come back, and
-        read_session_output(after=next_after) reads the rest while turns_left is above 0; status: "idle" (its
-        turn has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question says what
-        for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the conversation now
-        lives in moved_to), or, with no session named, "nothing_to_wait_for" (at once: no session you follow
-        is working or has a turn you haven't read); reply_final: its turn ended with something new, and reply
-        is whole up to 12,000 characters (reply_cut past that)."""
+        With no session named, it waits on every session you follow and returns the first with news (`after` then plays
+        no part; refused from a Claude Code session, which names the session to wait on); left out, wait_seconds is the
+        caller's limit: keep it so, since in the Claude app the wait goes to the background and its result wakes you.
+        Sends nothing; reply is the newest message among those returned, empty when the session wrote nothing new; at
+        most 30 turns come back, and read_session_output(after=next_after) reads the rest while turns_left is above 0;
+        status: "idle" (its turn has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question
+        says what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the conversation now
+        lives in moved_to), or, with no session named, "nothing_to_wait_for" (at once: no session you follow is working
+        or has a turn you haven't read); reply_final: its turn ended with something new, and reply is whole up to 12,000
+        characters (reply_cut past that)."""
         # RULE: a wait with no length given runs to the caller's limit
         seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds
         if session is None:
+            # RULE: a wait on every followed session from a Claude Code session is refused
+            if from_claude_code():
+                raise ToolError(WAIT_ALL_FROM_CLAUDE_CODE)
             return await wait_on_followed(seconds, max_chars)
         return await wait_on(session, seconds, after, max_chars)
 
