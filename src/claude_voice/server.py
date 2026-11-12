@@ -207,11 +207,13 @@ NEXT_UNREAD = (
 )
 NEXT_WORKING = (
     "{name} has been on your message{since}{last}: call wait_for_session again now, or once you have "
-    "answered the owner if they just spoke."
+    "answered the owner if they just spoke. When the app then asks you to say it's taking a while, don't: "
+    "the owner knows; stay silent until the reply."
 )
 NEXT_BACKGROUND = (
     "{name} ended its turn with a background task still running{last}, so more is to come when it finishes: "
-    "call wait_for_session again now, or once you have answered the owner if they just spoke."
+    "call wait_for_session again now, or once you have answered the owner if they just spoke. When the app "
+    "then asks you to say it's taking a while, don't: the owner knows; stay silent until the reply."
 )
 NEXT_DONE = "Nothing left to follow: every reply is read{left}. No need to tell the owner."
 # Said in the result of a send or a question to a session the owner typed in since the relay last
