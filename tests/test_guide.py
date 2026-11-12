@@ -39,6 +39,8 @@ def test_the_manual_states_its_central_rules():
         "when the owner speaks during a wait",  # a call they talk over returns by itself
         "news",  # a result's news line: how the followed sessions stand, and prompts waiting
         "follow_session",  # how a session the owner hands over gets into the news line
+        "your handle",  # each relay's follows are kept apart under a handle the bridge gives it
+        "not your name",  # the handle is machinery, never said to the owner nor taken for the agent's name
         "nothing new",  # every followed session has an entry, so nothing new isn't mistaken for unfollowed
         "when a topic with the owner wraps up",  # the relay checks the news then, rather than offering to
         "one thing at a time",  # in voice, news comes what needs the owner first, the rest when asked

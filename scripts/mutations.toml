@@ -991,19 +991,49 @@ find = 'task = task or result.get\("resumedAgentId"\)'
 replace = 'pass'
 
 [[rule]]
-name = "follow_session from a Claude Code session is refused"
-file = "src/claude_voice/server.py"
-find = 'raise ToolError\(FOLLOW_FROM_CLAUDE_CODE\)'
-replace = 'pass'
-
-[[rule]]
-name = "a wait on every followed session from a Claude Code session is refused"
-file = "src/claude_voice/server.py"
-find = 'raise ToolError\(WAIT_ALL_FROM_CLAUDE_CODE\)'
-replace = 'pass'
-
-[[rule]]
 name = "a send while a reply is unread is followed once that reply is read"
 file = "src/claude_voice/server.py"
 find = 'elif where == "read" and mark.get\("then"\) is not None:'
 replace = 'elif False:'
+
+[[rule]]
+name = "the shared list becomes the unclaimed handle voice relay"
+file = "src/claude_voice/server.py"
+find = 'return \{UNCLAIMED_HANDLE: \{"used": now, "sessions": shared\}\} if shared else \{\}'
+replace = 'return {}'
+
+[[rule]]
+name = "each handle follows its own sessions"
+file = "src/claude_voice/server.py"
+find = 'return relays.setdefault\(handle, \{"used": manager.clock\(\), "sessions": \{\}\}\)\["sessions"\]'
+replace = 'return relays.setdefault("shared", {"used": manager.clock(), "sessions": {}})["sessions"]'
+
+[[rule]]
+name = "a handle following nothing unused for a day is dropped"
+file = "src/claude_voice/server.py"
+find = 'del relays\[h\]$'
+replace = 'pass'
+
+[[rule]]
+name = "a call that would follow without a handle is refused"
+file = "src/claude_voice/server.py"
+find = 'raise ToolError\(new_handle\(NEED_HANDLE\)\)'
+replace = 'pass'
+
+[[rule]]
+name = "a claude code session's handle is its own name"
+file = "src/claude_voice/server.py"
+find = 'd = next\(d for d in running_now if str\(d.get\("sessionId"\)\) == sid\)'
+replace = 'd = {}'
+
+[[rule]]
+name = "a handle looks like a code, not a name"
+file = "src/claude_voice/server.py"
+find = 'if mixed and not any'
+replace = 'if not any(h.casefold() == handle.casefold() for h in relays):'
+
+[[rule]]
+name = "the news line starts with the handle"
+file = "src/claude_voice/server.py"
+find = 'news = \(f"\[\{handle\}\] " if handle else ""\) \+ " \| ".join\(items\)'
+replace = 'news = " | ".join(items)'

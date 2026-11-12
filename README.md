@@ -110,7 +110,7 @@ the bridge says which are missing, with the exact fix, through its
 | `ask_active_session` | ask such a session something and wait for its answer, as if talking to it directly |
 | `ask_forked_session`, `message_forked_session`, `read_forked_session` | ask the side session, a read-only fork of a busy session's whole conversation that can read the code: ask and wait (within the caller's time budget), send and return, or read its answer later |
 | `wait_for_session` | wait, sending nothing, until such a session's turn ends or it needs its user, then hear its reply |
-| `follow_session` | follow a session the owner hands over until its current turn ends, in the news line that starts every result, or stop following one; a message or a question follows a session by itself |
+| `follow_session` | follow a session the owner hands over until its current turn ends, in the news line that starts every result, or stop following one; a message or a question follows a session by itself. What is followed is kept per relay handle, a code the bridge hands each relay, passed as `handle` on the tools that follow or read |
 | `peek_session` | a quick look at a busy session: a small model answers from the last few turns it wrote, never sent into it |
 | `digest_session` | a whole conversation summed up, or a question about it answered, in a few sentences; slower than a peek |
 | `read_session_output`, `search_session_history` | read what such a session said lately, or search everything it said |

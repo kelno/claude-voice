@@ -15,6 +15,8 @@ import asyncio
 import contextlib
 import json
 import os
+import re
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +33,7 @@ from claude_voice.oauth import OAuthProvider
 from claude_voice.server import build_app, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
+from claude_voice.transcripts import project_key_for_directory
 
 PID = os.getpid()
 
@@ -119,7 +122,22 @@ def conversation(url):
     return http, Client(streamable_http_client(f"{url}/mcp", http_client=http), mode="legacy")
 
 
+# The tools that take the relay's handle; the helper passes HANDLE to them unless a test says otherwise.
+HANDLED = (
+    "message_active_session",
+    "ask_active_session",
+    "read_session_output",
+    "wait_for_session",
+    "follow_session",
+    "list_active_sessions",
+)
+HANDLE = "Juniper"
+
+
 async def call(client, name, **args):
+    if name in HANDLED and "handle" not in args:
+        args["handle"] = HANDLE
+    args = {k: v for k, v in args.items() if v is not None}
     res = await client.call_tool(name, args)
     assert not res.is_error, res.content
     return res.structured_content
@@ -131,10 +149,10 @@ async def test_following_a_session_ends_once_its_finished_turn_is_read(served):
     async with http, client as c:
         sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         desk.transcript.append(turn("assistant", "Export done."))
-        later = await call(c, "list_folders")
+        later = await call(c, "list_active_sessions")
         read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
-        after = await call(c, "list_folders")
-    assert later["news"] == "billing-ab (idle): reply to you, read with after=1"
+        after = await call(c, "list_active_sessions")
+    assert later["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
     assert list(later)[-1] != "news" and "news" in list(later)[:3]  # given before the result itself
     assert "news" not in read and "news" not in after  # read: following it ends
 
@@ -147,7 +165,7 @@ async def test_reading_a_session_does_not_follow_it(served):
         desk.set("busy")
         desk.transcript.append(turn("assistant", "Working on something else."))
         desk.set("idle")
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert "news" not in out
 
 
@@ -161,9 +179,9 @@ async def test_a_reply_to_a_session_with_no_turns_yet_is_news_too(served):
         await call(c, "read_session_output", session="billing-ab")  # as start_active_session marks it
         sent = await call(c, "message_active_session", session="billing-ab", message="Here is your brief.")
         desk.transcript.append(turn("assistant", "Report: all done."))
-        later = await call(c, "list_folders")
+        later = await call(c, "list_active_sessions")
     assert sent["next_after"] == -1
-    assert later["news"] == "billing-ab (idle): reply to you, read with after=-1"
+    assert later["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=-1"
 
 
 async def test_a_wait_without_after_gives_the_relay_all_it_has_not_read(served):
@@ -199,12 +217,12 @@ async def test_progress_while_the_session_works_is_not_news(served):
         desk.set("busy")
         desk.transcript.append(turn("assistant", "Exporting the first table."))
         desk.transcript.append(turn("assistant", "Exporting the second table."))
-        working = await call(c, "list_folders")
+        working = await call(c, "list_active_sessions")
         desk.transcript.append(turn("assistant", "Export done."))
         desk.set("idle")
-        done = await call(c, "list_folders")
-    assert working["news"] == "billing-ab (busy): nothing new"
-    assert done["news"] == "billing-ab (idle): reply to you, read with after=1"
+        done = await call(c, "list_active_sessions")
+    assert working["news"] == "[Juniper] billing-ab (busy): nothing new"
+    assert done["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(served):
@@ -213,9 +231,9 @@ async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(ser
     async with http, client as c:
         asked = await call(c, "ask_active_session", session="billing-ab", message="Is the export done?")
         desk.transcript.append(turn("assistant", "Yes."))
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert asked["status"] == "still_working"
-    assert out["news"] == f"billing-ab (idle): reply to you, read with after={asked['next_after']}"
+    assert out["news"] == f"[Juniper] billing-ab (idle): reply to you, read with after={asked['next_after']}"
 
 
 async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_so(served):
@@ -228,7 +246,7 @@ async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_s
         await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
         desk.transcript.append(turn("user", "I ran it myself.", "human"))  # on the phone, directly
         desk.transcript.append(turn("assistant", "Then it is done."))
-        quiet = await call(c, "list_folders")
+        quiet = await call(c, "list_active_sessions")
         again = await call(c, "message_active_session", session="billing-ab", message="And the invoices?")
     assert "news" not in quiet
     assert "read_session_output(after=3)" in again["owner_typed"]
@@ -256,8 +274,8 @@ async def test_a_session_waiting_on_a_permission_prompt_is_news_even_unfollowed(
     desk.set("waiting", waiting_for="permission prompt")
     http, client = conversation(url)
     async with http, client as c:
-        out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab: waiting on a permission prompt"
+        out = await call(c, "list_active_sessions")
+    assert out["news"] == "[Juniper] billing-ab: waiting on a permission prompt"
 
 
 async def test_a_followed_session_that_ended_says_so_once_then_leaves_the_line(served):
@@ -266,9 +284,9 @@ async def test_a_followed_session_that_ended_says_so_once_then_leaves_the_line(s
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Wrap up.")
         desk.gone()
-        ended = await call(c, "list_folders")
-        later = await call(c, "list_folders")
-    assert ended["news"] == "billing-ab: ended"  # it can't be read any more
+        ended = await call(c, "list_active_sessions")
+        later = await call(c, "list_active_sessions")
+    assert ended["news"] == "[Juniper] billing-ab: ended"  # it can't be read any more
     assert "news" not in later
 
 
@@ -280,8 +298,8 @@ async def test_a_session_that_ended_before_its_reply_was_read_says_so(served):
         await call(c, "message_active_session", session="billing-ab", message="Wrap up.")
         desk.transcript.append(turn("assistant", "Wrapped up."))
         desk.gone()
-        out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab: ended before you read its reply"
+        out = await call(c, "list_active_sessions")
+    assert out["news"] == "[Juniper] billing-ab: ended before you read its reply"
 
 
 async def test_two_sessions_are_set_apart_in_one_line(served):
@@ -292,11 +310,9 @@ async def test_two_sessions_are_set_apart_in_one_line(served):
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Go.")
         desk.transcript.append(turn("assistant", "Gone."))
-        out = await call(c, "list_folders")
-    assert (
-        out["news"]
-        == "billing-ab (idle): reply to you, read with after=1 | ledger, cut-over: waiting on a permission prompt"
-    )
+        out = await call(c, "list_active_sessions")
+    news = "[Juniper] billing-ab (idle): reply to you, read with after=1"
+    assert out["news"] == f"{news} | ledger, cut-over: waiting on a permission prompt"
 
 
 async def test_a_session_handed_over_is_followed_until_any_turn_it_finishes(served):
@@ -307,14 +323,14 @@ async def test_a_session_handed_over_is_followed_until_any_turn_it_finishes(serv
     http, client = conversation(url)
     async with http, client as c:
         handed = await call(c, "follow_session", session="billing-ab")
-        working = await call(c, "list_folders")
+        working = await call(c, "list_active_sessions")
         desk.transcript.append(turn("user", "Start on the invoices.", "human"))
         desk.transcript.append(turn("assistant", "Invoices done."))
         desk.set("idle")
-        done = await call(c, "list_folders")
+        done = await call(c, "list_active_sessions")
     assert handed["status"] == "following"
-    assert working["news"] == "billing-ab (busy): nothing new"  # what came before isn't news
-    assert done["news"] == "billing-ab (idle): reply to you, read with after=1"
+    assert working["news"] == "[Juniper] billing-ab (busy): nothing new"  # what came before isn't news
+    assert done["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_a_session_handed_over_at_rest_is_already_done_not_followed(served):
@@ -322,7 +338,7 @@ async def test_a_session_handed_over_at_rest_is_already_done_not_followed(served
     http, client = conversation(url)
     async with http, client as c:
         handed = await call(c, "follow_session", session="billing-ab")
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert handed["status"] == "already_done"
     assert "news" not in out
 
@@ -334,7 +350,7 @@ async def test_following_can_be_stopped(served):
         await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         stopped = await call(c, "follow_session", session="billing-ab", follow=False)
         desk.transcript.append(turn("assistant", "Export done."))
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert stopped["status"] == "not_followed"
     assert "news" not in out
 
@@ -352,8 +368,8 @@ async def test_a_new_conversation_and_a_restarted_bridge_follow_the_same_session
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
         http, client = conversation(url)
         async with http, client as c:
-            out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+            out = await call(c, "list_active_sessions")
+    assert out["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_what_the_bridge_kept_under_the_old_name_is_still_followed(tmp_path, world):
@@ -366,15 +382,15 @@ async def test_what_the_bridge_kept_under_the_old_name_is_still_followed(tmp_pat
     async with bridge(tmp_path, desk, store) as url:
         http, client = conversation(url)
         async with http, client as c:
-            out = await call(c, "list_folders")
-    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+            out = await call(c, "list_active_sessions", handle="voice relay")
+    assert out["news"] == "[voice relay] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_nothing_followed_and_no_prompt_means_no_news_field(served):
     url, _ = served
     http, client = conversation(url)
     async with http, client as c:
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert "news" not in out
 
 
@@ -389,9 +405,9 @@ async def test_a_reply_stays_news_when_the_relay_sends_again_before_reading_it(s
         desk.transcript.append(turn("assistant", "Round 5 done; three items wait on the owner."))
         desk.set("busy")
         again = await call(c, "message_active_session", session="billing-ab", message="Move it to Archive.")
-        later = await call(c, "list_folders")
+        later = await call(c, "list_active_sessions")
     assert again["next_after"] == 3  # the report is turn 3, before the new message
-    news = f"billing-ab (busy): reply to you, read with after={first['next_after']}"
+    news = f"[Juniper] billing-ab (busy): reply to you, read with after={first['next_after']}"
     assert again["news"] == later["news"] == news
 
 
@@ -406,9 +422,9 @@ async def test_after_a_read_a_new_send_waits_only_for_its_own_reply(served):
         again = await call(c, "message_active_session", session="billing-ab", message="Now the invoices.")
         desk.transcript.append(turn("assistant", "Invoices done."))
         desk.set("idle")
-        done = await call(c, "list_folders")
-    assert again["news"] == "billing-ab (busy): nothing new"
-    assert done["news"] == f"billing-ab (idle): reply to you, read with after={again['next_after']}"
+        done = await call(c, "list_active_sessions")
+    assert again["news"] == "[Juniper] billing-ab (busy): nothing new"
+    assert done["news"] == f"[Juniper] billing-ab (idle): reply to you, read with after={again['next_after']}"
 
 
 # The next step, at the end of a result: the relay slipped on the guide's Waiting rules (offering
@@ -423,7 +439,7 @@ async def test_a_session_still_on_the_relays_message_says_to_wait_again(served):
         await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         desk.set("busy")
         desk.transcript.append(turn("assistant", "Exporting the second table."))
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     step = out["next_step"]
     assert step.startswith("billing-ab has been on your message for ")
     assert '(latest: "Exporting the second table.")' in step
@@ -437,7 +453,7 @@ async def test_a_finished_turn_not_yet_read_says_to_read_it(served):
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         desk.transcript.append(turn("assistant", "Export done."))
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert out["next_step"].startswith("billing-ab has finished its turn: read it")
 
 
@@ -447,11 +463,11 @@ async def test_a_session_paused_on_the_owner_is_told_once_not_waited_on(served):
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Delete the old exports.")
         desk.set("waiting", waiting_for="permission prompt")
-        first = await call(c, "list_folders")
-        second = await call(c, "list_folders")
+        first = await call(c, "list_active_sessions")
+        second = await call(c, "list_active_sessions")
     assert first["next_step"].startswith("billing-ab is paused on a permission prompt only the owner can answer")
     assert "next_step" not in second
-    assert second["news"] == "billing-ab: waiting on a permission prompt"  # still named until answered
+    assert second["news"] == "[Juniper] billing-ab: waiting on a permission prompt"  # still named until answered
 
 
 async def test_the_result_where_following_ends_says_there_is_nothing_left_to_follow(served):
@@ -460,9 +476,9 @@ async def test_the_result_where_following_ends_says_there_is_nothing_left_to_fol
     async with http, client as c:
         sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         desk.transcript.append(turn("assistant", "Export done."))
-        await call(c, "list_folders")
+        await call(c, "list_active_sessions")
         read = await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
-        later = await call(c, "list_folders")
+        later = await call(c, "list_active_sessions")
     assert read["next_step"] == "Nothing left to follow: every reply is read. No need to tell the owner."
     assert "next_step" not in later
 
@@ -471,7 +487,7 @@ async def test_nothing_followed_means_no_next_step(served):
     url, _ = served
     http, client = conversation(url)
     async with http, client as c:
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert "next_step" not in out
 
 
@@ -490,9 +506,9 @@ async def test_a_wait_on_all_followed_sessions_returns_at_the_first_with_news(tm
             desk.set("busy")
             other.transcript.append(turn("assistant", "Month closed."))
             out = await call(c, "wait_for_session")
-            later = await call(c, "list_folders")
+            later = await call(c, "list_active_sessions")
     assert out["session"] == "ledger" and out["reply"] == "Month closed." and out["reply_final"] is True
-    assert later["news"] == "billing-ab (busy): nothing new"  # ledger's reply was read: no longer followed
+    assert later["news"] == "[Juniper] billing-ab (busy): nothing new"  # ledger's reply was read: no longer followed
 
 
 async def test_a_wait_on_all_followed_sessions_runs_out_while_they_work(served):
@@ -566,9 +582,9 @@ async def test_a_session_with_a_background_task_still_running_is_not_at_rest(ser
     http, client = conversation(url)
     async with http, client as c:
         handed = await call(c, "follow_session", session="billing-ab")
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert handed["status"] == "following"
-    assert out["news"] == "billing-ab (turn ended, background task still running): nothing new"
+    assert out["news"] == "[Juniper] billing-ab (turn ended, background task still running): nothing new"
     assert out["next_step"].startswith("billing-ab ended its turn with a background task still running")
     assert "call wait_for_session again now" in out["next_step"]
 
@@ -599,9 +615,9 @@ async def test_a_followed_session_is_named_whatever_its_capitals(served):
     async with http, client as c:
         await call(c, "message_active_session", session="BILLING-AB", message="Run the export.")
         desk.transcript.append(turn("assistant", "Export done."))
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
         stopped = await call(c, "follow_session", session="Billing-Ab", follow=False)
-    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"
+    assert out["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
     assert stopped["status"] == "not_followed"
 
 
@@ -616,17 +632,17 @@ async def test_reading_progress_mid_turn_then_a_restart_keeps_the_session_follow
             desk.transcript.append(turn("assistant", "Exporting the first table."))
             desk.transcript.append(turn("assistant", "Exporting the second table."))
             read = await call(c, "wait_for_session", session="billing-ab", after=sent["next_after"], wait_seconds=0.1)
-            mid = await call(c, "list_folders")
+            mid = await call(c, "list_active_sessions")
     desk.transcript.append(turn("assistant", "Export done."))
     desk.set("idle")
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
         http, client = conversation(url)
         async with http, client as c:
-            out = await call(c, "list_folders")
+            out = await call(c, "list_active_sessions")
             waited = await call(c, "wait_for_session", wait_seconds=0.1)
     assert read["status"] == "still_working"
-    assert mid["news"] == "billing-ab (busy): nothing new"
-    assert out["news"].startswith("billing-ab (idle): reply to you")
+    assert mid["news"] == "[Juniper] billing-ab (busy): nothing new"
+    assert out["news"].startswith("[Juniper] billing-ab (idle): reply to you")
     assert waited["reply"] == "Export done."
 
 
@@ -643,44 +659,155 @@ async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
         await call(c, "message_active_session", session="billing-ab", message="Also the archive.")
         desk.transcript.append(turn("assistant", "Exporting the archive."))
         read = await call(c, "read_session_output", session="billing-ab")
-        mid = await call(c, "list_folders")
+        mid = await call(c, "list_active_sessions")
         desk.transcript.append(turn("assistant", "Both done."))
         desk.set("idle")
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert read["turns"][-1]["text"] == "Exporting the archive."
-    assert mid["news"] == "billing-ab (busy): nothing new"
-    assert out["news"].startswith("billing-ab (idle): reply to you")
+    assert mid["news"] == "[Juniper] billing-ab (busy): nothing new"
+    assert out["news"].startswith("[Juniper] billing-ab (idle): reply to you")
 
 
-# What the relay follows is one list, the Claude app's: a Claude Code session using the bridge to
-# brief other sessions would otherwise follow sessions in it, and the voice relay would hear of
-# replies that were never its own. A call from Claude Code carries its tool-call id.
-FROM_CLAUDE_CODE = {"claudecode/toolUseId": "toolu_desk_relay"}
+# Relay handles: the owner often has two or more voice conversations open at once, each a small
+# relay, and all of them reach the bridge over one connection; so each relay names itself with a
+# handle on the calls that follow or read, and each handle has its own follows and news (owner,
+# 2026-11-12). A Claude Code session is never asked: its handle is its own session name.
 
 
-async def test_follow_session_from_a_claude_code_session_is_refused(served):
+async def test_a_call_that_would_follow_without_a_handle_is_refused(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
+        refused = [
+            await c.call_tool("message_active_session", {"session": "billing-ab", "message": "Go."}),
+            await c.call_tool("ask_active_session", {"session": "billing-ab", "message": "Done?"}),
+            await c.call_tool("follow_session", {"session": "billing-ab"}),
+            await c.call_tool("wait_for_session", {}),
+        ]
+    for res in refused:
+        text = res.content[0].text
+        assert res.is_error and 'handle "@' in text, text
+        assert "Rowan (follows billing-ab)" in text  # the handles in use, to claim one or avoid it
+    assigned = {re.search(r'handle "(@[A-Za-z]{4})"', r.content[0].text).group(1) for r in refused}
+    assert len(assigned) == 4  # the bridge hands out each handle once
+    assert len(desk.transcript) == 3  # only Rowan's message was sent
+
+
+async def test_a_read_without_a_handle_works_and_asks_for_one(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        out = await call(c, "read_session_output", session="billing-ab", handle=None)
+        later = await call(c, "list_folders")
+    assert out["turns"][-1]["text"] == "earlier answer"
+    assert 'use handle "@' in out["next_step"]
+    assert "next_step" not in later  # only the tools that take a handle ask for one
+
+
+async def test_each_handle_follows_its_own_sessions(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
+        desk.transcript.append(turn("assistant", "Export done."))
+        mine = await call(c, "list_active_sessions", handle="Rowan")
+        other = await call(c, "list_active_sessions", handle="Juniper")
+        waited = await call(c, "wait_for_session", handle="Juniper", wait_seconds=60)
+    assert mine["news"] == "[Rowan] billing-ab (idle): reply to you, read with after=1"
+    assert "news" not in other and "next_step" not in other
+    assert waited["status"] == "nothing_to_wait_for"
+
+
+async def test_a_handle_is_matched_whatever_its_capitals(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
+        desk.transcript.append(turn("assistant", "Export done."))
+        out = await call(c, "list_active_sessions", handle=" rowan ")
+    assert out["news"] == "[Rowan] billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_a_permission_prompt_shows_for_every_handle_and_without_one(served):
+    url, desk = served
+    desk.set("waiting", waiting_for="permission prompt")
+    http, client = conversation(url)
+    async with http, client as c:
+        named = await call(c, "list_active_sessions", handle="Rowan")
+        nameless = await call(c, "list_folders")
+    assert named["news"] == "[Rowan] billing-ab: waiting on a permission prompt"
+    assert nameless["news"] == "billing-ab: waiting on a permission prompt"
+
+
+async def test_list_active_sessions_lists_the_handles_in_use(served):
     url, desk = served
     desk.set("busy")
     http, client = conversation(url)
     async with http, client as c:
-        refused = await c.call_tool("follow_session", {"session": "billing-ab"}, meta=FROM_CLAUDE_CODE)
-        stop = await c.call_tool("follow_session", {"session": "billing-ab", "follow": False}, meta=FROM_CLAUDE_CODE)
-        out = await call(c, "list_folders")
-    assert refused.is_error and "wait_for_session" in refused.content[0].text
-    assert stop.is_error
-    assert "news" not in out  # the voice relay's list is untouched
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
+        await call(c, "read_session_output", session="billing-ab", handle="Juniper")
+        out = await call(c, "list_active_sessions", handle="Juniper")
+    assert out["handles"] == [{"handle": "Rowan", "follows": ["billing-ab"]}, {"handle": "Juniper", "follows": []}]
 
 
-async def test_a_wait_on_every_followed_session_from_a_claude_code_session_is_refused(served):
-    url, desk = served
-    http, client = conversation(url)
-    async with http, client as c:
-        await call(c, "message_active_session", session="billing-ab", message="Run the export.")
-        desk.transcript.append(turn("assistant", "Export done."))
-        refused = await c.call_tool("wait_for_session", {}, meta=FROM_CLAUDE_CODE)
-        out = await call(c, "list_folders")
-    assert refused.is_error and "name the session" in refused.content[0].text
-    assert out["news"] == "billing-ab (idle): reply to you, read with after=1"  # still the voice relay's
+async def test_the_shared_list_becomes_the_unclaimed_handle_voice_relay(tmp_path, world):
+    # What the relays shared before handles is kept for whoever carries on that work.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    store = Store(tmp_path / "bridge.db")
+    store.set_setting("read_marks", {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}})
+    desk.transcript.append(turn("assistant", "Export done."))
+    async with bridge(tmp_path, desk, store) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            refused = await c.call_tool("follow_session", {"session": "billing-ab"})
+            out = await call(c, "list_active_sessions", handle="voice relay")
+    assert "voice relay (follows billing-ab)" in refused.content[0].text
+    assert out["news"] == "[voice relay] billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, world):
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    store = Store(tmp_path / "bridge.db")
+    old = time.time() - 25 * 3600
+    store.set_setting(
+        "relay_handles",
+        {
+            "Rowan": {"used": old, "sessions": {"sid-1": {"seen": 1, "sent": None, "replied": False}}},
+            "Ash": {"used": old, "sessions": {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}}},
+        },
+    )
+    async with bridge(tmp_path, desk, store) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            out = await call(c, "list_active_sessions")
+    assert [h["handle"] for h in out["handles"]] == ["Ash", "Juniper"]  # Ash still follows a session
+
+
+async def test_a_claude_code_session_s_handle_is_its_own_name(tmp_path, world):
+    # A call from Claude Code carries its tool-call id, which its transcript records: the bridge
+    # knows the session and never asks it for a handle, and what it follows stays its own.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    planner = Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
+    record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"type": "assistant", "id": "toolu_planner_1"}) + "\n", encoding="utf-8")
+    from_planner = {"claudecode/toolUseId": "toolu_planner_1"}
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), planner) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            sent = await c.call_tool(
+                "message_active_session", {"session": "billing-ab", "message": "Go."}, meta=from_planner
+            )
+            desk.transcript.append(turn("assistant", "Gone."))
+            voice = await call(c, "list_active_sessions")
+            own = await c.call_tool("list_folders", {}, meta=from_planner)
+    assert not sent.is_error, sent.content
+    assert "news" not in voice  # not the voice relay's
+    assert own.structured_content["news"] == "[planner] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_a_send_while_a_reply_is_unread_is_followed_once_that_reply_is_read(served):
@@ -699,9 +826,30 @@ async def test_a_send_while_a_reply_is_unread_is_followed_once_that_reply_is_rea
         read = await call(c, "read_session_output", session="billing-ab", after=1)
         desk.transcript.append(turn("assistant", "Archive done."))
         desk.set("idle")
-        out = await call(c, "list_folders")
+        out = await call(c, "list_active_sessions")
     assert "In billing." in [t["text"] for t in read["turns"]]
-    assert read["news"] == "billing-ab (busy): nothing new"
+    assert read["news"] == "[Juniper] billing-ab (busy): nothing new"
     assert "Nothing left to follow" not in read.get("next_step", "")
-    assert out["news"].startswith("billing-ab (idle): reply to you")
+    assert out["news"].startswith("[Juniper] billing-ab (idle): reply to you")
     assert sent["status"] == "delivered"
+
+
+async def test_a_handle_looks_like_a_code_not_a_name(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        steps = [
+            (await call(c, "read_session_output", session="billing-ab", handle=None))["next_step"] for _ in range(100)
+        ]
+    for step in steps:
+        handle = re.search(r'use handle "(@[A-Za-z]{4})"', step).group(1)
+        assert handle != handle.lower() and handle != handle.upper(), handle
+
+
+async def test_the_news_line_starts_with_the_handle(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="@kQzw")
+        out = await call(c, "list_active_sessions", handle="@kQzw")
+    assert out["news"] == "[@kQzw] billing-ab (idle): nothing new"

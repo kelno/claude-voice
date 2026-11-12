@@ -111,7 +111,7 @@ async def test_tools_covered_by_others_are_gone_and_the_rest_take_few_parameters
     # Started sessions are in the desktop sidebar already, with Remote Control; moving one into its
     # folder's group took it off the phone (kelno, 2026-11-11).
     assert "hand_to_desktop" not in tools
-    assert set(tools["list_active_sessions"].input_schema.get("properties", {})) == set()
+    assert set(tools["list_active_sessions"].input_schema.get("properties", {})) == {"handle"}
     assert set(tools["search_session_history"].input_schema["properties"]) == {"session", "query", "max_chars"}
     assert set(tools["list_folders"].input_schema["properties"]) == {"query"}
     long = [n for n, t in tools.items() if len((t.description or "").split(". ")) > 3]
