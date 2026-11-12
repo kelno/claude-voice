@@ -18,6 +18,7 @@ is run, so a verb cannot be added without a worked example.
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 
@@ -79,18 +80,26 @@ def _console_blocks(text: str) -> list[str]:
 CASES = examples()
 
 
-def posix_shell() -> list[str] | None:
-    """How to run a documented command: the pages show a POSIX shell (`env -u ...`), which Windows'
-    own shell doesn't understand, so there it runs in Git for Windows' bash; None when there is none.
-    Not the bash on Windows' PATH, which may be WSL's, a Linux without this project's tools."""
-    if os.name != "nt":
-        return []
-    git = shutil.which("git")
-    bash = pathlib.Path(git).resolve().parents[1] / "bin" / "bash.exe" if git else None
-    return [str(bash), "-c"] if bash and bash.is_file() else None
-
-
-SHELL = posix_shell()
+def argv_and_env(command: str) -> tuple[list[str], dict[str, str]]:
+    """What a documented command runs, and with what environment: the pages show it for a POSIX
+    shell, `env -u NAME VAR=value` in front included, which Windows' own shell doesn't run. Read
+    here instead, the same on every platform, the command runs without a shell."""
+    argv = shlex.split(command)
+    env = dict(os.environ)
+    if argv and argv[0] == "env":
+        argv = argv[1:]
+        while argv:
+            if argv[0] == "-u" and len(argv) > 1:
+                env.pop(argv[1], None)
+                argv = argv[2:]
+            elif "=" in argv[0] and not argv[0].startswith("-"):
+                name, value = argv[0].split("=", 1)
+                env[name] = value
+                argv = argv[1:]
+            else:
+                break
+    found = shutil.which(argv[0], path=env.get("PATH")) if argv else None
+    return ([found, *argv[1:]] if found else argv), env
 
 
 def test_the_documentation_shows_at_least_one_command():
@@ -99,13 +108,10 @@ def test_the_documentation_shows_at_least_one_command():
 
 
 @pytest.mark.skipif(shutil.which("claude-voice") is None, reason="the command is not installed")
-@pytest.mark.skipif(SHELL is None, reason="no POSIX shell to run the documented commands in (Git for Windows' bash)")
 @pytest.mark.parametrize(("page", "command", "expected"), CASES, ids=[c[1][:40] for c in CASES])
 def test_a_documented_command_prints_what_the_page_says(page: str, command: str, expected: str):
-    if SHELL:
-        r = subprocess.run([*SHELL, command], capture_output=True, text=True, cwd=ROOT, check=False)  # noqa: S603
-    else:
-        r = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=ROOT, check=False)  # noqa: S602
+    argv, env = argv_and_env(command)
+    r = subprocess.run(argv, capture_output=True, text=True, cwd=ROOT, env=env, check=False)  # noqa: S603
     got = (r.stdout + r.stderr).strip()
     assert got == expected.strip(), f"{page} says this prints:\n{expected}\nit prints:\n{got}"
 
