@@ -885,3 +885,27 @@ async def test_a_handle_not_in_use_counts_as_none(served):
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
     assert "Rowen" not in [h["handle"] for h in out["handles"]]
+
+
+async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path, world):
+    # A relay's first calls, made at once without a handle, each get one; the relay keeps one, and
+    # the replies under the others would be missed (owner, 2026-11-12).
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            first, second = await asyncio.gather(
+                call(c, "message_active_session", session="billing-ab", message="Run the export.", handle=None),
+                call(c, "message_active_session", session="ledger", message="Close the month.", handle=None),
+            )
+            other.transcript.append(turn("assistant", "Month closed."))
+            out = await call(c, "list_active_sessions", handle=first["handle"])
+    assert first["handle"] != second["handle"]
+    assert (
+        out["news"]
+        == f"[{first['handle']}] billing-ab (idle): nothing new | ledger (idle): reply to you, read with after=1"
+    )
+    assert out["next_step"].startswith("Also following ledger, from calls you made at the same moment")
+    assert second["handle"] not in [h["handle"] for h in out["handles"]]

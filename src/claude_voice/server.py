@@ -194,6 +194,14 @@ OLD_MARKS_SETTING = "watched_sessions"
 UNCLAIMED_HANDLE = "voice relay"
 # A handle that follows nothing and wasn't used for this long is dropped.
 HANDLE_IDLE_SECONDS = 24 * 3600
+# Handles handed out this close together, none passed back yet, came from one relay's calls made at
+# once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
+# relays starting within this time would merge, which the owner says doesn't happen.
+MERGE_SECONDS = 10
+MERGED = (
+    "Also following {sessions}, from calls you made at the same moment without a handle: they are under "
+    "this handle now."
+)
 # The tools that take a relay's handle: those that follow or read sessions, and the list.
 HANDLED_TOOLS = (
     "message_active_session",
@@ -358,7 +366,8 @@ News
   each a handle, a code such as "@kQzw", and keeps what each follows apart
   under it. Your first send, question or follow without one goes ahead and
   gets one (the result's handle and next_step): pass it as handle on every
-  call that takes one from then on. A handle the bridge doesn't know (a
+  call that takes one from then on. Calls made together without one each get
+  one; the first you pass back takes the others over. A handle the bridge doesn't know (a
   typo, or one dropped after a day following nothing) counts as none, with
   the handles in use listed. It is
   machinery between you and the bridge, not your name: never say it to the
@@ -1175,9 +1184,29 @@ def build_server(
             if mixed and not any(h.casefold() == handle.casefold() for h in relays):
                 break
         state["told"] = in_use_said(NEW_HANDLE, new=handle)  # said before it is in use itself
-        relays[handle] = {"used": manager.clock(), "sessions": {}}
+        now = manager.clock()
+        relays[handle] = {"used": now, "sessions": {}, "handed_out": now, "claimed": False}
         state["handle"] = state["minted"] = handle
         save_handles()
+
+    def merge_batch(handle: str) -> list[str]:
+        """Fold into `handle` the handles handed out with it that no one has passed back: calls a
+        relay made at once without one, each given its own. Returns what they followed."""
+        own = relays[handle]
+        if own.get("handed_out") is None:
+            return []
+        own["claimed"] = True
+        merged = []
+        for other in [h for h in relays if h != handle]:
+            theirs = relays[other]
+            # RULE: handles handed out at the same moment merge on first use
+            if theirs.get("claimed") is False and abs(theirs["handed_out"] - own["handed_out"]) <= MERGE_SECONDS:
+                merged += follows(other)
+                for sid, mark in theirs["sessions"].items():
+                    if own["sessions"].get(sid, {}).get("sent") is None:
+                        own["sessions"][sid] = mark
+                del relays[other]
+        return merged
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
         """The calling relay's handle: the one it passed, matched whatever its capitals; for a
@@ -1191,6 +1220,8 @@ def build_server(
             if handle is None and state is not None:
                 # RULE: a handle not in use counts as none
                 state["unknown"] = given
+            elif handle is not None and state is not None:
+                state["merged"] = merge_batch(handle)
         elif from_claude_code():
             handle = claude_code_handles.get(connection or "") or await claude_code_name()
             if connection:
@@ -1294,6 +1325,8 @@ def build_server(
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
         step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
+        if state.get("merged"):
+            step = " ".join(filter(None, [MERGED.format(sessions=", ".join(state["merged"])), step]))
         if state.get("minted"):
             step = " ".join(filter(None, [state.get("told"), step]))
         elif handle is None and tool in HANDLED_TOOLS and state.get("wanted") and not from_claude_code():

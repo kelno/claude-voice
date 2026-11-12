@@ -1043,3 +1043,9 @@ name = "the news line starts with the handle"
 file = "src/claude_voice/server.py"
 find = 'news = \(f"\[\{handle\}\] " if handle else ""\) \+ " \| ".join\(items\)'
 replace = 'news = " | ".join(items)'
+
+[[rule]]
+name = "handles handed out at the same moment merge on first use"
+file = "src/claude_voice/server.py"
+find = 'if theirs.get\("claimed"\) is False and abs\(theirs\["handed_out"\] - own\["handed_out"\]\) <= MERGE_SECONDS:'
+replace = 'if False:'
