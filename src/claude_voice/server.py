@@ -209,28 +209,33 @@ HANDLE_PARAM = (
     "the owner."
 )
 # Several relays reach the bridge over one connection (the Claude app's, for every voice
-# conversation), so each says who it is with a handle the bridge hands out; a call that would follow
-# a session without one is refused with one to use, and a read gets the same as its next step.
-NEED_HANDLE = (
-    "First a handle: the bridge keeps each relay's follows apart under a handle passed on every call that "
-    'takes one. Use handle "{new}" from now on and make this call again with it; nothing failed, so there is '
-    "nothing to tell the owner. Keep a handle you already had in this conversation instead; pass an earlier "
-    "relay's only to carry on its work, or to take yours back after a compaction (the one following your "
-    "sessions){in_use}. It is machinery between you and the bridge, not your name: don't say it to the owner."
+# conversation), so each says who it is with a handle the bridge hands out: with the first call that
+# follows a session without one, which goes ahead under it. A refusal came back as an error, which
+# the Claude app tells its assistant to report as a failure (owner, 2026-11-12).
+NEW_HANDLE = (
+    'Your handle is "{new}": pass it as handle on every call that takes one from now on, since what you '
+    "follow is kept under it. If you already had one in this conversation, pass that one instead; after a "
+    "compaction, take yours back (the one following your sessions){in_use}. Machinery, not your name: don't "
+    "say it to the owner."
 )
-NEXT_HANDLE = (
-    'You passed no handle, so nothing is followed for you: use handle "{new}" from now on on every call that '
-    "takes one. Keep a handle you already had in this conversation instead; pass an earlier relay's only to "
-    "carry on its work, or to take yours back after a compaction (the one following your sessions){in_use}. "
-    "Machinery, not your name: don't say it to the owner."
+NO_HANDLE = (
+    "No handle passed, so nothing you follow is shown: your first send, question or follow gives you one. If "
+    "you had one in this conversation, pass it; after a compaction, take yours back (the one following your "
+    "sessions){in_use}. Machinery, not your name: don't say it to the owner."
 )
-# The calling relay's handle during a call: given, or a Claude Code session's own name; None without.
-current_handle: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_handle", default=None)
-# Whether this call is one news reaches (one with an MCP session): only there is a handle asked for.
-handle_wanted: contextvars.ContextVar[bool] = contextvars.ContextVar("handle_wanted", default=False)
-# A handle the caller passed that isn't one in use: the call is then treated as having none.
-unknown_handle: contextvars.ContextVar[str | None] = contextvars.ContextVar("unknown_handle", default=None)
 UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing). '
+# The calling relay, during a call: its handle (given, handed out by this call, or a Claude Code
+# session's own name; None without), whether a handle is wanted (calls news reaches, those with an
+# MCP session), a handle given that isn't in use, and one this call handed out. One dict per call,
+# changed in place, so a tool run on a worker thread changes what the middleware reads.
+relay_call: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar("relay_call", default=None)
+
+
+def call_handle() -> str | None:
+    """The calling relay's handle, if it has one."""
+    return (relay_call.get() or {}).get("handle")
+
+
 # The next step for the relay, at the end of a result, in the states where one applies: it slipped
 # despite the guide's Waiting section (offering to check, stopping the wait early: ledger F58),
 # so the result says the situation and what follows from it, at the moment of choice. Each
@@ -351,12 +356,11 @@ Waiting
 News
 - Your handle: several relays use the bridge at once, so the bridge gives
   each a handle, a code such as "@kQzw", and keeps what each follows apart
-  under it. Pass it as handle on every call that takes one. Your first call
-  that would follow a session without one is refused with the handle to
-  use: expected, not a failure, so say nothing of it and call again with it.
-  A read without one isn't refused; its next_step gives you one. A handle
-  the bridge doesn't know (a typo, or one dropped after a day following
-  nothing) counts as none, with the handles in use listed. It is
+  under it. Your first send, question or follow without one goes ahead and
+  gets one (the result's handle and next_step): pass it as handle on every
+  call that takes one from then on. A handle the bridge doesn't know (a
+  typo, or one dropped after a day following nothing) counts as none, with
+  the handles in use listed. It is
   machinery between you and the bridge, not your name: never say it to the
   owner (name the sessions instead). Keep yours for the whole conversation.
   Pass an earlier relay's handle only to carry on its work when the owner
@@ -745,16 +749,14 @@ def result_notes(
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
         if waiting:
             waits[session] = waits.get(session, 0) + 1
-        unknown_token = unknown_handle.set(None)
-        handle = await who(connection, args) if who is not None and ctx.method == "tools/call" else None
-        handle_token = current_handle.set(handle)
-        wanted_token = handle_wanted.set(bool(connection) and news is not None)
+        state: dict[str, Any] = {"wanted": bool(connection) and news is not None}
+        token = relay_call.set(state)
         try:
+            if who is not None and ctx.method == "tools/call":
+                state["handle"] = await who(connection, args)
             return await noted(ctx, call_next, params, args, connection, pending, waiting, session)
         finally:
-            current_handle.reset(handle_token)
-            handle_wanted.reset(wanted_token)
-            unknown_handle.reset(unknown_token)
+            relay_call.reset(token)
 
     async def noted(ctx, call_next, params, args, connection, pending, waiting, session):
         started = time.monotonic()
@@ -786,6 +788,8 @@ def result_notes(
             told = news(str(connection), str(params.get("name") or ""), args, structured)
             if "news" in told:
                 manual["news"] = told["news"]
+            if "handle" in told:
+                notes["handle"] = told["handle"]
             if "next_step" in told:
                 notes["next_step"] = told["next_step"]
         if pending:
@@ -1126,7 +1130,7 @@ def build_server(
 
     def mine() -> dict[str, dict[str, Any]]:
         """The calling relay's marks, by session id: those of its handle."""
-        handle = current_handle.get()
+        handle = call_handle()
         if handle is None:
             return nameless
         # RULE: each handle follows its own sessions
@@ -1143,7 +1147,7 @@ def build_server(
         now = manager.clock()
         for h in list(relays):
             # RULE: a handle following nothing unused for a day is dropped
-            if h != current_handle.get() and not follows(h) and now - relays[h].get("used", 0) > HANDLE_IDLE_SECONDS:
+            if h != call_handle() and not follows(h) and now - relays[h].get("used", 0) > HANDLE_IDLE_SECONDS:
                 del relays[h]
 
     drop_idle_handles()  # those left idle while the bridge was down
@@ -1151,38 +1155,42 @@ def build_server(
     def save_handles() -> None:
         manager.store.set_setting(HANDLES_SETTING, relays)
 
-    def new_handle(template: str) -> str:
-        """`template` with a new handle the bridge hands out, and those in use."""
+    def in_use_said(template: str, **fields: str) -> str:
+        """`template` with the handles in use, after the note on a handle given that isn't one."""
+        in_use = [f"{h['handle']} (follows {', '.join(h['follows']) or 'nothing'})" for h in handles_in_use()]
+        given = (relay_call.get() or {}).get("unknown")
+        said = template.format(in_use=f"; in use: {', '.join(in_use)}" if in_use else "", **fields)
+        return (UNKNOWN_HANDLE.format(given=given) if given else "") + said
+
+    def ensure_handle() -> None:
+        """Hand a relay calling without a handle one, as it starts following a session."""
+        state = relay_call.get()
+        # RULE: a call that follows without a handle gets a new one
+        if state is None or state.get("handle") is not None or not state.get("wanted"):
+            return
         while True:
             # RULE: a handle looks like a code, not a name
             handle = "@" + "".join(secrets.choice(HANDLE_LETTERS) for _ in range(4))
             mixed = handle != handle.lower() and handle != handle.upper()
             if mixed and not any(h.casefold() == handle.casefold() for h in relays):
                 break
-        in_use = [f"{h['handle']} (follows {', '.join(h['follows']) or 'nothing'})" for h in handles_in_use()]
+        state["told"] = in_use_said(NEW_HANDLE, new=handle)  # said before it is in use itself
         relays[handle] = {"used": manager.clock(), "sessions": {}}
+        state["handle"] = state["minted"] = handle
         save_handles()
-        given = unknown_handle.get()
-        said = template.format(new=handle, in_use=f"; in use: {', '.join(in_use)}" if in_use else "")
-        return (UNKNOWN_HANDLE.format(given=given) if given else "") + said
-
-    def need_handle() -> None:
-        """Refuse a call that would follow a session for a relay that passed no handle, or one not in use."""
-        # RULE: a call that would follow without a handle is refused
-        if current_handle.get() is None and handle_wanted.get():
-            raise ToolError(new_handle(NEED_HANDLE))
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
         """The calling relay's handle: the one it passed, matched whatever its capitals; for a
-        Claude Code session, its own name; else None, and a handle not in use is kept as unknown."""
+        Claude Code session, its own name; else None, and a handle not in use is noted as unknown."""
         given = str(args.get("handle") or "").strip()
         handle = None
         if given:
             # Only a handle the bridge handed out and still keeps: a typo would quietly start an empty list.
             handle = next((h for h in relays if h.casefold() == given.casefold()), None)
-            if handle is None:
-                # RULE: a handle not in use is refused
-                unknown_handle.set(given)
+            state = relay_call.get()
+            if handle is None and state is not None:
+                # RULE: a handle not in use counts as none
+                state["unknown"] = given
         elif from_claude_code():
             handle = claude_code_handles.get(connection or "") or await claude_code_name()
             if connection:
@@ -1267,12 +1275,14 @@ def build_server(
         turn is read. Progress lines are not news: the relay can read them, but naming them every
         time made a busy session drown the rest.
         """
-        handle = current_handle.get()
+        handle = call_handle()
         marks = mine()
         before = json.dumps(relays, sort_keys=True)
         active_before = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
+        handle, marks = call_handle(), mine()  # this call may have handed one out
+        state = relay_call.get() or {}
         items = []
         for sid, mark in list(marks.items()):
             if mark.get("sent") is not None:
@@ -1284,15 +1294,18 @@ def build_server(
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
         step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
-        if handle is None and tool in HANDLED_TOOLS and not from_claude_code():
-            step = new_handle(NEXT_HANDLE)
+        if state.get("minted"):
+            step = " ".join(filter(None, [state.get("told"), step]))
+        elif handle is None and tool in HANDLED_TOOLS and state.get("wanted") and not from_claude_code():
+            step = in_use_said(NO_HANDLE)
         nameless.clear()
         drop_idle_handles()
         if json.dumps(relays, sort_keys=True) != before:
             save_handles()
         # RULE: the news line starts with the handle
         news = (f"[{handle}] " if handle else "") + " | ".join(items)
-        return {**({"news": news} if items else {}), **({"next_step": step} if step else {})}
+        minted = {"handle": state["minted"]} if state.get("minted") else {}
+        return {**({"news": news} if items else {}), **minted, **({"next_step": step} if step else {})}
 
     def lasted(since: float | None) -> str:
         """How long a session has been on the relay's message, as said in a sentence."""
@@ -1347,6 +1360,10 @@ def build_server(
         if target is not None and tool in STARTING_TOOLS:
             mark_read(target)  # a session started or resumed: its history so far isn't news
         elif target is not None and isinstance(reached, int):
+            if tool == "message_active_session" or (
+                tool == "ask_active_session" and structured.get("status") == "still_working"
+            ):
+                ensure_handle()  # a follow starts here
             if tool == "message_active_session":
                 # A send reads nothing: what came before stays unread, and while an earlier
                 # message's reply is unread, the wait for a reply starts from that message.
@@ -2133,7 +2150,6 @@ def build_server(
         counts, even one answering the owner's own typing. A session at rest (not one whose turn ended
         with a background task still running) has nothing to finish: status "already_done", and
         nothing is followed: tell the owner it is done (read_session_output shows what it last said)."""
-        need_handle()
         marks = mine()
         if not follow:
             sid = followed(session)
@@ -2150,6 +2166,8 @@ def build_server(
         if at_rest:
             return {"session": d.get("name"), "status": "already_done"}
         if followed(sid) is None:
+            ensure_handle()
+            marks = mine()
             mark = marks.get(sid)
             mark_read(d, seen=mark["seen"] if mark else None, sent=len(all_turns(sid, str(d.get("cwd")))) - 1)
             save_handles()
@@ -2751,7 +2769,6 @@ def build_server(
         Returns once delivered, in a few seconds; use it when your next step doesn't depend on the
         answer, then wait_for_session(after=next_after), or read_session_output(after=next_after)
         later."""
-        need_handle()
         target = find_live(session)
         moved = moved_to(target)
         if moved:
@@ -2903,7 +2920,6 @@ def build_server(
         # RULE: a wait with no length given runs to the caller's limit
         seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds
         if session is None:
-            need_handle()
             return await wait_on_followed(seconds, max_chars)
         return await wait_on(session, seconds, after, max_chars)
 
@@ -3018,7 +3034,6 @@ def build_server(
         exited meanwhile), "not_received" (the message never reached its conversation), "moved"
         (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
         user to pick one of question.options)."""
-        need_handle()
         target = find_live(session)
         moved = moved_to(target)
         if moved:

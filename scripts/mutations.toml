@@ -1015,10 +1015,10 @@ find = 'del relays\[h\]$'
 replace = 'pass'
 
 [[rule]]
-name = "a call that would follow without a handle is refused"
+name = "a call that follows without a handle gets a new one"
 file = "src/claude_voice/server.py"
-find = 'raise ToolError\(new_handle\(NEED_HANDLE\)\)'
-replace = 'pass'
+find = 'if state is None or state.get\("handle"\) is not None or not state.get\("wanted"\):'
+replace = 'if True:'
 
 [[rule]]
 name = "a claude code session's handle is its own name"
@@ -1033,10 +1033,10 @@ find = 'if mixed and not any'
 replace = 'if not any(h.casefold() == handle.casefold() for h in relays):'
 
 [[rule]]
-name = "a handle not in use is refused"
+name = "a handle not in use counts as none"
 file = "src/claude_voice/server.py"
-find = 'unknown_handle.set\(given\)$'
-replace = 'pass'
+find = 'handle = next\(\(h for h in relays if h.casefold\(\) == given.casefold\(\)\), None\)'
+replace = 'handle = next((h for h in relays if h.casefold() == given.casefold()), given)'
 
 [[rule]]
 name = "the news line starts with the handle"

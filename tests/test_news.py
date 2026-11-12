@@ -673,40 +673,46 @@ async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
 
 
 # Relay handles: the owner often has two or more voice conversations open at once, each a small
-# relay, and all of them reach the bridge over one connection; so each relay names itself with a
-# handle on the calls that follow or read, and each handle has its own follows and news (owner,
-# 2026-11-12). A Claude Code session is never asked: its handle is its own session name.
+# relay, and all of them reach the bridge over one connection; so each relay passes a handle on the
+# calls that follow or read, which the bridge hands out, and each handle has its own follows and
+# news (owner, 2026-11-12). A Claude Code session is never asked: its handle is its own session name.
 
 
-async def test_a_call_that_would_follow_without_a_handle_is_refused(served):
+async def test_a_call_that_follows_without_a_handle_gets_a_new_one(served):
+    # It goes ahead: a refusal came back as an error, which the Claude app tells its assistant to
+    # report to the owner as a failure (seen live, 2026-11-12).
     url, desk = served
+    desk.set("busy")
     http, client = conversation(url)
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
-        refused = [
-            await c.call_tool("message_active_session", {"session": "billing-ab", "message": "Go."}),
-            await c.call_tool("ask_active_session", {"session": "billing-ab", "message": "Done?"}),
-            await c.call_tool("follow_session", {"session": "billing-ab"}),
-            await c.call_tool("wait_for_session", {}),
+        results = [
+            await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None),
+            await call(c, "follow_session", session="billing-ab", handle=None),
         ]
-    for res in refused:
-        text = res.content[0].text
-        assert res.is_error and 'handle "@' in text, text
-        assert "Rowan (follows billing-ab)" in text  # the handles in use, to claim one or avoid it
-    assigned = {re.search(r'handle "(@[A-Za-z]{4})"', r.content[0].text).group(1) for r in refused}
-    assert len(assigned) == 4  # the bridge hands out each handle once
-    assert len(desk.transcript) == 3  # only Rowan's message was sent
+        handed = [r["handle"] for r in results]
+        out = await call(c, "list_active_sessions", handle=handed[0])
+    for res, handle in zip(results, handed, strict=True):
+        assert res["next_step"].startswith(f'Your handle is "{handle}"'), res["next_step"]
+        assert "Rowan (follows billing-ab)" in res["next_step"]  # the handles in use, to take one back
+    assert results[0]["status"] == "delivered" and len(desk.transcript) == 4  # both messages were sent
+    assert results[1]["status"] == "following"
+    assert out["news"] == f"[{handed[0]}] billing-ab (busy): nothing new"
 
 
-async def test_a_read_without_a_handle_works_and_asks_for_one(served):
+async def test_a_read_without_a_handle_works_and_hands_out_none(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
         out = await call(c, "read_session_output", session="billing-ab", handle=None)
+        waited = await call(c, "wait_for_session", handle=None, wait_seconds=60)
         later = await call(c, "list_folders")
+        listed = await call(c, "list_active_sessions")
     assert out["turns"][-1]["text"] == "earlier answer"
-    assert 'use handle "@' in out["next_step"]
-    assert "next_step" not in later  # only the tools that take a handle ask for one
+    assert out["next_step"].startswith("No handle passed") and "handle" not in out
+    assert waited["status"] == "nothing_to_wait_for" and "handle" not in waited
+    assert "next_step" not in later  # only the tools that take a handle say it
+    assert [h["handle"] for h in listed["handles"]] == ["Juniper", "Rowan", "@kQzw"]  # none added
 
 
 async def test_each_handle_follows_its_own_sessions(served):
@@ -766,9 +772,9 @@ async def test_the_shared_list_becomes_the_unclaimed_handle_voice_relay(tmp_path
     async with bridge(tmp_path, desk, store) as url:
         http, client = conversation(url)
         async with http, client as c:
-            refused = await c.call_tool("follow_session", {"session": "billing-ab"})
+            read = await call(c, "read_session_output", session="billing-ab", handle=None, after=1)
             out = await call(c, "list_active_sessions", handle="voice relay")
-    assert "voice relay (follows billing-ab)" in refused.content[0].text
+    assert "voice relay (follows billing-ab)" in read["next_step"]
     assert out["news"] == "[voice relay] billing-ab (idle): reply to you, read with after=1"
 
 
@@ -843,11 +849,13 @@ async def test_a_handle_looks_like_a_code_not_a_name(served):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
-        steps = [
-            (await call(c, "read_session_output", session="billing-ab", handle=None))["next_step"] for _ in range(100)
+        sent = [
+            await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
+            for _ in range(100)
         ]
-    for step in steps:
-        handle = re.search(r'use handle "(@[A-Za-z]{4})"', step).group(1)
+    for out in sent:
+        handle = out["handle"]
+        assert re.fullmatch(r"@[A-Za-z]{4}", handle), handle
         assert handle != handle.lower() and handle != handle.upper(), handle
 
 
@@ -860,7 +868,7 @@ async def test_the_news_line_starts_with_the_handle(served):
     assert out["news"] == "[@kQzw] billing-ab (idle): nothing new"
 
 
-async def test_a_handle_not_in_use_is_refused(served):
+async def test_a_handle_not_in_use_counts_as_none(served):
     # The bridge hands handles out, so one it doesn't know is a typo or one long dropped: taking it
     # quietly would start an empty list, and the relay would hear "nothing new" while its replies
     # waited under the right one (owner, 2026-11-12).
@@ -868,13 +876,12 @@ async def test_a_handle_not_in_use_is_refused(served):
     http, client = conversation(url)
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
-        refused = await c.call_tool(
-            "message_active_session", {"session": "billing-ab", "message": "Go.", "handle": "Rowen"}
-        )
+        sent = await call(c, "message_active_session", session="billing-ab", message="Go.", handle="Rowen")
         read = await call(c, "read_session_output", session="billing-ab", handle="Rowen")
         out = await call(c, "list_active_sessions", handle="Rowan")
-    text = refused.content[0].text
-    assert refused.is_error and text.count('Handle "Rowen" isn\'t one in use') == 1, text
-    assert "Rowan (follows billing-ab)" in text and re.search(r'handle "@[A-Za-z]{4}"', text)
-    assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use')
+    step = sent["next_step"]
+    unknown = 'Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing). '
+    assert step.startswith(f'{unknown}Your handle is "{sent["handle"]}"'), step
+    assert "Rowan (follows billing-ab)" in step
+    assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
     assert "Rowen" not in [h["handle"] for h in out["handles"]]
