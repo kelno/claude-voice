@@ -15,6 +15,7 @@ nobody sees. Every verb the command has must appear in at least one block that
 is run, so a verb cannot be added without a worked example.
 """
 
+import os
 import pathlib
 import re
 import shutil
@@ -78,15 +79,33 @@ def _console_blocks(text: str) -> list[str]:
 CASES = examples()
 
 
+def posix_shell() -> list[str] | None:
+    """How to run a documented command: the pages show a POSIX shell (`env -u ...`), which Windows'
+    own shell doesn't understand, so there it runs in Git for Windows' bash; None when there is none.
+    Not the bash on Windows' PATH, which may be WSL's, a Linux without this project's tools."""
+    if os.name != "nt":
+        return []
+    git = shutil.which("git")
+    bash = pathlib.Path(git).resolve().parents[1] / "bin" / "bash.exe" if git else None
+    return [str(bash), "-c"] if bash and bash.is_file() else None
+
+
+SHELL = posix_shell()
+
+
 def test_the_documentation_shows_at_least_one_command():
     """A page that stops showing its own output would otherwise pass by saying nothing."""
     assert CASES, "no ```console block anywhere; the examples were removed or mislabelled"
 
 
 @pytest.mark.skipif(shutil.which("claude-voice") is None, reason="the command is not installed")
+@pytest.mark.skipif(SHELL is None, reason="no POSIX shell to run the documented commands in (Git for Windows' bash)")
 @pytest.mark.parametrize(("page", "command", "expected"), CASES, ids=[c[1][:40] for c in CASES])
 def test_a_documented_command_prints_what_the_page_says(page: str, command: str, expected: str):
-    r = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=ROOT, check=False)  # noqa: S602
+    if SHELL:
+        r = subprocess.run([*SHELL, command], capture_output=True, text=True, cwd=ROOT, check=False)  # noqa: S603
+    else:
+        r = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=ROOT, check=False)  # noqa: S602
     got = (r.stdout + r.stderr).strip()
     assert got == expected.strip(), f"{page} says this prints:\n{expected}\nit prints:\n{got}"
 
