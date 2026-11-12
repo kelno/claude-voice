@@ -1033,6 +1033,12 @@ find = 'if mixed and not any'
 replace = 'if not any(h.casefold() == handle.casefold() for h in relays):'
 
 [[rule]]
+name = "a handle not in use is refused"
+file = "src/claude_voice/server.py"
+find = 'unknown_handle.set\(given\)$'
+replace = 'pass'
+
+[[rule]]
 name = "the news line starts with the handle"
 file = "src/claude_voice/server.py"
 find = 'news = \(f"\[\{handle\}\] " if handle else ""\) \+ " \| ".join\(items\)'

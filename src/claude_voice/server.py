@@ -179,6 +179,9 @@ GUIDED_KEPT = 1000
 # turn its result reached (`next_after`), or by the `claude_session_id` it started or resumed.
 READ_MARKING_TOOLS = ("message_active_session", "read_session_output", "wait_for_session", "ask_active_session")
 STARTING_TOOLS = ("start_active_session", "attach_conversation")
+# Relay handles exist only because the bridge has no way to tell voice relays apart by itself: they
+# all reach it over one connection, with nothing identifying the conversation. If that ever becomes
+# possible, all of the handle machinery below can be replaced by it (owner, 2026-11-12).
 # Where each relay's read marks and the sessions it follows are kept, by its handle, so a bridge
 # restart doesn't drop them: {handle: {"used": when, "sessions": {session id: mark}}}. The one list
 # all relays shared before handles (kept under the older names) becomes UNCLAIMED_HANDLE.
@@ -225,6 +228,9 @@ NEXT_HANDLE = (
 current_handle: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_handle", default=None)
 # Whether this call is one news reaches (one with an MCP session): only there is a handle asked for.
 handle_wanted: contextvars.ContextVar[bool] = contextvars.ContextVar("handle_wanted", default=False)
+# A handle the caller passed that isn't one in use: the call is then treated as having none.
+unknown_handle: contextvars.ContextVar[str | None] = contextvars.ContextVar("unknown_handle", default=None)
+UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing). '
 # The next step for the relay, at the end of a result, in the states where one applies: it slipped
 # despite the guide's Waiting section (offering to check, stopping the wait early: ledger F58),
 # so the result says the situation and what follows from it, at the moment of choice. Each
@@ -348,7 +354,9 @@ News
   under it. Pass it as handle on every call that takes one. Your first call
   that would follow a session without one is refused with the handle to
   use: expected, not a failure, so say nothing of it and call again with it.
-  A read without one isn't refused; its next_step gives you one. It is
+  A read without one isn't refused; its next_step gives you one. A handle
+  the bridge doesn't know (a typo, or one dropped after a day following
+  nothing) counts as none, with the handles in use listed. It is
   machinery between you and the bridge, not your name: never say it to the
   owner (name the sessions instead). Keep yours for the whole conversation.
   Pass an earlier relay's handle only to carry on its work when the owner
@@ -737,6 +745,7 @@ def result_notes(
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
         if waiting:
             waits[session] = waits.get(session, 0) + 1
+        unknown_token = unknown_handle.set(None)
         handle = await who(connection, args) if who is not None and ctx.method == "tools/call" else None
         handle_token = current_handle.set(handle)
         wanted_token = handle_wanted.set(bool(connection) and news is not None)
@@ -745,6 +754,7 @@ def result_notes(
         finally:
             current_handle.reset(handle_token)
             handle_wanted.reset(wanted_token)
+            unknown_handle.reset(unknown_token)
 
     async def noted(ctx, call_next, params, args, connection, pending, waiting, session):
         started = time.monotonic()
@@ -1152,21 +1162,27 @@ def build_server(
         in_use = [f"{h['handle']} (follows {', '.join(h['follows']) or 'nothing'})" for h in handles_in_use()]
         relays[handle] = {"used": manager.clock(), "sessions": {}}
         save_handles()
-        return template.format(new=handle, in_use=f"; in use: {', '.join(in_use)}" if in_use else "")
+        given = unknown_handle.get()
+        said = template.format(new=handle, in_use=f"; in use: {', '.join(in_use)}" if in_use else "")
+        return (UNKNOWN_HANDLE.format(given=given) if given else "") + said
 
     def need_handle() -> None:
-        """Refuse a call that would follow a session for a relay that passed no handle."""
+        """Refuse a call that would follow a session for a relay that passed no handle, or one not in use."""
         # RULE: a call that would follow without a handle is refused
         if current_handle.get() is None and handle_wanted.get():
             raise ToolError(new_handle(NEED_HANDLE))
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
         """The calling relay's handle: the one it passed, matched whatever its capitals; for a
-        Claude Code session, its own name; else None."""
+        Claude Code session, its own name; else None, and a handle not in use is kept as unknown."""
         given = str(args.get("handle") or "").strip()
         handle = None
         if given:
-            handle = next((h for h in relays if h.casefold() == given.casefold()), given)
+            # Only a handle the bridge handed out and still keeps: a typo would quietly start an empty list.
+            handle = next((h for h in relays if h.casefold() == given.casefold()), None)
+            if handle is None:
+                # RULE: a handle not in use is refused
+                unknown_handle.set(given)
         elif from_claude_code():
             handle = claude_code_handles.get(connection or "") or await claude_code_name()
             if connection:

@@ -81,6 +81,9 @@ async def bridge(tmp_path, desk, store, *others):
         next(d for d in desks.values() if d.name == name).transcript.append(turn("user", text, "peer"))
         return {"delivered": True, "detail": "DELIVERED"}
 
+    if not any(store.get_setting(k) for k in ("relay_handles", "read_marks", "watched_sessions")):
+        # The handles the tests pass, as if the bridge had handed them out.
+        store.set_setting("relay_handles", {h: {"used": time.time(), "sessions": {}} for h in KNOWN})
     port = free_port()
     oauth = OAuthProvider(store, TOKEN, f"http://127.0.0.1:{port}", static_token=TOKEN)
     m = SessionManager(store, project_root=root, client_factory=FakeClaude())
@@ -132,6 +135,7 @@ HANDLED = (
     "list_active_sessions",
 )
 HANDLE = "Juniper"
+KNOWN = (HANDLE, "Rowan", "@kQzw")
 
 
 async def call(client, name, **args):
@@ -748,7 +752,8 @@ async def test_list_active_sessions_lists_the_handles_in_use(served):
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
         await call(c, "read_session_output", session="billing-ab", handle="Juniper")
         out = await call(c, "list_active_sessions", handle="Juniper")
-    assert out["handles"] == [{"handle": "Rowan", "follows": ["billing-ab"]}, {"handle": "Juniper", "follows": []}]
+    assert {"handle": "Rowan", "follows": ["billing-ab"]} in out["handles"]
+    assert {"handle": "Juniper", "follows": []} in out["handles"]
 
 
 async def test_the_shared_list_becomes_the_unclaimed_handle_voice_relay(tmp_path, world):
@@ -782,8 +787,8 @@ async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, 
     async with bridge(tmp_path, desk, store) as url:
         http, client = conversation(url)
         async with http, client as c:
-            out = await call(c, "list_active_sessions")
-    assert [h["handle"] for h in out["handles"]] == ["Ash", "Juniper"]  # Ash still follows a session
+            out = await call(c, "list_active_sessions", handle="Ash")
+    assert [h["handle"] for h in out["handles"]] == ["Ash"]  # Ash still follows a session
 
 
 async def test_a_claude_code_session_s_handle_is_its_own_name(tmp_path, world):
@@ -853,3 +858,23 @@ async def test_the_news_line_starts_with_the_handle(served):
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="@kQzw")
         out = await call(c, "list_active_sessions", handle="@kQzw")
     assert out["news"] == "[@kQzw] billing-ab (idle): nothing new"
+
+
+async def test_a_handle_not_in_use_is_refused(served):
+    # The bridge hands handles out, so one it doesn't know is a typo or one long dropped: taking it
+    # quietly would start an empty list, and the relay would hear "nothing new" while its replies
+    # waited under the right one (owner, 2026-11-12).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
+        refused = await c.call_tool(
+            "message_active_session", {"session": "billing-ab", "message": "Go.", "handle": "Rowen"}
+        )
+        read = await call(c, "read_session_output", session="billing-ab", handle="Rowen")
+        out = await call(c, "list_active_sessions", handle="Rowan")
+    text = refused.content[0].text
+    assert refused.is_error and text.count('Handle "Rowen" isn\'t one in use') == 1, text
+    assert "Rowan (follows billing-ab)" in text and re.search(r'handle "@[A-Za-z]{4}"', text)
+    assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use')
+    assert "Rowen" not in [h["handle"] for h in out["handles"]]
