@@ -1151,3 +1151,9 @@ name = "a session is not restarted while claude.ai cannot be reached"
 file = "src/claude_voice/connectors.py"
 find = 'if not await self.reachable\(\):'
 replace = 'if False:'
+
+[[rule]]
+name = "the sessions to wake wait until claude.ai answers"
+file = "src/claude_voice/server.py"
+find = 'while not await ready\(\):'
+replace = 'while False:'

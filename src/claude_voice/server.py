@@ -854,6 +854,9 @@ async def wake_interrupted(
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]],
     was_live: set[str],
     start_background: Callable[..., Awaitable[str | None]],
+    ready: Callable[[], Awaitable[bool]] | None = None,
+    retry: float = 5.0,
+    patience: float = 300.0,
 ) -> list[str]:
     """Wake the sessions the bridge started or resumed that the last shutdown interrupted.
 
@@ -862,13 +865,27 @@ async def wake_interrupted(
     at the bridge's last look (`was_live`) and is now failed. Windows' boot time can't tell: with
     Fast Startup a shutdown resumes the old kernel. Each is woken in place with its saved
     options, Remote Control included, and logged. Returns their names.
+
+    A session started before the network is back runs without its claude.ai connectors, so when
+    there is one to wake, `ready` is asked every `retry` seconds until claude.ai answers, for up
+    to `patience` seconds; past that they are woken anyway.
     """
-    woken = []
+    todo = []
     for job in await background_jobs():
         sid, cwd = str(job.get("sessionId")), str(job.get("cwd") or "")
         if job.get("state") != "failed" or not cwd or sid not in was_live or not store.was_started(sid):
             continue
-        name = str(job.get("name") or sid)
+        todo.append((sid, cwd, str(job.get("name") or sid)))
+    if todo and ready is not None:
+        deadline = time.monotonic() + patience
+        # RULE: the sessions to wake wait until claude.ai answers
+        while not await ready():
+            if time.monotonic() >= deadline:
+                log.info("claude.ai still doesn't answer after %d s; waking the sessions anyway", patience)
+                break
+            await asyncio.sleep(retry)
+    woken = []
+    for sid, cwd, name in todo:
         try:
             await start_background(cwd, "", resume=sid, wake=True)
         except Exception as exc:
@@ -1196,7 +1213,9 @@ def build_server(
             warming = asyncio.create_task(transcripts.shared_reader().warm())
             warming.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
             # The served bridge starts at logon: bring back what the last shutdown stopped.
-            waking = asyncio.create_task(wake_interrupted(manager.store, background_jobs, was_live, start_background))
+            waking = asyncio.create_task(
+                wake_interrupted(manager.store, background_jobs, was_live, start_background, connectors_reachable)
+            )
             waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         if channels is not None:
             await channels.start()

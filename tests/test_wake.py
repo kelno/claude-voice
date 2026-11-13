@@ -97,7 +97,13 @@ async def test_the_served_bridge_wakes_what_was_running_at_its_last_look(tmp_pat
         return [job("s-mine", work, name="Triplicate")]
 
     m = SessionManager(store, project_root=work, client_factory=FakeClaude())
-    srv = build_server(m, live_dir=live, watch_interval=60.0, start_background=starter, background_jobs=jobs)
+
+    async def up():
+        return True
+
+    srv = build_server(
+        m, live_dir=live, watch_interval=60.0, start_background=starter, background_jobs=jobs, connectors_reachable=up
+    )
     with store.db:  # what the bridge saw running before the shutdown
         store.db.execute("INSERT INTO live_snapshot VALUES(?,?,?)", ("Triplicate", "idle", "s-mine"))
     async with Client(srv) as c:
@@ -107,3 +113,58 @@ async def test_the_served_bridge_wakes_what_was_running_at_its_last_look(tmp_pat
             await asyncio.sleep(0.01)
         await c.list_tools()
     assert starter.options == [{"resume": "s-mine", "wake": True}]
+
+
+async def test_the_sessions_to_wake_wait_until_claude_ai_answers(tmp_path):
+    # Seen 2026-11-13: the bridge woke a session at logon before the network was back after a
+    # sleep, and the session ran without any claude.ai connector (ledger Q104).
+    work, store = setup(tmp_path)
+    store.record_started("s-mine", "Triplicate", str(work))
+    order = []
+    answers = iter([False, False, True])
+
+    async def ready():
+        order.append("asked")
+        return next(answers)
+
+    async def starter(cwd, name, **options):
+        order.append("woken")
+
+    async def jobs():
+        return [job("s-mine", work, name="Triplicate")]
+
+    woken = await wake_interrupted(store, jobs, {"s-mine"}, starter, ready=ready, retry=0)
+    assert woken == ["Triplicate"]
+    assert order == ["asked", "asked", "asked", "woken"]
+
+
+async def test_the_sessions_are_woken_anyway_when_claude_ai_never_answers(tmp_path, caplog):
+    work, store = setup(tmp_path)
+    store.record_started("s-mine", "Triplicate", str(work))
+    starter = Starter(tmp_path, register=False)
+
+    async def never():
+        return False
+
+    async def jobs():
+        return [job("s-mine", work, name="Triplicate")]
+
+    with caplog.at_level(logging.INFO, logger="claude_voice"):
+        woken = await wake_interrupted(store, jobs, {"s-mine"}, starter, ready=never, retry=0, patience=0.05)
+    assert woken == ["Triplicate"]
+    assert any("claude.ai" in r.message for r in caplog.records)
+
+
+async def test_nothing_to_wake_asks_nothing_of_claude_ai(tmp_path):
+    work, store = setup(tmp_path)
+    asked = []
+
+    async def ready():
+        asked.append(1)
+        return True
+
+    async def jobs():
+        return []
+
+    assert await wake_interrupted(store, jobs, set(), Starter(tmp_path, register=False), ready=ready) == []
+    assert asked == []

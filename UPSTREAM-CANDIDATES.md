@@ -205,13 +205,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: it stops and restarts a session, which reloads its connectors; and it relies on `/compact` working in print mode on a resumed conversation, which Claude Code supports (its `/compact` is marked as working non-interactively) but doesn't document as a way to compact another session.
 - Test first: `tests/test_compact.py`.
 
-### 6z'''. A session that started without its claude.ai connectors, restarted — fork "Restart a session that started without its claude.ai connectors"
+### 6z'''. A session that started without its claude.ai connectors, restarted — fork "Restart a session that started without its claude.ai connectors", "Wake interrupted sessions once claude.ai answers"
 
 - Status: an idea; nothing prepared, no branch.
-- What: Claude Code writes one log file per MCP server each time a session's process starts (`claude-cli-nodejs/Cache/<project>/mcp-logs-<server>/<start time>.jsonl`, naming the session on each line). At each look, the bridge checks each running session's latest start: one with logs for other servers but none for a `claude-ai-*` connector, 90 seconds on, in a folder where connectors have loaded before, came without them. A background session the bridge started is then stopped and resumed in place once at rest and once claude.ai's connector proxy answers, once per start. A session busy for 10 minutes is told it will be restarted at rest; one the bridge didn't start, or whose restart didn't bring them back, is told to warn the owner. Module `connectors.py`.
+- What: Claude Code writes one log file per MCP server each time a session's process starts (`claude-cli-nodejs/Cache/<project>/mcp-logs-<server>/<start time>.jsonl`, naming the session on each line). At each look, the bridge checks each running session's latest start: one with logs for other servers but none for a `claude-ai-*` connector, 90 seconds on, in a folder where connectors have loaded before, came without them. A background session the bridge started is then stopped and resumed in place once at rest and once claude.ai's connector proxy answers, once per start. A session busy for 10 minutes is told it will be restarted at rest; one the bridge didn't start, or whose restart didn't bring them back, is told to warn the owner. Module `connectors.py`. The bridge's own wake-up of interrupted sessions at its start waits for the proxy to answer too, up to 5 minutes.
 - Why upstream should want it: after a sleep, Claude Code's daemon can respawn background sessions before the network is back; they then run without any claude.ai connector, and nothing says so until a tool is missed.
 - Expect pushback: it reads Claude Code's own log files, not a documented interface (anything unexpected tells nothing, and nothing is done); the cache folder's place is the Windows one (`%LOCALAPPDATA%`), so other systems need theirs; and upstream runs sessions in tmux, where the respawn may not happen at all.
-- Test first: `tests/test_connectors.py`, the tests named after the rules.
+- Test first: `tests/test_connectors.py` and `tests/test_wake.py`, the tests named after the rules.
 
 ### 6y. Updating the bridge on Windows — fork "Update the bridge on Windows, where there is no systemd"
 
