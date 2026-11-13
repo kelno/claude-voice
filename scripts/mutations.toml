@@ -1115,3 +1115,39 @@ name = "only a background session the bridge started is stopped to be compacted"
 file = "src/claude_voice/server.py"
 find = 'if not store.was_started\(sid\) or d.get\("kind"\) != "bg":'
 replace = 'if False:'
+
+[[rule]]
+name = "a folder where no connector ever loaded tells nothing"
+file = "src/claude_voice/connectors.py"
+find = 'if not any\(p.name.startswith\(CONNECTOR\) for p in servers\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a start is not judged before its connectors had time to load"
+file = "src/claude_voice/connectors.py"
+find = 'if now - \(_start_time\(stem\) or now\) < LOAD_SECONDS:'
+replace = 'if False:'
+
+[[rule]]
+name = "a restart that comes back without them is not tried again and the session is told"
+file = "src/claude_voice/connectors.py"
+find = 'if \(case.tried != start or case.broke\) and not case.told:'
+replace = 'if False:'
+
+[[rule]]
+name = "a session the bridge did not start is told to warn the owner"
+file = "src/claude_voice/connectors.py"
+find = 'if not self.started_here\(d\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a busy session is not restarted mid turn"
+file = "src/claude_voice/connectors.py"
+find = 'if not self.at_rest\(d\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a session is not restarted while claude.ai cannot be reached"
+file = "src/claude_voice/connectors.py"
+find = 'if not await self.reachable\(\):'
+replace = 'if False:'

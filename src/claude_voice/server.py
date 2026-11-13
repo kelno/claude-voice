@@ -42,6 +42,7 @@ from . import (
     config,
     confirm,
     confirm_page,
+    connectors,
     detail,
     devmode,
     doctor,
@@ -1046,6 +1047,8 @@ def build_server(
     work_board: work.Board | None = None,
     terminals: Terminals | None = None,
     org_folders: list[Path] | None = None,
+    connector_logs: Path = connectors.CACHE_DIR,
+    connectors_reachable: Callable[[], Awaitable[bool]] = connectors.proxy_answers,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -1169,10 +1172,23 @@ def build_server(
                     with contextlib.suppress(Exception):
                         await desk.pick_up()  # an approval typed while the bridge runs
                     with contextlib.suppress(Exception):
+                        await mender.step()  # a session that started without its claude.ai connectors
+                    with contextlib.suppress(Exception):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
                     await asyncio.sleep(watch_interval)
 
+            # Seen 2026-11-13: a session respawned as the PC woke came back without them (ledger Q104).
+            mender = connectors.Mender(
+                live=reachable,
+                missing=lambda d: connectors.missing(connector_logs, d),
+                started_here=lambda d: d.get("kind") == "bg" and store.was_started(str(d.get("sessionId"))),
+                at_rest=lambda d: session_state(d) == "idle",
+                reachable=connectors_reachable,
+                restart=restart_in_place,
+                send=send_into,
+                record=watcher.record,
+            )
             # What ran at the last look, read before the watcher's first look replaces it.
             was_live = watcher.last_seen_live()
             task = asyncio.create_task(watch())
@@ -2487,6 +2503,18 @@ def build_server(
         if out["claude_session_id"] != claude_session_id:
             out["copied_from"] = claude_session_id
         return out
+
+    async def restart_in_place(d: dict[str, Any]) -> None:
+        """Stop a background session the bridge started and resume it in place, its conversation,
+        name and Remote Control kept: a fresh start loads its claude.ai connectors again."""
+        sid = str(d.get("sessionId"))
+        await stop_background(sid)
+        deadline = time.monotonic() + start_seconds
+        while any(x.get("sessionId") == sid for x in live_sessions()):
+            if time.monotonic() > deadline:
+                raise RuntimeError("it was asked to stop but is still running")
+            await asyncio.sleep(0.2)
+        await start_background(str(d.get("cwd") or ""), "", resume=sid, wake=True)
 
     async def resume_in(path: Path, label: str | None, claude_session_id: str) -> dict[str, Any]:
         """Continue a conversation that isn't running, in place where Claude Code can."""

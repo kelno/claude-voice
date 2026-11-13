@@ -516,3 +516,46 @@ async def test_only_a_folder_the_bridge_just_made_is_trusted_for_claude_code(tmp
         await c.call_tool("start_active_session", {"folder": "utgifter", "name": "u", "create_folder": True})
         await c.call_tool("start_active_session", {"folder": "billing", "name": "b", "create_folder": True})
     assert trusted == [root / "utgifter"]  # an existing folder is never trusted on its own
+
+
+async def test_a_session_that_started_without_its_claude_ai_connectors_is_restarted_in_place(tmp_path, world):
+    # Seen 2026-11-13: a session respawned as the PC woke had none of its claude.ai connectors (ledger Q104).
+    import asyncio
+
+    from test_connectors import EARLIER, WAKE, at, full_start, log
+
+    root, live = world
+    cwd = str(root / "billing")
+    started = int(at(WAKE) * 1000) - 600
+    entry = {"pid": PID, "sessionId": OLD, "cwd": cwd, "name": "Prompt test", "kind": "bg", "status": "idle"}
+    (live / "old.json").write_text(json.dumps({**entry, "startedAt": started}))
+    logs = tmp_path / "cache"
+    full_start(logs, EARLIER, sid=OLD, cwd=cwd)
+    log(logs, "plugin-relay-channel-claude-voice", WAKE, sid=OLD, cwd=cwd)
+    stopped = []
+
+    async def stop(sid):
+        stopped.append(sid)
+        (live / "old.json").unlink()
+
+    async def up():
+        return True
+
+    starter = Starter(live)
+    Store(tmp_path / "b.db").record_started(OLD, "Prompt test", cwd)
+    server = resuming(
+        tmp_path,
+        world,
+        starter,
+        stop_background=stop,
+        connector_logs=logs,
+        connectors_reachable=up,
+        watch_interval=0.05,
+    )
+    async with Client(server):
+        for _ in range(100):
+            if starter.calls:
+                break
+            await asyncio.sleep(0.05)
+    assert stopped == [OLD]
+    assert starter.options == [{"resume": OLD, "wake": True}]  # resumed in place, its conversation kept

@@ -168,6 +168,12 @@ and `/api/v1/doctor` say whether such a port is there.
 - **Risky actions wait for your yes.** Anything Claude Code would normally ask
   you about is asked of you, on the phone or in the desktop app, where you answer
   it; the assistant can tell you a session is waiting, but cannot answer for you.
+- **A session that came back without its claude.ai connectors is restarted.**
+  After a sleep, Claude Code can respawn a background session before the network
+  is back, and it then runs without them. The bridge notices from Claude Code's
+  MCP logs, and once the session is at rest and claude.ai answers, stops and
+  resumes it in place, its conversation kept. A session it can't restart, or
+  whose restart didn't help, is told to warn you.
 - **A session open in a terminal is never taken over.**
   - Messages are delivered into it, the way one Claude Code session messages
     another.
