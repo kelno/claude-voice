@@ -120,7 +120,7 @@ async def no_background_sessions():
     return set()
 
 
-def resuming(tmp_path, world, starter, grant=None, background_sessions=no_background_sessions):
+def resuming(tmp_path, world, starter, grant=None, background_sessions=no_background_sessions, **options):
     from test_server import FakeConversations, conversation
 
     from claude_voice.session_modes import Grant
@@ -140,6 +140,7 @@ def resuming(tmp_path, world, starter, grant=None, background_sessions=no_backgr
         start_background=starter,
         start_seconds=1.0,
         background_sessions=background_sessions,
+        **options,
     )
 
 
@@ -181,6 +182,45 @@ async def test_a_conversation_still_running_is_not_started_again(tmp_path, world
     assert starter.calls == []
     assert out["already_running"] is True and out["name"] == "Old one" and out["claude_session_id"] == OLD
     assert "copied_from" not in out
+
+
+async def test_a_message_to_a_session_claude_code_closed_for_low_memory_resumes_it_first(tmp_path, world):
+    # Seen 2026-11-13: Claude Code closed eight idle sessions to free memory; their conversations stay.
+    async def known():
+        return {OLD}
+
+    delivered = []
+
+    async def deliver(name, text):
+        delivered.append(name)
+        return {"delivered": True, "detail": ""}
+
+    root, live = world
+    log = tmp_path / "daemon.log"
+    log.write_text(f"[2026-11-13T00:19:50.365Z] [bg] bg retire {OLD[:8]}: settled, idle 2h [low memory]\n")
+    starter = Starter(live)
+    server = resuming(tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=log)
+    Store(tmp_path / "b.db").record_started(OLD, "Prompt test", str(root / "billing"))
+    async with Client(server) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "Prompt test", "message": "Hi"})
+        ).structured_content
+    assert starter.options == [{"resume": OLD, "wake": True}]  # woken in place, not copied
+    assert delivered == ["Prompt test"] and out["delivered"] is True
+    assert "low memory" in out["resumed"]
+
+
+async def test_a_message_to_a_session_stopped_on_purpose_does_not_bring_it_back(tmp_path, world):
+    async def known():
+        return {OLD}
+
+    root, live = world
+    starter = Starter(live)
+    server = resuming(tmp_path, world, starter, background_sessions=known, daemon_log=tmp_path / "none.log")
+    Store(tmp_path / "b.db").record_started(OLD, "Prompt test", str(root / "billing"))
+    async with Client(server) as c:
+        out = await c.call_tool("message_active_session", {"session": "Prompt test", "message": "Hi"})
+    assert out.is_error and starter.calls == []
 
 
 async def test_what_claude_code_notes_at_the_start_comes_back(tmp_path, world):

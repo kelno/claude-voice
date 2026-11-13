@@ -330,9 +330,8 @@ async def test_a_session_claude_code_closed_for_low_memory_says_why_and_how_to_r
             await call(c, "message_active_session", session="billing-ab", message="Wrap up.")
             desk.gone()
             out = await call(c, "list_active_sessions")
-            again = await c.call_tool(
-                "message_active_session", {"session": "billing-ab", "message": "Hi", "handle": HANDLE}
-            )
+            # A message would resume it (test_start); a read says why it can't.
+            again = await c.call_tool("read_session_output", {"session": "billing-ab", "handle": HANDLE})
     assert out["news"] == (
         "[Juniper] billing-ab: ended, closed by Claude Code for low memory; attach_conversation resumes it"
     )

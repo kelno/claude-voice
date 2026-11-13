@@ -2432,17 +2432,39 @@ def build_server(
             raise ToolError(str(exc)) from None
         if not transcripts.SESSION_ID.fullmatch(claude_session_id):
             raise ToolError(f"Not a Claude Code session id: {claude_session_id!r}")
-        if claude_session_id in await background_sessions():
-            # It keeps its own saved name, Remote Control, settings and mode; any flag would copy it.
-            out = await start_listed(path, label, resume=claude_session_id, wake=True)
-        else:
-            grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
-            out = await start_listed(
-                path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs
-            )
+        out = await resume_in(path, label, claude_session_id)
         if out["claude_session_id"] != claude_session_id:
             out["copied_from"] = claude_session_id
         return out
+
+    async def resume_in(path: Path, label: str | None, claude_session_id: str) -> dict[str, Any]:
+        """Continue a conversation that isn't running, in place where Claude Code can."""
+        if claude_session_id in await background_sessions():
+            # It keeps its own saved name, Remote Control, settings and mode; any flag would copy it.
+            return await start_listed(path, label, resume=claude_session_id, wake=True)
+        grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
+        return await start_listed(
+            path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs
+        )
+
+    async def find_live_or_wake(session: str) -> tuple[dict[str, Any], str | None]:
+        """The running session `session` names; one Claude Code closed for low memory is resumed
+        first, and the second value says so."""
+        try:
+            return find_live(session), None
+        except ToolError:
+            known = store.started_session(session)
+            why = why_gone(str(known["claude_session_id"])) if known else ""
+            # RULE: a message to a session Claude Code closed for low memory resumes it first
+            if not known or not why:
+                raise
+        sid = str(known["claude_session_id"])
+        try:
+            path = manager.resolve_folder(str(known["cwd"]))
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        await resume_in(path, str(known["name"]), sid)
+        return find_live(sid), f"{why}; the bridge resumed it in place first"
 
     def reachable() -> list[dict[str, Any]]:
         """The running sessions, leaving out the bridge's own messengers; find_live checks the folder."""
@@ -2877,8 +2899,9 @@ def build_server(
         """Send to a session and return at once; wait_for_session then gets the reply.
         Returns once delivered, in a few seconds; use it when your next step doesn't depend on the
         answer, then wait_for_session(after=next_after), or read_session_output(after=next_after)
-        later."""
-        target = find_live(session)
+        later. A session Claude Code closed for low memory is resumed first; resumed says so."""
+        target, resumed = await find_live_or_wake(session)
+        woke = {"resumed": resumed} if resumed else {}
         moved = moved_to(target)
         if moved:
             return {"session": target["name"], "delivered": False, "status": "moved", "moved_to": moved}
@@ -2900,6 +2923,7 @@ def build_server(
             "delivered": True,
             "next_after": before - 1,
             **typed,
+            **woke,
         }
 
     def owner_typed(target: dict[str, Any]) -> dict[str, str]:
@@ -3160,8 +3184,10 @@ def build_server(
         its turn ended; continue with wait_for_session(after=next_after)), "session_ended" (it
         exited meanwhile), "not_received" (the message never reached its conversation), "moved"
         (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
-        user to pick one of question.options)."""
-        target = find_live(session)
+        user to pick one of question.options). A session Claude Code closed for low memory is
+        resumed first; resumed says so."""
+        target, resumed = await find_live_or_wake(session)
+        woke = {"resumed": resumed} if resumed else {}
         moved = moved_to(target)
         if moved:
             return _not_sent(target, {"status": "moved", "moved_to": moved})
@@ -3192,6 +3218,7 @@ def build_server(
             "next_after": new[-1]["index"] if new else start,
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
             **typed,
+            **woke,
         }
 
     @tool(annotations=READ_ONLY)
