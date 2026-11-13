@@ -408,7 +408,7 @@ News
   has ended (a turn that ends with a background task still running doesn't
   count: the task's end starts another turn); a permission prompt waiting, shown as just that, followed or
   not; "ended", named once, then dropped ("ended before you read its reply":
-  attach_conversation resumes it, to read it). Progress lines aren't news;
+  attach_conversation resumes it, to read it or carry on). Progress lines aren't news;
   read_session_output still shows them. "read with after=N" says where to
   read from.
 - What's new stays in the entry until a result has shown you that turn
@@ -430,7 +430,11 @@ News
 Sessions
 - New work: start_active_session in a folder (list_folders), or
   attach_conversation to resume an earlier conversation, then give it its
-  task. A "project" the owner names is a folder to the bridge; claude.ai
+  task.
+- A session gone from the list keeps its conversation: attach_conversation
+  resumes it in place, with its history, so resume it rather than start
+  afresh. Claude Code closes idle ones when memory runs low; a message to one
+  of those resumes it by itself. A "project" the owner names is a folder to the bridge; claude.ai
   Projects, the chat workspaces, are out of its reach.
   A session the bridge started can start one itself with the bridge's tools.
   A desktop session (one the owner opened in the desktop app) can't: the app
@@ -2405,10 +2409,10 @@ def build_server(
         label: Annotated[str | None, Field(description="The name it runs under; left out, its title.")] = None,
     ) -> dict[str, Any]:
         """Resume an earlier conversation on Remote Control; then talk to it.
-        Continues it like start_active_session, in its own permission mode and folders. If Claude
-        Code can't continue it in place, as when it is still open elsewhere, it starts a copy under
-        a new id, and copied_from names the original: say so; a claude_code_note is Claude Code's
-        own remark on the start. One still running is left as it is (already_running): message it."""
+        It continues in place with its whole history, its own permission mode and folders: the way
+        back to a session that stopped or that Claude Code closed; one still running is left as it
+        is (already_running), so message it. Should Claude Code start a copy under a new id instead,
+        copied_from names the original (say so); claude_code_note is Claude Code's own remark."""
         live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
         # RULE: a conversation still running is not started again
         if live is not None:

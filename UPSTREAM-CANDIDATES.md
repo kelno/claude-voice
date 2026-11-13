@@ -189,10 +189,10 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: little; it reads Claude Code's result format, which may change. The fallback when the result can't be read is today's behaviour.
 - Test first: `tests/test_courier.py`, a send answered with `success: false`, red on upstream's code.
 
-### 6z'. Why a session left the list, and how to bring it back — fork "Say when Claude Code closed a session for low memory"
+### 6z'. Why a session left the list, and how to bring it back — fork "Say when Claude Code closed a session for low memory", "Resume a session Claude Code closed for low memory when messaged", "Tell the relay to resume a session gone from the list"
 
 - Status: an idea; nothing prepared, no branch.
-- What: Claude Code's background manager closes idle background sessions when memory runs low (its `daemon.log`: "bg retire <id>: ... [low memory]"). The bridge reads that log: a followed session that ended this way says so in the news, with "attach_conversation resumes it"; and a message to a session that isn't running says whether Claude Code closed it, and gives the id to resume it with.
+- What: Claude Code's background manager closes idle background sessions when memory runs low (its `daemon.log`: "bg retire <id>: ... [low memory]"). The bridge reads that log: a followed session that ended this way says so in the news, with "attach_conversation resumes it"; and a message to a session that isn't running says whether Claude Code closed it, and gives the id to resume it with. A message or a question to a session closed this way resumes it in place first. The guide and attach_conversation's description say plainly that a gone session is resumed rather than started afresh.
 - Why upstream should want it: without it, sessions drop out of the list with no word, and relays don't think of resuming them.
 - Expect pushback: it reads a log file whose format is Claude Code's, not a documented interface. Nothing breaks if it changes: the reason is just left out.
 - Test first: `tests/test_news.py` and `tests/test_courier.py`, the tests named after the rule.
