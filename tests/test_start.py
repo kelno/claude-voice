@@ -156,6 +156,33 @@ async def test_a_former_background_session_is_woken_in_place_with_its_saved_opti
     assert out["claude_code_note"].startswith("note: woke session")
 
 
+async def test_a_conversation_still_running_is_not_started_again(tmp_path, world):
+    # Seen 2026-11-13: an archived session still ran in the background; waking it made Claude Code
+    # start a copy under the same name, and messages to that name then reached neither.
+    async def known():
+        return {OLD}
+
+    root, live = world
+    (live / "old.json").write_text(
+        json.dumps(
+            {
+                "pid": PID,
+                "sessionId": OLD,
+                "cwd": str(root / "billing"),
+                "name": "Old one",
+                "kind": "bg",
+                "status": "idle",
+            }
+        )
+    )
+    starter = Starter(live)
+    async with Client(resuming(tmp_path, world, starter, background_sessions=known)) as c:
+        out = (await c.call_tool("attach_conversation", {"claude_session_id": OLD})).structured_content
+    assert starter.calls == []
+    assert out["already_running"] is True and out["name"] == "Old one" and out["claude_session_id"] == OLD
+    assert "copied_from" not in out
+
+
 async def test_what_claude_code_notes_at_the_start_comes_back(tmp_path, world):
     starter = Starter(world[1], note="Some banner\nnote: something to know\nbackgrounded")
     async with Client(bridge(tmp_path, world, starter)) as c:

@@ -2388,19 +2388,24 @@ def build_server(
         Continues it like start_active_session, in its own permission mode and folders. If Claude
         Code can't continue it in place, as when it is still open elsewhere, it starts a copy under
         a new id, and copied_from names the original: say so; a claude_code_note is Claude Code's
-        own remark on the start."""
+        own remark on the start. One still running is left as it is (already_running): message it."""
+        live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
+        # RULE: a conversation still running is not started again
+        if live is not None:
+            # Waking it, Claude Code would start a copy under the same name.
+            return {
+                "name": str(live.get("name") or ""),
+                "claude_session_id": claude_session_id,
+                "folder": under_root(str(live.get("cwd") or "")),
+                "status": live.get("status") or "idle",
+                "already_running": True,
+            }
         if folder is None:
-            live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
-            match = None
-            if live is None:
-                match = next(
-                    (c for c in conversations(limit=1000) if c.session_id == claude_session_id),
-                    None,
-                )
-                if match is None:
-                    raise ToolError(f"No Claude Code conversation with id {claude_session_id}")
-            folder = (live or {}).get("cwd") or (match.cwd if match else "") or ""
-            label = label or (live or {}).get("name") or (match.custom_title or match.summary if match else None)
+            match = next((c for c in conversations(limit=1000) if c.session_id == claude_session_id), None)
+            if match is None:
+                raise ToolError(f"No Claude Code conversation with id {claude_session_id}")
+            folder = match.cwd or ""
+            label = label or match.custom_title or match.summary
         try:
             path = manager.resolve_folder(folder)
         except ValueError as exc:

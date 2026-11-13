@@ -173,7 +173,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - What: one line in the manual's relay scope. Fork-specific wording; only with 6e.
 
-### 6x. Starting sessions in the background on Remote Control — fork "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Continue a former background session instead of copying it"
+### 6x. Starting sessions in the background on Remote Control — fork "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Continue a former background session instead of copying it", "Leave a conversation that is still running as it is when attached"
 
 - Status: an idea for later (owner); nothing prepared, no branch.
 - What: a session the bridge starts, or resumes from an earlier conversation, runs as an ordinary Claude Code background session with Remote Control on, with no window; the owner opens it from the phone or the desktop app.

@@ -1069,6 +1069,12 @@ find = 'if structured.get\("turns_left"\) and not structured.get\("reply_final"\
 replace = 'if False:'
 
 [[rule]]
+name = "a conversation still running is not started again"
+file = "src/claude_voice/server.py"
+find = 'if live is not None:'
+replace = 'if False:'
+
+[[rule]]
 name = "a send Claude Code answers with a failure is not delivered and says why"
 file = "src/claude_voice/transcripts.py"
 find = 'if sent and failed:'
