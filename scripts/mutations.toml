@@ -1047,8 +1047,8 @@ replace = 'news = " | ".join(items)'
 [[rule]]
 name = "handles handed out at the same moment merge on first use"
 file = "src/claude_voice/server.py"
-find = 'if theirs.get\("claimed"\) is False and abs\(theirs\["handed_out"\] - own\["handed_out"\]\) <= MERGE_SECONDS:'
-replace = 'if False:'
+find = 'batch = own.get\("handed_out"\) is not None and abs'
+replace = 'batch = False'
 
 [[rule]]
 name = "a relayed message shows in a read as one line"
@@ -1085,3 +1085,9 @@ name = "a session Claude Code closed for low memory says why and how to resume i
 file = "src/claude_voice/server.py"
 find = 'if sid\[:8\] in transcripts\.closed_for_memory\(daemon_log\):'
 replace = 'if False:'
+
+[[rule]]
+name = "a stray handle folds into the next handle passed that already had its sessions"
+file = "src/claude_voice/server.py"
+find = 'stray = now - theirs\["handed_out"\] <= STRAY_SECONDS and bool\(followed\)'
+replace = 'stray = False'

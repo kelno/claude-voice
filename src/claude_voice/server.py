@@ -198,10 +198,10 @@ HANDLE_IDLE_SECONDS = 24 * 3600
 # once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
 # relays starting within this time would merge, which the owner says doesn't happen.
 MERGE_SECONDS = 10
-MERGED = (
-    "Also following {sessions}, from calls you made at the same moment without a handle: they are under "
-    "this handle now."
-)
+# A handle handed out to a call that forgot or mistyped the relay's own, not passed back since, is
+# folded into the relay's handle when it next passes it, within this time (owner, 2026-11-13).
+STRAY_SECONDS = 60
+MERGED = "Also following {sessions}, from your calls a moment ago without your handle: they are under this handle now."
 # The tools that take a relay's handle: those that follow or read sessions, and the list.
 HANDLED_TOOLS = (
     "message_active_session",
@@ -222,20 +222,16 @@ HANDLE_PARAM = (
 # the Claude app tells its assistant to report as a failure (owner, 2026-11-12).
 NEW_HANDLE = (
     'Your handle is "{new}": pass it as handle on every call that takes one from now on, since what you '
-    "follow is kept under it. If you already had one in this conversation, pass that one instead; after a "
-    "compaction, take yours back (the one following your sessions){in_use}. Machinery, not your name: don't "
-    "say it to the owner."
+    "follow is kept under it. If you already had one in this conversation, pass that one instead: this "
+    "call's follow moves into it. After a compaction, take yours back (the one following your "
+    "sessions){in_use}. Machinery, not your name: don't say it to the owner."
 )
 NO_HANDLE = (
     "No handle passed, so nothing you follow is shown: your first send, question or follow gives you one. If "
     "you had one in this conversation, pass it; after a compaction, take yours back (the one following your "
     "sessions){in_use}. Machinery, not your name: don't say it to the owner."
 )
-UNKNOWN_HANDLE = (
-    'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing): if it was a typo '
-    "for one in use below, your earlier follows are under that one, so pass it from now on and wait on this "
-    "session by name for this reply. "
-)
+UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing). '
 # The calling relay, during a call: its handle (given, handed out by this call, or a Claude Code
 # session's own name; None without), whether a handle is wanted (calls news reaches, those with an
 # MCP session), a handle given that isn't in use, and one this call handed out. One dict per call,
@@ -388,6 +384,8 @@ News
   gets one (the result's handle and next_step): pass it as handle on every
   call that takes one from then on. Calls made together without one each get
   one: pass any one of them next, and the bridge moves the others into it.
+  So does a call where you forgot or mistyped yours: pass yours next, and
+  that call's follow moves into it.
   A handle the bridge doesn't know (a
   typo, or one dropped after a day following nothing) counts as none, with
   the handles in use listed. It is
@@ -1215,15 +1213,24 @@ def build_server(
     def merge_batch(handle: str) -> list[str]:
         """Fold into `handle` the handles handed out with it that no one has passed back: calls a
         relay made at once without one, each given its own. Returns what they followed."""
-        own = relays[handle]
-        if own.get("handed_out") is None:
-            return []
-        own["claimed"] = True
+        own, now = relays[handle], manager.clock()
+        if own.get("handed_out") is not None:
+            own["claimed"] = True
         merged = []
         for other in [h for h in relays if h != handle]:
             theirs = relays[other]
+            if theirs.get("claimed") is not False:
+                continue
             # RULE: handles handed out at the same moment merge on first use
-            if theirs.get("claimed") is False and abs(theirs["handed_out"] - own["handed_out"]) <= MERGE_SECONDS:
+            batch = own.get("handed_out") is not None and abs(theirs["handed_out"] - own["handed_out"]) <= MERGE_SECONDS
+            # A relay that forgot or mistyped its handle wrote to a session it already had: a new
+            # relay's first handle, on sessions this one never touched, is left alone, even while
+            # another relay's waits call every half minute.
+            followed = [sid for sid, m in theirs["sessions"].items() if m.get("sent") is not None]
+            # RULE: a stray handle folds into the next handle passed that already had its sessions
+            stray = now - theirs["handed_out"] <= STRAY_SECONDS and bool(followed)
+            stray = stray and all(sid in own["sessions"] for sid in followed)
+            if batch or stray:
                 merged += follows(other)
                 for sid, mark in theirs["sessions"].items():
                     if own["sessions"].get(sid, {}).get("sent") is None:

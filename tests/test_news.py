@@ -926,7 +926,7 @@ async def test_a_handle_not_in_use_counts_as_none(served):
         out = await call(c, "list_active_sessions", handle="Rowan")
     step = sent["next_step"]
     assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing)')
-    assert "your earlier follows are under that one" in step and f'Your handle is "{sent["handle"]}"' in step
+    assert f'Your handle is "{sent["handle"]}"' in step and "this call's follow moves into it" in step
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
     assert "Rowen" not in [h["handle"] for h in out["handles"]]
@@ -952,7 +952,7 @@ async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path
         out["news"]
         == f"[{first['handle']}] billing-ab (idle): nothing new | ledger (idle): reply to you, read with after=1"
     )
-    assert out["next_step"].startswith("Also following ledger, from calls you made at the same moment")
+    assert out["next_step"].startswith("Also following ledger, from your calls a moment ago without your handle")
     assert second["handle"] not in [h["handle"] for h in out["handles"]]
 
 
@@ -1021,3 +1021,32 @@ async def test_a_reply_not_yet_whole_says_to_read_the_rest(served):
     assert out["next_step"].startswith(
         f"You don't have the whole reply yet: read_session_output(after={out['next_after']}) before telling the owner"
     ), out["next_step"]
+
+
+async def test_a_stray_handle_folds_into_the_next_handle_passed_that_already_had_its_sessions(served):
+    # Seen as a risk (owner, 2026-11-13): a relay that forgets its handle on a send gets a new one,
+    # goes back to its own, and the reply under the new one would go unheard.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "read_session_output", session="billing-ab", handle="Rowan")
+        desk.set("busy")
+        stray = await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
+        desk.transcript.append(turn("assistant", "Gone."))
+        desk.set("idle")
+        out = await call(c, "list_active_sessions", handle="Rowan")
+    assert out["news"].startswith("[Rowan] billing-ab (idle): reply to you")
+    assert out["next_step"].startswith("Also following billing-ab, from your calls a moment ago without your handle")
+    assert stray["handle"] not in [h["handle"] for h in out["handles"]]
+
+
+async def test_a_new_relay_s_handle_is_not_folded_into_another_relay_s(served):
+    # Another relay's waits call every half minute: a new relay's first handle, on a session that
+    # relay never touched, stays the new relay's.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        new = await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
+        out = await call(c, "list_active_sessions", handle="Rowan")
+    assert new["handle"] in [h["handle"] for h in out["handles"]]
+    assert "Also following" not in out.get("next_step", "")
