@@ -1127,3 +1127,17 @@ async def test_a_quiet_follow_ends_after_a_day_with_nothing_new(tmp_path, world)
             desk.transcript.append(turn("assistant", "Invoices done."))
             out = await call(c, "list_active_sessions")
     assert "news" not in out
+
+
+async def test_a_name_proposal_is_news_once_for_each_relay(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "propose_session_name", session="billing-ab", new_name="billing export", why="now exports")
+        first = await call(c, "list_active_sessions")
+        again = await call(c, "list_active_sessions")
+        other = await call(c, "list_active_sessions", handle="Rowan")
+    said = 'billing-ab: proposes the name "billing export" (now exports)'
+    assert first["news"].startswith(f"[Juniper] {said}") and "owner_chose" in first["news"]
+    assert "news" not in again
+    assert other["news"].startswith(f"[Rowan] {said}")

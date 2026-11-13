@@ -95,6 +95,40 @@ RELAYED_MESSAGE_NOTE = (
     "pointing back to text it may not have. For the owner's own OK, which a relayed message "
     "can't give, ask with the bridge's confirm_ask tool.]"
 )
+# Added after the note above at most once in this long per session, so names keep up with the work
+# (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
+NAME_CHECK_SECONDS = 3600.0
+NAME_CHECK_FREE = (
+    '[From the claude-voice bridge, about once an hour: this session is named "{name}". If that no longer '
+    'says what it is working on, rename it with the bridge\'s rename_session tool (session "{name}"); the '
+    "bridge puts it in the braces {{ }} that mark a name an agent chose. If it still fits, do nothing and don't "
+    "mention this.]"
+)
+NAME_CHECK_OWNERS = (
+    '[From the claude-voice bridge, about once an hour: this session is named "{name}", which the owner '
+    "chose, so only the owner renames it. If that no longer says what it is working on, propose a new name "
+    "with the bridge's propose_session_name tool, for the relay to put to the owner. If it still fits, do "
+    "nothing and don't mention this.]"
+)
+OWNERS_NAME_REFUSAL = (
+    'The owner chose the name "{name}", so only the owner renames it: propose the new name with '
+    "propose_session_name instead. The relay puts it to the owner, and renames with owner_chose true once "
+    "they agree."
+)
+# A name proposal is shown for this long, or until the session is renamed.
+NAME_PROPOSAL_SECONDS = 24 * 3600.0
+NAME_PROPOSAL_NEWS = (
+    '{session}: proposes the name "{name}" ({why}); put it to the owner, and rename_session with owner_chose '
+    "true if they agree; if not, nothing to do, it lapses in a day"
+)
+OWNER_CHOSE_PARAM = (
+    "True only for a name the owner chose or agreed to. Left out, the name is put in curly braces, marking an "
+    "agent's choice."
+)
+START_OWNER_CHOSE_PARAM = (
+    "True only for a name the owner chose or agreed to. Left out, the name, or the one made from the folder, "
+    "is put in curly braces, marking an agent's choice."
+)
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
 # A question asked without a length of wait: Claude's voice mode moves a call still running after
@@ -471,6 +505,11 @@ Sessions
   and take over.
 - side_chat marks a "btw: ..." aside the owner opened from a desktop session:
   give it no work unless asked.
+- A session name in curly braces, such as {billing export}, was chosen by an
+  agent and may change by itself; say it without the braces, and the bridge
+  finds it either way. A name the
+  owner gives, or agrees to when a session proposes one (it shows in your
+  news), goes to rename_session or start_active_session with owner_chose true.
 - A refusal from Claude Code's auto mode is not a prompt: the session asks for
   the owner's OK with confirm_ask, and you hand the owner its link.
 
@@ -1518,6 +1557,8 @@ def build_server(
             unfollowed = marks.get(sid, {}).get("sent") is None
             if unfollowed and session_state(d) == "waiting on a permission prompt":
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
+        if handle:
+            items.extend(proposals_news(handle, live))
         step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
         if tool in ("read_session_output", "wait_for_session", "ask_active_session"):
             step = " ".join(filter(None, [partial_reply(structured), step])) or None
@@ -2086,6 +2127,7 @@ def build_server(
             bool,
             Field(description=CREATE_FOLDER_PARAM),
         ] = False,
+        owner_chose: Annotated[bool, Field(description=START_OWNER_CHOSE_PARAM)] = False,
     ) -> dict[str, Any]:
         """Start new work: a session in a folder, on Remote Control on phone and PC.
         It is listed at once, so ask_active_session reaches it, and has no window unless the
@@ -2110,6 +2152,9 @@ def build_server(
             path = manager.resolve_folder(folder)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
+        if not owner_chose:
+            # RULE: a started session gets the marker unless the owner named it
+            name = renames.marked(renames.clean(name or "") or f"{path.name}-{secrets.token_hex(2)}")
         # RULE: starting the same session twice gives back the one already running
         same = next(
             (d for d in live_sessions() if name and d.get("name") == name.strip() and d.get("cwd") == str(path)), None
@@ -2142,8 +2187,8 @@ def build_server(
         wake = options.get("wake")
         taken = renames.taken(live_sessions())
         wanted = "" if wake else (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
-        while wanted in taken:
-            wanted = f"{wanted}-{secrets.token_hex(2)}"
+        if not wake:
+            wanted = renames.unique(wanted, taken)
         if start_in is not None and start_in not in config.LAUNCHES:
             raise ToolError(f"start_in is one of: {', '.join(config.LAUNCHES)}")
         how: dict[str, Any] = {}
@@ -2541,6 +2586,9 @@ def build_server(
             }
             if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
                 row["side_chat"] = True
+            proposal = name_proposal(d)
+            if proposal:
+                row["name_proposal"] = {"name": proposal["name"], "why": proposal["why"]}
             moved = moved_to(d)
             if moved:
                 row["status"], row["moved_to"] = "moved", moved
@@ -3107,12 +3155,15 @@ def build_server(
     async def rename_session(
         session: Annotated[str, Field(description=SESSION_PARAM)],
         new_name: Annotated[str, Field(description="Any text on one line, up to 64 characters.")],
+        owner_chose: Annotated[bool, Field(description=OWNER_CHOSE_PARAM)] = False,
     ) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
         A session the bridge started is renamed in Claude Code too, and the phone and the desktop
         app show it within seconds; for any other, only the bridge's lists know the new name.
         claude_code: renamed, pending (mid-turn: the bridge renames it in Claude Code by itself
-        once idle), bridge_only, or already (Claude Code had that name); note says more."""
+        once idle), bridge_only, or already (Claude Code had that name); note says more. A name
+        the owner chose (not in curly braces) is renamed only with owner_chose; a name is found
+        with or without its braces."""
         new_name = renames.clean(new_name)
         if not renames.valid(new_name):
             raise ToolError("A session name needs at least one visible character.")
@@ -3121,8 +3172,14 @@ def build_server(
         if target is None:
             raise ToolError(f"No running session called {session!r}; see list_active_sessions")
         sid, old = str(target["sessionId"]), str(target["name"])
+        if not owner_chose:
+            # RULE: an agent cannot rename a session the owner named
+            if renames.owners(target):
+                raise ToolError(OWNERS_NAME_REFUSAL.format(name=old))
+            # RULE: a name an agent gives gets the marker
+            new_name = renames.marked(new_name)
         # RULE: a new name already in use is refused
-        if new_name in renames.taken(rows, but=sid):
+        if renames.in_use(new_name, rows, but=sid):
             raise ToolError(f"{new_name!r} is already in use by another session")
         claude_name = address(target)
         manager.store.rename(sid, claude_name, new_name, [old, claude_name, *target.get("aliases", [])])
@@ -3158,6 +3215,57 @@ def build_server(
                 f" so Claude Code and the desktop app keep the name {claude_name}."
             )
         return "renamed", "Renamed in Claude Code too; the session lists show it within seconds."
+
+    def proposals() -> dict[str, dict[str, Any]]:
+        return dict(manager.store.get_setting("name_proposals") or {})
+
+    def name_proposal(d: dict[str, Any]) -> dict[str, Any] | None:
+        """The name proposed for a running session, while it still has the name it was proposed for."""
+        p = proposals().get(str(d.get("sessionId")))
+        # RULE: a name proposal ends once the session is renamed
+        if not p or p["for"] != d.get("name") or manager.clock() - p["at"] > NAME_PROPOSAL_SECONDS:
+            return None
+        return p
+
+    def proposals_news(handle: str, live: dict[str, dict[str, Any]]) -> list[str]:
+        """Each name proposal this relay hasn't been told of, once; never to the session that proposed it."""
+        saved, items = proposals(), []
+        for sid, d in live.items():
+            p = name_proposal(d)
+            # RULE: a name proposal is news once for each relay
+            if not p or handle in p["told"] or handle in renames.answers_to(d):
+                continue
+            p["told"].append(handle)
+            saved[sid] = p
+            items.append(NAME_PROPOSAL_NEWS.format(session=d.get("name"), name=p["name"], why=p["why"]))
+        if items:
+            manager.store.set_setting("name_proposals", saved)
+        return items
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def propose_session_name(
+        session: Annotated[str, Field(description=SESSION_PARAM)],
+        new_name: Annotated[str, Field(description="Any text on one line, up to 64 characters.")],
+        why: Annotated[str, Field(description="Why, in a few words the owner can hear.")],
+    ) -> dict[str, Any]:
+        """Propose a new name for a session the owner named; the owner decides.
+        Only the owner renames a session whose name isn't in curly braces; for a name in braces,
+        an agent's, use rename_session instead. The proposal shows on the session's row in
+        list_active_sessions and once in each relay's news, for a day or until it is renamed; a
+        later proposal replaces it, and no name check comes meanwhile."""
+        new_name = renames.clean(new_name)
+        if not renames.valid(new_name):
+            raise ToolError("A session name needs at least one visible character.")
+        rows = [d for d in live_sessions() if under_root(d.get("cwd"))]
+        target = named_for_voice(rows, session)
+        if target is None:
+            raise ToolError(f"No running session called {session!r}; see list_active_sessions")
+        sid, name = str(target["sessionId"]), str(target["name"])
+        saved = proposals()
+        saved[sid] = {"for": name, "name": new_name, "why": " ".join(why.split()), "at": manager.clock(), "told": []}
+        manager.store.set_setting("name_proposals", saved)
+        log.info("name proposed for %s: %s (%s)", name, new_name, why)
+        return {"name": name, "proposed": new_name, "status": "proposed"}
 
     rename_tried: dict[str, tuple[str, float]] = {}  # session id: the name last written, and when
 
@@ -3198,7 +3306,7 @@ def build_server(
         before = len(numbered_turns(target))
         typed = owner_typed(target)
         budget = repos.budgets.seconds(transcripts.current_client.get())
-        delivery = asyncio.ensure_future(send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}"))
+        delivery = asyncio.ensure_future(send_into(target, relayed(target, message)))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -3214,6 +3322,24 @@ def build_server(
             **typed,
             **woke,
         }
+
+    name_checked: dict[str, float] = {}  # session id: when its name was last checked, or first seen
+
+    def relayed(target: dict[str, Any], message: str) -> str:
+        """A relayed message as the session gets it: the bridge's note after it, and about once an hour
+        a check that its name still fits. A session first seen gets none, its name being new."""
+        text = f"{message}\n\n{RELAYED_MESSAGE_NOTE}"
+        sid, now = str(target.get("sessionId")), manager.clock()
+        last = name_checked.setdefault(sid, now)
+        # RULE: the name check comes once an hour on the next relayed message
+        if now - last < NAME_CHECK_SECONDS:
+            return text
+        # RULE: no name check while a proposal waits for the owner
+        if name_proposal(target):
+            return text
+        name_checked[sid] = now
+        check = NAME_CHECK_OWNERS if renames.owners(target) else NAME_CHECK_FREE
+        return f"{text}\n\n{check.format(name=str(target.get('name')))}"
 
     def owner_typed(target: dict[str, Any]) -> dict[str, str]:
         """The note for a send to a session the owner typed in since the relay last read it."""
@@ -3498,7 +3624,7 @@ def build_server(
         before = len(numbered_turns(target))
         typed = owner_typed(target)
         was_busy = target.get("status") in BUSY
-        out = await send_into(target, f"{message}\n\n{RELAYED_MESSAGE_NOTE}")
+        out = await send_into(target, relayed(target, message))
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 

@@ -56,3 +56,8 @@ def test_the_manual_states_its_central_rules():
         "settings → connectors",  # where a missing new tool gets refreshed
     ):
         assert words in manual, words
+
+
+def test_the_manual_says_what_the_name_marker_means():
+    manual = INSTRUCTIONS.lower()
+    assert "in curly braces, such as {billing export}, was chosen by an" in manual and "owner_chose true" in manual

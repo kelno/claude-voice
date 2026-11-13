@@ -67,13 +67,13 @@ async def test_a_started_session_runs_in_the_background_and_is_listed_at_once(tm
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
     assert out["started_in"] == "background" and "note" not in out
     assert {k: out[k] for k in ("name", "claude_session_id", "folder", "status")} == {
-        "name": "invoices",
-        "claude_session_id": "sid-invoices",
+        "name": "{invoices}",  # a name the relay chose
+        "claude_session_id": "sid-{invoices}",
         "folder": "billing",
         "status": "idle",
     }
-    assert starter.calls == [(str(world[0] / "billing"), "invoices")]
-    assert "invoices" in {r["name"] for r in listed["sessions"]}
+    assert starter.calls == [(str(world[0] / "billing"), "{invoices}")]
+    assert "{invoices}" in {r["name"] for r in listed["sessions"]}
 
 
 async def test_without_a_name_one_is_made_from_the_folder_and_never_clashes(tmp_path, world):
@@ -81,7 +81,8 @@ async def test_without_a_name_one_is_made_from_the_folder_and_never_clashes(tmp_
     async with Client(bridge(tmp_path, world, starter)) as c:
         first = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
         second = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
-    assert first["name"].startswith("billing-") and second["name"].startswith("billing-")
+    # Made by the bridge, not the owner, so in the braces that mark an agent's name.
+    assert first["name"].startswith("{billing-") and second["name"].startswith("{billing-")
     assert second["name"] != first["name"]  # no name given: a new session each time
 
 
@@ -313,7 +314,7 @@ async def test_a_session_the_bridge_started_can_be_stopped_and_is_gone_after(tmp
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
         again = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
     assert out == {"name": "invoices", "status": "stopped"}
-    assert stopper.calls == ["sid-invoices"]
+    assert stopper.calls == ["sid-{invoices}"]
     assert "invoices" not in {r["name"] for r in listed["sessions"]}
     assert again["status"] == "not_running"
 

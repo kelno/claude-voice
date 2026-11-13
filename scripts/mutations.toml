@@ -450,7 +450,7 @@ replace = 'return False'
 [[rule]]
 name = "a new name already in use is refused"
 file = "src/claude_voice/server.py"
-find = 'if new_name in renames.taken\(rows, but=sid\):'
+find = 'if renames.in_use\(new_name, rows, but=sid\):'
 replace = 'if False:'
 
 [[rule]]
@@ -799,8 +799,8 @@ replace = 'pass'
 [[rule]]
 name = "a session name is found whatever its capitals"
 file = "src/claude_voice/renames.py"
-find = 'return a is not None and \(str\(a\).casefold\(\) == session.casefold\(\) if any_case else a == session\)'
-replace = 'return a is not None and a == session'
+find = 'return name.casefold\(\) == wanted.casefold\(\) if any_case else name == wanted'
+replace = 'return name == wanted'
 
 [[rule]]
 name = "names that differ only by capitals are all refused unless one is exact"
@@ -1288,4 +1288,64 @@ replace = 'pass'
 name = "a new turn in a quiet follow wakes a wait"
 file = "src/claude_voice/server.py"
 find = 'if quiet and quiet_new_turn\(sid, mark, live\[sid\]\) is not None:'
+replace = 'if False:'
+
+[[rule]]
+name = "a session is found by its name without the marker"
+file = "src/claude_voice/renames.py"
+find = 'name, wanted = bare\(name\), bare\(wanted\)'
+replace = 'pass'
+
+[[rule]]
+name = "claude code's own title may be renamed by an agent"
+file = "src/claude_voice/renames.py"
+find = 'return d.get\("deliver_to"\) is not None or d.get\("nameSource"\) not in AUTOMATIC'
+replace = 'return True'
+
+[[rule]]
+name = "a name that differs only by the marker is in use"
+file = "src/claude_voice/renames.py"
+find = 'return bare\(name\) in \{bare\(n\) for n in taken\(rows, but\)\}'
+replace = 'return name in taken(rows, but)'
+
+[[rule]]
+name = "an agent cannot rename a session the owner named"
+file = "src/claude_voice/server.py"
+find = 'if renames.owners\(target\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a name an agent gives gets the marker"
+file = "src/claude_voice/server.py"
+find = 'new_name = renames.marked\(new_name\)'
+replace = 'pass'
+
+[[rule]]
+name = "the name check comes once an hour on the next relayed message"
+file = "src/claude_voice/server.py"
+find = 'if now - last < NAME_CHECK_SECONDS:'
+replace = 'if False:'
+
+[[rule]]
+name = "a started session gets the marker unless the owner named it"
+file = "src/claude_voice/server.py"
+find = 'name = renames.marked\(renames.clean\(name or ""\) or f"\{path.name\}-\{secrets.token_hex\(2\)\}"\)'
+replace = 'pass'
+
+[[rule]]
+name = "a name proposal ends once the session is renamed"
+file = "src/claude_voice/server.py"
+find = 'if not p or p\["for"\] != d.get\("name"\) or manager.clock\(\) - p\["at"\] > NAME_PROPOSAL_SECONDS:'
+replace = 'if not p:'
+
+[[rule]]
+name = "a name proposal is news once for each relay"
+file = "src/claude_voice/server.py"
+find = 'if not p or handle in p\["told"\] or handle in renames.answers_to\(d\):'
+replace = 'if not p:'
+
+[[rule]]
+name = "no name check while a proposal waits for the owner"
+file = "src/claude_voice/server.py"
+find = 'if name_proposal\(target\):'
 replace = 'if False:'

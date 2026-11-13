@@ -231,7 +231,7 @@ async def test_words_that_fit_several_sessions_are_answered_with_the_choices_to_
 
 async def test_a_session_is_renamed_and_chosen_by_its_address(tmp_path, world):
     server, _ = voice(tmp_path, world)
-    renamed = await call(server, "rename_session", session="arm", new_name="gripper")
+    renamed = await call(server, "rename_session", session="arm", new_name="gripper", owner_chose=True)
     assert not renamed.is_error, renamed.content
     assert renamed.structured_content["was"] == "fix-gripper"
     chosen = await call(server, "set_active_session", session="shop/manager")

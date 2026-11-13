@@ -9,11 +9,17 @@ old one, dropped once Claude Code has the new one or someone renames it another 
 
 from __future__ import annotations
 
+import secrets
 import subprocess
 from collections.abc import Callable, Iterable
 from typing import Any
 
 LONGEST = 64
+# Around a name an agent chose, so the owner sees it may change by itself; braces, which a voice
+# leaves unsaid and nothing else in the bridge puts around a word (owner, 2026-11-13).
+OPEN, CLOSE = "{", "}"
+# Claude Code's nameSource for a title it made itself, which nobody chose.
+AUTOMATIC = {"auto", "derived"}
 
 
 def clean(name: str) -> str:
@@ -26,6 +32,32 @@ def clean(name: str) -> str:
 def valid(name: str) -> bool:
     # RULE: a session name needs at least one visible character
     return bool(name.strip())
+
+
+def is_marked(name: str) -> bool:
+    """Whether a name is in the braces that mark a name an agent chose."""
+    name = name.strip()
+    return len(name) > 2 and name.startswith(OPEN) and name.endswith(CLOSE)
+
+
+def bare(name: str) -> str:
+    """A name without its braces: said aloud, a name comes back without them."""
+    return name.strip()[1:-1].strip() if is_marked(name) else name.strip()
+
+
+def marked(name: str) -> str:
+    """A name an agent chose, in one pair of braces, within LONGEST characters."""
+    return OPEN + bare(name)[: LONGEST - 2].strip() + CLOSE
+
+
+def owners(d: dict[str, Any]) -> bool:
+    """Whether the owner chose this running session's name: not marked, and not Claude Code's own
+    automatic title (the bridge's name on top of it doesn't count as automatic)."""
+    name = str(d.get("name") or "")
+    if is_marked(name):
+        return False
+    # RULE: claude code's own title may be renamed by an agent
+    return d.get("deliver_to") is not None or d.get("nameSource") not in AUTOMATIC
 
 
 def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], aliases: dict[str, list[str]]):
@@ -45,11 +77,17 @@ def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], ali
 
 def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: bool = False) -> bool:
     """Whether `session` names this running session: by name or id, or with `old_names`
-    by a name it had before; with `any_case`, whatever the capitals."""
+    by a name it had before; with `any_case`, whatever the capitals and the marker."""
 
     def same(a: Any) -> bool:
+        if a is None:
+            return False
+        name, wanted = str(a), session
+        if any_case:
+            # RULE: a session is found by its name without the marker
+            name, wanted = bare(name), bare(wanted)
         # RULE: a session name is found whatever its capitals
-        return a is not None and (str(a).casefold() == session.casefold() if any_case else a == session)
+        return name.casefold() == wanted.casefold() if any_case else name == wanted
 
     if same(d.get("name")) or same(str(d.get("sessionId"))):
         return True
@@ -97,6 +135,22 @@ def by_name(rows: Iterable[dict[str, Any]]) -> dict[str, str]:
 def taken(rows: Iterable[dict[str, Any]], but: str | None = None) -> set[str]:
     """Every name a running session answers to, other than session `but`'s."""
     return {name for name, sid in by_name(rows).items() if sid != but}
+
+
+def in_use(name: str, rows: Iterable[dict[str, Any]], but: str | None = None) -> bool:
+    """Whether `name` is taken, its marker aside: names that differ only by it would be found as one."""
+    # RULE: a name that differs only by the marker is in use
+    return bare(name) in {bare(n) for n in taken(rows, but)}
+
+
+def unique(wanted: str, taken_names: set[str]) -> str:
+    """`wanted`, or with a short suffix until no name in `taken_names` has it, inside its braces if it has them."""
+    mark, base = is_marked(wanted), bare(wanted)
+    bares = {bare(n) for n in taken_names}
+    name = base
+    while name in bares:
+        name = f"{base}-{secrets.token_hex(2)}"
+    return marked(name) if mark else name
 
 
 class Tmux:
