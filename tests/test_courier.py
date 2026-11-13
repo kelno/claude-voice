@@ -1,6 +1,7 @@
 """The courier that carries a message into a running session, kept warm between deliveries."""
 
 import asyncio
+import inspect
 import json
 
 from claude_agent_sdk import (
@@ -452,6 +453,20 @@ async def test_a_turn_a_reply_started_never_ends_a_delivery():
     assert out["delivered"] is True
     assert len(factory.clients) == 1  # no fresh courier, so no second copy and no lost seconds
     await courier.close()
+
+
+async def test_a_relayed_message_carries_only_the_forks_own_note_on_who_reads_the_reply(monkeypatch):
+    # The fork's note already says the relay reads the reply, and the relay may be a session, not a voice.
+    from claude_voice import server, transcripts
+
+    factory = Factory([[sent_text("billing", "x"), done("DELIVERED")]])
+    monkeypatch.setattr(transcripts, "_courier", Courier(client_factory=factory))
+    await transcripts.deliver_relayed("billing", "Is the build green?\n\n[the fork's note]")
+    message = factory.clients[0].executed[0][1]["message"]
+    assert message == "Is the build green?\n\n[the fork's note]"
+    assert transcripts.READ_BY_VOICE not in message
+    assert inspect.signature(server.build_server).parameters["deliver"].default is transcripts.deliver_relayed
+    await transcripts._courier.close()
 
 
 async def test_a_carried_message_says_the_voice_reads_the_reply(monkeypatch):

@@ -1125,7 +1125,7 @@ def build_server(
     oauth: OAuthProvider | None = None,
     conversations: Callable[..., list[SDKSessionInfo]] = list_claude_sessions,
     live_dir: Path = LIVE_DIR,
-    deliver: Callable[[str, str], Awaitable[dict[str, Any]]] = transcripts.deliver,
+    deliver: Callable[[str, str], Awaitable[dict[str, Any]]] = transcripts.deliver_relayed,
     channels: Any = None,
     read_transcript: Callable[[str, str | None], list[Any]] | None = None,
     watch_interval: float | None = None,

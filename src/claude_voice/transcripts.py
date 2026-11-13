@@ -1371,6 +1371,13 @@ async def deliver(name: str, text: str) -> dict[str, Any]:
     return await _courier.deliver(name, f"{text}\n\n{READ_BY_VOICE}")
 
 
+async def deliver_relayed(name: str, text: str) -> dict[str, Any]:
+    """Send a relayed message as it is: the fork's own note under it already says who reads the
+    reply, and the relay reading it may be another session rather than a voice."""
+    # RULE: a relayed message carries only the forks own note on who reads the reply
+    return await _courier.deliver(name, text)
+
+
 def hear_replies(on_reply: Callable[[str, str], None]) -> None:
     """Pass each answer a session sends back to the shared courier to `on_reply`."""
     _courier.on_reply = on_reply
