@@ -302,9 +302,11 @@ NEXT_PARTIAL_CUT = (
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
+# Points to the same step as the result's next_step: upstream's "read_session_output in a
+# moment" left a cold reader torn between the two (2026-11-13).
 SENDING_SAY = (
-    "The message to {name} is on its way but not yet confirmed. Read the session's output "
-    "with read_session_output in a moment to see that it arrived."
+    "The message to {name} is on its way but not yet confirmed. "
+    "wait_for_session with the next_after you were given waits for its reply."
 )
 # Claude Code keeps one JSON file per running session here.
 LIVE_DIR = Path("~/.claude/sessions").expanduser()

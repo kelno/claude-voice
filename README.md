@@ -422,8 +422,8 @@ may already have run while it reconnected, so it gets 10 (`claude_app`). The
 voice app waits longer and gets 120 (`voice_app`); anything else gets
 `default`, 60. A message that takes Claude Code longer to deliver is answered
 "sending" and delivered in the background. Its `say` tells the caller the
-message is on its way but not yet confirmed, and that the session's output
-shows whether it arrived. A wait for a session's answer ends at the budget with
+message is on its way but not yet confirmed, and that wait_for_session, with
+the next_after it was given, waits for its reply. A wait for a session's answer ends at the budget with
 "still working".
 
 Your own rules for the voice go in the file `voice_instructions_file` names,

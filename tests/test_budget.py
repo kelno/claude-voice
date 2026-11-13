@@ -147,7 +147,8 @@ async def test_a_message_still_sending_says_it_is_not_yet_confirmed_and_what_to_
         courier.release.set()
     assert out["status"] == "sending"
     assert "on its way" in out["say"] and "not yet confirmed" in out["say"]
-    assert "read_session_output" in out["say"]  # the step that shows whether it arrived
+    # The step that follows, the same one next_step gives: a cold reader was torn between two (2026-11-13).
+    assert "wait_for_session" in out["say"] and "next_after" in out["say"]
 
 
 async def test_a_delivery_that_fails_in_the_background_is_reported_as_not_delivered(world):
