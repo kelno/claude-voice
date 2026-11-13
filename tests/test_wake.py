@@ -184,3 +184,22 @@ async def test_a_session_at_rest_when_the_pc_shut_down_is_woken_too(tmp_path):
 
     woken = await wake_interrupted(store, jobs, {"s-idle", "s-blocked", "s-busy"}, starter)
     assert woken == ["s-idle", "s-blocked", "s-busy"]
+
+
+async def test_a_session_still_running_is_never_woken(tmp_path):
+    # Seen 2026-11-13: the bridge restarted while the PC stayed on; a session at rest, still
+    # running, was listed as blocked, and waking it made Claude Code start an empty copy of it.
+    import os
+
+    work, store = setup(tmp_path)
+    for sid in ("s-running", "s-dead"):
+        store.record_started(sid, sid, str(work))
+    starter = Starter(tmp_path, register=False)
+
+    async def jobs():
+        return [
+            {**job("s-running", work, state="blocked"), "pid": os.getpid(), "status": "idle"},
+            job("s-dead", work, state="done"),
+        ]
+
+    assert await wake_interrupted(store, jobs, {"s-running", "s-dead"}, starter) == ["s-dead"]

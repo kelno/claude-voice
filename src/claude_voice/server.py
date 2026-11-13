@@ -884,7 +884,9 @@ async def wake_interrupted(
     one that was mid-turn as failed, one at rest as done, and one waiting on a permission prompt
     as blocked. The bridge stops with them, so one counts as interrupted when it was running at
     the bridge's last look (`was_live`) and now shows one of those; one stopped on purpose shows
-    stopped, and one stopped earlier was gone from that look. Windows' boot time can't tell: with
+    stopped, and one stopped earlier was gone from that look. A session at rest that is still
+    running can show blocked or done too, after a restart of the bridge alone: one whose process
+    is alive is never woken, since Claude Code would start an empty copy. Windows' boot time can't tell: with
     Fast Startup a shutdown resumes the old kernel. Each is woken in place with its saved
     options, Remote Control included, and logged. Returns their names.
 
@@ -898,6 +900,9 @@ async def wake_interrupted(
         # RULE: a session at rest when the PC shut down is woken too
         if job.get("state") not in INTERRUPTED or not cwd or sid not in was_live or not store.was_started(sid):
             continue
+        # RULE: a session still running is never woken
+        if job.get("pid") and procs.alive(int(job["pid"])):
+            continue  # a restart of the bridge alone: Claude Code lists one at rest as blocked or done too
         todo.append((sid, cwd, str(job.get("name") or sid)))
     if todo and ready is not None:
         deadline = time.monotonic() + patience
