@@ -18,6 +18,7 @@ runs from, so the file is only needed to change something:
     claude_voice_ui = "~/src/claude-voice-ui"   # default: next to it
     ui_dist = "~/src/claude-voice-ui/dist"      # default: inside it; CLAUDE_VOICE_UI_DIR wins
     contribute = "~/src/claude-voice"           # the contribute session's clone; default: claude_voice
+    claude_voice_mobile = "~/src/claude-voice-mobile"  # the phone app's clone; default: next to it
 
     [sessions]
     remote_control = true                       # a session the bridge starts is reachable from the Claude app
@@ -25,7 +26,7 @@ runs from, so the file is only needed to change something:
     terminal_command = "kitty --directory {cwd}"  # default: the first of gnome-terminal, kgx, konsole, xterm
 
     [budgets]                                   # seconds each client is answered within
-    claude_app = 20                             # the Claude app drops a call after about 30 s
+    claude_app = 10                             # the Claude app drops a call after about 30 s
     voice_app = 120
     default = 60
 """
@@ -42,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 FILE = Path("~/.config/claude-voice/config.toml")
+STATE_DIR = Path("~/.local/state/claude-voice")  # what the bridge keeps between runs
 REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 UPSTREAM = "roykollensvendsen/claude-voice"
 UPSTREAM_UI = "roykollensvendsen/claude-voice-ui"
@@ -65,6 +67,7 @@ class Paths:
     claude_voice_ui: Path | None
     ui_dist: Path | None
     contribute: Path | None
+    claude_voice_mobile: Path | None = None
 
 
 @dataclass
@@ -148,12 +151,13 @@ def _agent(raw: dict[str, Any] | None, home: str) -> tuple[bool, Path]:
     return sessions, _path(raw.get("root"), home) or Path(home)
 
 
-BUDGETS = {"claude_app": 20.0, "voice_app": 120.0, "default": 60.0}
+BUDGETS = {"claude_app": 10.0, "voice_app": 120.0, "default": 60.0}
 
 
 class Budgets:
     """How long each client is answered within, in seconds: the Claude app drops a tool call
-    after about 30 seconds, the voice app waits longer. Slow work goes on in the background."""
+    after about 30 seconds, counted from before a reconnect, so it gets a third of that. The
+    voice app waits longer. Slow work goes on in the background."""
 
     def __init__(self, seconds: Mapping[str, float] | None = None) -> None:
         self._seconds = {**BUDGETS, **(seconds or {})}
@@ -239,7 +243,8 @@ def _paths(raw: dict[str, Any], own_clone: Path | None, env: Mapping[str, str], 
         _path(env.get("CLAUDE_VOICE_UI_DIR"), home) or _path(raw.get("ui_dist"), home) or (ui / "dist" if ui else None)
     )
     contribute = _path(raw.get("contribute"), home) or voice
-    return Paths(voice, ui, dist, contribute)
+    mobile = _path(raw.get("claude_voice_mobile"), home) or (voice.parent / "claude-voice-mobile" if voice else None)
+    return Paths(voice, ui, dist, contribute, mobile)
 
 
 def _sessions(raw: dict[str, Any]) -> Sessions:

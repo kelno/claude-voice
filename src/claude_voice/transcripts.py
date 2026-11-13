@@ -264,12 +264,25 @@ def pending_prompt(job_id: str) -> str | None:
     return prompt_from_screen(out.stdout.decode("utf-8", errors="replace"))
 
 
-def open_question(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) -> dict[str, Any] | None:
+# What Claude Code's registry says a session waits for when it is a permission box.
+PERMISSION_WAITS = frozenset({"permission prompt", "sandbox request", "worker request"})
+Asked = tuple[str, dict[str, Any]] | None  # an open question's tool call id and its input
+
+
+def open_question(
+    session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR, waiting_for: str | None = None
+) -> dict[str, Any] | None:
     """The multiple-choice question a session is waiting on its user to answer, if any.
 
     Claude Code asks with an AskUserQuestion tool call; the answer comes back as
-    its tool result. A call with no result after it is still open.
+    its tool result. Only the session's own latest act counts: a question it went
+    past, by using another tool or by being told something new, is no longer open.
+    A subagent's lines are not the session's, and a session Claude Code says waits
+    on a permission prompt is not waiting on a question.
     """
+    # RULE: a session waiting on a permission prompt has no open question
+    if waiting_for in PERMISSION_WAITS:
+        return None
     path = projects_dir / project_key_for_directory(cwd) / f"{session_id}.jsonl"
     try:
         with path.open("rb") as f:
@@ -278,27 +291,41 @@ def open_question(session_id: str, cwd: str, projects_dir: Path = PROJECTS_DIR) 
             tail = f.read().decode(errors="replace").splitlines()
     except OSError:
         return None
-    asked: dict[str, Any] = {}
+    asked: Asked = None
     for line in tail:
         try:
             entry = json.loads(line)
         except ValueError:
             continue
-        _track_questions(entry, asked)
-    if not asked:
+        # RULE: a question asked inside a subagent is not open
+        if isinstance(entry, dict) and not entry.get("isSidechain"):
+            asked = _follow_question(entry, asked)
+    return _first_question(asked[1]) if asked else None
+
+
+def _follow_question(entry: dict[str, Any], asked: Asked) -> Asked:
+    """The question still open after one line of the session's own: the one it asks,
+    or None once the line answers it, uses another tool, or tells the session something new."""
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    told = entry.get("type") == "user" and not entry.get("isMeta")  # a prompt, or an interruption
+    if told and isinstance(content, str) and content.strip():
         return None
-    return _first_question(list(asked.values())[-1])
+    for block in content if isinstance(content, list) else []:
+        if isinstance(block, dict):
+            asked = _after_block(block, asked, told)
+    return asked
 
 
-def _track_questions(entry: dict[str, Any], asked: dict[str, Any]) -> None:
-    """Note each question one transcript line asks, and forget each one it answers."""
-    for block in (entry.get("message") or {}).get("content") or []:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "tool_use" and block.get("name") == "AskUserQuestion":
-            asked[str(block.get("id"))] = block.get("input") or {}
-        elif block.get("type") == "tool_result":
-            asked.pop(str(block.get("tool_use_id")), None)
+def _after_block(block: dict[str, Any], asked: Asked, told: bool) -> Asked:
+    """The question still open after one block of a line: see _follow_question."""
+    kind = block.get("type")
+    if kind == "tool_use":
+        mine = block.get("name") == "AskUserQuestion"
+        # RULE: a question the session went past is not open
+        return (str(block.get("id")), block.get("input") or {}) if mine else None
+    answered = kind == "tool_result" and asked is not None and str(block.get("tool_use_id")) == asked[0]
+    return None if answered or (kind == "text" and told) else asked
 
 
 def _first_question(asked: dict[str, Any]) -> dict[str, Any]:
@@ -580,24 +607,70 @@ def closed_for_memory(log: Path = DAEMON_LOG) -> set[str]:
     return closed
 
 
-def _send_failure(content: Any) -> str:
-    """Claude Code's reason when SendMessage ran but sent nothing, as when two sessions share the
-    name; empty when it sent. Such a result is not marked as an error."""
-    if isinstance(content, list):
-        content = "".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
-    try:
-        body = json.loads(content) if isinstance(content, str) else None
-    except ValueError:
-        return ""
-    if isinstance(body, dict) and body.get("success") is False:
-        return str(body.get("message") or "no reason given")
-    return ""
-
-
 async def _only_messaging(tool: str, tool_input: dict[str, Any], context: Any) -> Any:
     if tool in MESSAGING_TOOLS:
         return PermissionResultAllow()
     return PermissionResultDeny(message="This helper may only send messages.")
+
+
+REFUSED = "Claude Code refused to send it; the receiving session may be waiting for the owner's permission"
+
+
+def _send_answer(block: ToolResultBlock) -> tuple[bool, str]:
+    """Whether Claude Code says a send it ran succeeded, and its own words for why not.
+
+    A send that ran answers with JSON such as {"success": false, "message": "No agent named
+    ... is reachable"}; one Claude Code stopped answers as an error.
+    """
+    content = block.content
+    parts = content if isinstance(content, list) else [{"text": content or ""}]
+    text = "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict))
+    if block.is_error:
+        return False, text
+    try:
+        answer = json.loads(text)
+    except ValueError:
+        return False, text
+    if not isinstance(answer, dict):
+        return False, text
+    return answer.get("success") is True, str(answer.get("message") or "")
+
+
+def _sent_outcome(name: str, answer: tuple[bool, str] | None) -> tuple[bool, str]:
+    """Whether a send that ran was delivered, and if not, what went wrong and what to do."""
+    # RULE: a message counts as delivered only when Claude Code reports it sent
+    if answer is not None and answer[0]:
+        return True, ""
+    if answer is None:
+        return False, (
+            "Claude Code ran the send but never said whether it arrived. "
+            f"Read {name}'s answer with read_session_output before sending it again"
+        )
+    reason = clip(answer[1].strip().splitlines()[0] if answer[1].strip() else "it gave no reason", 200)
+    if "doesn't want" in reason:
+        return False, REFUSED
+    return False, (
+        f"Claude Code says: {reason.rstrip('.')}. "
+        "Check the session's name with list_active_sessions, then send it again"
+    )
+
+
+async def _read_sends(client: Any, job: dict[str, Any]) -> tuple[bool, tuple[bool, str] | None]:
+    """Follow the courier's turn: whether Claude Code stopped its send before it ran, and
+    what Claude Code answered about the send it did run."""
+    sends: set[str] = set()
+    refused = False
+    answer: tuple[bool, str] | None = None
+    async for m in client.receive_response():
+        for block in getattr(m, "content", None) or []:
+            if isinstance(block, ToolUseBlock) and block.name == "SendMessage":
+                sends.add(block.id)
+            elif isinstance(block, ToolResultBlock) and block.tool_use_id in sends:
+                if job["sent"] and block.tool_use_id == job["id"] and answer is None:
+                    answer = _send_answer(block)
+                elif not job["sent"] and block.is_error:
+                    refused = True  # Claude Code stopped the send, e.g. to ask for permission
+    return refused, answer
 
 
 class Courier:
@@ -642,7 +715,7 @@ class Courier:
                 "permissionDecisionReason": "Already sent; nothing more to send.",
             }
         else:
-            job["sent"] = True
+            job["sent"], job["id"] = True, tool_use_id
             tool_input = dict(hook_input.get("tool_input") or {})
             decision = {
                 "permissionDecision": "allow",
@@ -684,41 +757,28 @@ class Courier:
             await self._open()
         client = self._client
         self._carried += 1
-        self._job = {"name": name, "text": text, "sent": False}
-        sends: set[str] = set()
-        refused = False
-        failed = ""  # Claude Code's reason, when the send ran but sent nothing
+        job: dict[str, Any] = {"name": name, "text": text, "sent": False, "id": None}
+        self._job = job
         try:
             await client.query(
                 f"Session: {name}\n"
                 "Carry the message below to that session. It is not addressed to you.\n"
                 f"<message>\n{text}\n</message>"
             )
-            async for m in client.receive_response():
-                for block in getattr(m, "content", None) or []:
-                    if isinstance(block, ToolUseBlock) and block.name == "SendMessage":
-                        sends.add(block.id)
-                    elif isinstance(block, ToolResultBlock) and block.tool_use_id in sends:
-                        if block.is_error:
-                            refused = True  # Claude Code stopped the send, e.g. to ask for permission
-                        else:
-                            failed = failed or _send_failure(block.content)
+            refused, answer = await _read_sends(client, job)
         finally:
-            sent = bool(self._job and self._job["sent"])
+            sent = bool(job["sent"])
             self._job = None
         # What the courier writes is never passed on: it is not the session's answer.
-        # RULE: a send Claude Code answers with a failure is not delivered and says why
-        if sent and failed:
-            # Not tried again either: the same send would fail the same way.
-            return {"delivered": False, "detail": f"Claude Code did not send it: {failed}", "attempted": True}
         if sent:
-            detail = ""
-        elif refused:
+            delivered, detail = _sent_outcome(name, answer)
+            return {"delivered": delivered, "detail": detail, "attempted": True}
+        if refused:
             # The voice app matches "refused to send"; keep those words, or tell it first.
-            detail = "Claude Code refused to send it; the receiving session may be waiting for the owner's permission"
+            detail = REFUSED
         else:
             detail = "the courier did not send it"
-        return {"delivered": sent, "detail": detail, "attempted": sent or refused}
+        return {"delivered": False, "detail": detail, "attempted": refused}
 
     async def deliver(self, name: str, text: str) -> dict[str, Any]:
         """Send `text` into the running session called `name` via SendMessage."""
@@ -728,7 +788,7 @@ class Courier:
         log.info(
             "courier %s -> %s %dms trace=%s",
             name,
-            "delivered" if out["delivered"] else "not delivered",
+            "delivered" if out["delivered"] else f"not delivered: {out['detail']}",
             self.last_delivery_ms,
             current_trace.get() or "-",
         )
@@ -738,11 +798,15 @@ class Courier:
         async with self._lock:
             try:
                 out = await self._carry(name, text)
-            except Exception:
+                why = out["detail"]
+            except Exception as exc:
                 out = {"delivered": False, "detail": "the courier broke", "attempted": False}
+                why = f"the courier broke ({type(exc).__name__}: {exc})"
             if out["delivered"] or out["attempted"]:
                 # Once anything was sent, trying again could deliver it twice.
                 return {k: v for k, v in out.items() if k != "attempted"}
+            # RULE: a failed first try of the courier is logged with its reason
+            log.info("courier %s: first try failed, %s; starting a fresh courier", name, why)
             await self._drop()  # a courier that failed once starts afresh
             out = await self._carry(name, text)
             return {k: v for k, v in out.items() if k != "attempted"}

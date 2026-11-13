@@ -232,6 +232,12 @@ find = 'return max\(min\(seconds, MAX_WAIT_SECONDS, budget\), 0\)'
 replace = 'return max(min(seconds, MAX_WAIT_SECONDS), 0)'
 
 [[rule]]
+name = "a wait time that is not a number is refused"
+file = "src/claude_voice/server.py"
+find = 'if isinstance\(value, bool\) or not math\.isfinite\(seconds\):'
+replace = 'if False:'
+
+[[rule]]
 name = "a new folder must be a simple name under the root"
 file = "src/claude_voice/server.py"
 find = 'if not SIMPLE_FOLDER\.fullmatch\(folder\):'
@@ -628,16 +634,34 @@ find = 'if dry_run:'
 replace = 'if False:'
 
 [[rule]]
-name = "the backup is written only once"
+name = "the old file is kept outside the repository before every change"
 file = "src/claude_voice/permissions.py"
-find = 'if file.exists\(\) and not backup.exists\(\):'
-replace = 'if file.exists():'
+find = 'backup = _backup\(file, folder, backup_root, clock\(\)\) if file.exists\(\) else None'
+replace = 'backup = _backup(file, folder, folder / ".claude", clock()) if file.exists() else None'
 
 [[rule]]
-name = "a retired allow rule is removed"
+name = "an older backup is never overwritten"
 file = "src/claude_voice/permissions.py"
-find = 'kept = \[rule for rule in kept if rule not in rules\.retired\]'
+find = 'with backup.open\("xb"\) as out:'
+replace = 'with backup.open("wb") as out:'
+
+[[rule]]
+name = "a retired allow or ask rule is removed"
+file = "src/claude_voice/permissions.py"
+find = 'kept = \[rule for rule in kept if rule not in rules\.retired_from\(key\)\]'
 replace = 'kept = kept'
+
+[[rule]]
+name = "any other push to main or master asks first"
+file = "src/claude_voice/permissions.py"
+find = 'ask \+= _for_each_branch\(protected\["branches"\], protected\.get\("other pushes", \[\]\)\)'
+replace = 'ask += []'
+
+[[rule]]
+name = "a tool that moves something in the house asks first, by every name it is seen under"
+file = "src/claude_voice/permissions.py"
+find = 'ask \+= \[f"mcp__\{server\}__\{tool\}" for server in devices\["servers"\] for tool in devices\["tools"\]\]'
+replace = 'ask += []'
 
 [[rule]]
 name = "a plugin that could not be listed is reported as not started never as changed tools"
@@ -656,6 +680,12 @@ name = "a first listing waits as long as the plugins own time limit"
 file = "src/claude_voice/plugins.py"
 find = 'return max\(LIST_SECONDS, self\.spec\.timeout\)'
 replace = 'return LIST_SECONDS'
+
+[[rule]]
+name = "a plugin that stays down is logged once not on every try"
+file = "src/claude_voice/plugins.py"
+find = 'if not self\._down:'
+replace = 'if True:'
 
 [[rule]]
 name = "the log says why a plugin could not be listed"
@@ -805,7 +835,7 @@ replace = 'if False:'
 [[rule]]
 name = "a forced push can never reach main or master"
 file = "src/claude_voice/permissions.py"
-find = 'deny \+= \[f"Bash\(\{push\}\)" for push in pushes\]'
+find = 'deny \+= _for_each_branch\(protected\["branches"\], protected\["forced pushes"\]\)'
 replace = 'deny += []'
 
 [[rule]]
@@ -1075,12 +1105,6 @@ find = 'if live is not None:'
 replace = 'if False:'
 
 [[rule]]
-name = "a send Claude Code answers with a failure is not delivered and says why"
-file = "src/claude_voice/transcripts.py"
-find = 'if sent and failed:'
-replace = 'if False:'
-
-[[rule]]
 name = "a session Claude Code closed for low memory says why and how to resume it"
 file = "src/claude_voice/server.py"
 find = 'if sid\[:8\] in transcripts\.closed_for_memory\(daemon_log\):'
@@ -1157,6 +1181,72 @@ name = "the sessions to wake wait until claude.ai answers"
 file = "src/claude_voice/server.py"
 find = 'while not await ready\(\):'
 replace = 'while False:'
+
+[[rule]]
+name = "the hook closes a prompt it steps aside from"
+file = "src/claude_voice/phone_hook.py"
+find = 'bridge.close\(prompt_id, "screen"\)$'
+replace = 'pass'
+
+[[rule]]
+name = "a prompt with no hook waiting on it closes"
+file = "src/claude_voice/prompts.py"
+find = 'if how:'
+replace = 'if False:'
+
+[[rule]]
+name = "a prompt the hook still waits on is never closed"
+file = "src/claude_voice/prompts.py"
+find = 'if hook\["waiting"\] or self.clock\(\) - hook\["last"\] < GRACE:'
+replace = 'if False:'
+
+[[rule]]
+name = "a session waiting on a permission prompt has no open question"
+file = "src/claude_voice/transcripts.py"
+find = 'if waiting_for in PERMISSION_WAITS:'
+replace = 'if False:'
+
+[[rule]]
+name = "a question asked inside a subagent is not open"
+file = "src/claude_voice/transcripts.py"
+find = 'if isinstance\(entry, dict\) and not entry.get\("isSidechain"\):'
+replace = 'if isinstance(entry, dict):'
+
+[[rule]]
+name = "a question the session went past is not open"
+file = "src/claude_voice/transcripts.py"
+find = 'return \(str\(block.get\("id"\)\), block.get\("input"\) or \{\}\) if mine else None'
+replace = 'return (str(block.get("id")), block.get("input") or {}) if mine else asked'
+
+[[rule]]
+name = "a permission prompt is not hidden by an old question"
+file = "src/claude_voice/server.py"
+find = 'if waiting_for in transcripts.PERMISSION_WAITS:'
+replace = 'if False:'
+
+[[rule]]
+name = "a message still sending says it is not yet confirmed and what to do next"
+file = "src/claude_voice/server.py"
+find = 'say = SENDING_SAY\.format\(name=name\)'
+replace = 'say = ""'
+
+[[rule]]
+name = "a cancelled tool call is logged as cancelled"
+file = "src/claude_voice/server.py"
+find = 'except asyncio\.CancelledError:'
+replace = 'except ZeroDivisionError:'
+
+[[rule]]
+name = "a failed first try of the courier is logged with its reason"
+file = "src/claude_voice/transcripts.py"
+find = 'log\.info\("courier %s: first try failed, %s; starting a fresh courier", name, why\)'
+replace = 'pass'
+
+[[rule]]
+name = "a message counts as delivered only when Claude Code reports it sent"
+file = "src/claude_voice/transcripts.py"
+find = 'if answer is not None and answer\[0\]:'
+replace = 'if True:'
 
 [[rule]]
 name = "a session at rest when the PC shut down is woken too"

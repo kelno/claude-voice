@@ -24,7 +24,9 @@ def world(tmp_path):
     return tmp_path
 
 
-def running(world, name, project, sid, status="busy", kind="interactive", pid=PID, entrypoint="cli"):
+def running(
+    world, name, project, sid, status="busy", kind="interactive", pid=PID, entrypoint="cli", waiting_for="input needed"
+):
     (world / "live" / f"{name}.json").write_text(
         json.dumps(
             {
@@ -35,7 +37,7 @@ def running(world, name, project, sid, status="busy", kind="interactive", pid=PI
                 "status": status,
                 "kind": kind,
                 "entrypoint": entrypoint,
-                "waitingFor": "input needed" if status == "waiting" else None,
+                "waitingFor": waiting_for if status == "waiting" else None,
             }
         )
     )

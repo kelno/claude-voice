@@ -89,7 +89,7 @@ async def test_every_waiting_call_stops_at_the_callers_time_budget(tmp_path, roo
 def test_a_call_through_the_owners_server_proxy_gets_the_claude_apps_budget(forwarded):
     # The Claude app reaches this fork's bridge through a reverse proxy on another computer,
     # over a private link: the request comes from the proxy's address, naming the real caller
-    # in X-Forwarded-For or not. Either way it is the Claude app, held to its 20 seconds.
+    # in X-Forwarded-For or not. Either way it is the Claude app, held to its budget.
     class Request:
         scope = {"client": ("10.0.0.1", 50123), "headers": forwarded}
 
@@ -97,7 +97,7 @@ def test_a_call_through_the_owners_server_proxy_gets_the_claude_apps_budget(forw
         request = Request()
 
     kind = caller_kind(Ctx(), None)
-    assert kind == "claude_app" and config.Budgets().seconds(kind) == 20
+    assert kind == "claude_app" and config.Budgets().seconds(kind) == config.BUDGETS["claude_app"]
 
 
 async def test_a_sent_message_says_where_to_read_its_answer_from(tmp_path, root, live):

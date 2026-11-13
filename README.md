@@ -394,6 +394,7 @@ claude_voice = "~/src/claude-voice"          # default: the clone the bridge run
 claude_voice_ui = "~/src/claude-voice-ui"    # default: next to it
 ui_dist = "~/src/claude-voice-ui/dist"       # default: inside it; CLAUDE_VOICE_UI_DIR wins
 contribute = "~/src/claude-voice"            # the contribute session's clone; default: claude_voice
+claude_voice_mobile = "~/src/claude-voice-mobile"  # the phone app's clone; default: next to it
 
 [sessions]
 remote_control = true                        # a started session can be opened in the Claude app
@@ -401,7 +402,7 @@ launch = "background"                        # or "terminal"
 terminal_command = "kitty --directory {cwd}" # default: gnome-terminal, kgx, konsole or xterm, the first found
 
 [budgets]                                    # seconds each kind of client is answered within
-claude_app = 20
+claude_app = 10
 voice_app = 120
 default = 60
 ```
@@ -416,11 +417,14 @@ app's settings page changes `remote_control` and where sessions start, and one
 start can ask otherwise; the terminal command is set only here.
 
 Each kind of client is answered within its own time budget, set in a `[budgets]`
-section: the Claude app drops a tool call after about 30 seconds, so it gets 20
-(`claude_app`); the voice app waits longer and gets 120 (`voice_app`); anything
-else gets `default`, 60. A message that takes Claude Code longer to deliver is
-answered "sending" and delivered in the background, and a wait for a session's
-answer ends at the budget with "still working".
+section. The Claude app drops a tool call after about 30 seconds, and its clock
+may already have run while it reconnected, so it gets 10 (`claude_app`). The
+voice app waits longer and gets 120 (`voice_app`); anything else gets
+`default`, 60. A message that takes Claude Code longer to deliver is answered
+"sending" and delivered in the background. Its `say` tells the caller the
+message is on its way but not yet confirmed, and that the session's output
+shows whether it arrived. A wait for a session's answer ends at the budget with
+"still working".
 
 Your own rules for the voice go in the file `voice_instructions_file` names,
 outside this repository: which session takes your proposals, which role answers
@@ -450,9 +454,17 @@ the rules it follows, which apply to any change.
 
 [CONTRIBUTING.md](CONTRIBUTING.md) has the gates and how a change is made. Once
 per clone, `uv run claude-voice permissions` gives Claude Code the rules for the
-voice repositories: what it may run without asking, and what it may never run
-([docs/permissions.md](docs/permissions.md)). In short, tests are written
-first, and run against a scripted stand-in for Claude, so they need no account.
+voice repositories: what it may run without asking, what it must ask about
+first, and what it may never run ([docs/permissions.md](docs/permissions.md)). In short:
+- Tests are written first, and run against a scripted stand-in for Claude, so
+  they need no account.
+- A separate set runs against a real signed-in Claude Code. It uses a little of
+  the subscription and never runs in CI:
+
+<!-- not run: needs a signed-in Claude Code and spends subscription quota -->
+```
+uv run pytest -m e2e
+```
 
 ## Plugins: other local tools for the voice
 

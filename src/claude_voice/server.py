@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import logging.handlers
+import math
 import os
 import re
 import secrets
@@ -30,7 +31,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.shared.subscriptions import ToolsListChanged
 from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, BeforeValidator, Field
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp
@@ -60,6 +61,7 @@ from . import (
     plugin_desk,
     plugins,
     procs,
+    prompts,
     renames,
     roles,
     session_modes,
@@ -300,6 +302,10 @@ NEXT_PARTIAL_CUT = (
 # How long a side session may work in the background, and how long its answer is kept.
 FORK_LIFETIME_SECONDS = 300.0
 FORK_KEPT_SECONDS = 3600.0
+SENDING_SAY = (
+    "The message to {name} is on its way but not yet confirmed. Read the session's output "
+    "with read_session_output in a moment to see that it arrived."
+)
 # Claude Code keeps one JSON file per running session here.
 LIVE_DIR = Path("~/.claude/sessions").expanduser()
 # The log is kept in a file next to the database too: the console is gone after a restart,
@@ -696,16 +702,20 @@ async def log_requests(ctx, call_next):
     started = time.monotonic()
     try:
         result = await call_next(ctx)
+    except asyncio.CancelledError:
+        # The client gave up on the call (the Claude app drops one after about 30 s).
+        # RULE: a cancelled tool call is logged as cancelled
+        ms = (time.monotonic() - started) * 1000
+        log.info("mcp %s -> cancelled %dms trace=%s", what, ms, trace or "-")
+        if ctx.method == "tools/call":
+            gave_up = "the caller stopped waiting; the work may still have been done, so check before repeating it"
+            METRICS.record(tool, ms, error=gave_up, kind="cancelled", trace_id=trace)
+        raise
     except Exception as exc:
         ms = (time.monotonic() - started) * 1000
         log.info("mcp %s -> %s %dms trace=%s", what, type(exc).__name__, ms, trace or "-")
         if ctx.method == "tools/call":
             METRICS.record(tool, ms, error=f"{type(exc).__name__}: {exc}", kind="exception", trace_id=trace)
-        raise
-    except asyncio.CancelledError:
-        # The client gave up on the call (the Claude app drops one after about 30 s).
-        ms = (time.monotonic() - started) * 1000
-        log.info("mcp %s -> cancelled by the client %dms trace=%s", what, ms, trace or "-")
         raise
     finally:
         transcripts.current_trace.reset(token)
@@ -956,6 +966,27 @@ BUSY = ("busy", "shell")  # a session's statuses while it works
 BACKGROUND = "turn ended, background task still running"
 
 
+def wait_time(value: Any) -> float:
+    """A tool's wait in seconds, refused at once unless it is a finite number."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = math.nan
+    # RULE: a wait time that is not a number is refused
+    if isinstance(value, bool) or not math.isfinite(seconds):
+        raise ValueError(f"wait_seconds is a number of seconds, such as 60, not {value!r}; call again with a number.")
+    return seconds
+
+
+# A wait that is not a finite number would never reach its deadline, and the call would hang.
+WaitSeconds = Annotated[float, BeforeValidator(wait_time)]
+
+
+def optional_wait_time(value: Any) -> float | None:
+    """A wait left out (None) runs to the caller's limit; any other is checked as wait_time does."""
+    return None if value is None else wait_time(value)
+
+
 def _not_sent(target: dict[str, Any], outcome: dict[str, Any]) -> dict[str, Any]:
     """The answer to a question that was never sent: the session, why, and no reply."""
     return {
@@ -1156,6 +1187,12 @@ def build_server(
     owner_keys = passkeys.for_url(manager.store, page_url)
 
     looking = threading.Lock()  # held while one look runs; the watcher and whats_new both look
+    prompt_book = prompts.Book(api.HUB.publish)  # the phone hook's open questions and approvals
+
+    def sweep_prompts() -> None:
+        """Close the prompts no hook waits on any more, so the phone stops showing them."""
+        for prompt_id, how in prompt_book.sweep(events.read_live(live_dir)):
+            log.info("prompt %s closed: %s", prompt_id, how)
 
     def check() -> None:
         """Look at the running sessions and the tree's shape; record what changed.
@@ -1198,6 +1235,8 @@ def build_server(
                         await desk.pick_up()  # an approval typed while the bridge runs
                     with contextlib.suppress(Exception):
                         await mender.step()  # a session that started without its claude.ai connectors
+                    with contextlib.suppress(Exception):
+                        sweep_prompts()  # whether or not anyone has the page open
                     with contextlib.suppress(Exception):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
@@ -1780,9 +1819,12 @@ def build_server(
 
     state_seen: dict[str, tuple[str, str]] = {}  # session id -> (state, since)
 
-    def live_state(status: str, sid: str, cwd: str) -> tuple[str, str | None]:
+    def live_state(status: str, sid: str, cwd: str, waiting_for: str | None = None) -> tuple[str, str | None]:
         """Claude Code's status, named as one of the fixed states, with what a wait is for."""
         if status == "waiting":
+            # RULE: a permission prompt is not hidden by an old question
+            if waiting_for in transcripts.PERMISSION_WAITS:
+                return "approval", "approval"
             if transcripts.open_question(sid, cwd, projects_dir):
                 return "answer", "question"
             if transcripts.pending_tool(sid, cwd, projects_dir):
@@ -1934,7 +1976,9 @@ def build_server(
                 doing = f"moved to {where}"
             else:
                 doing = transcripts.doing_line(str(row["claude_session_id"]), str(d.get("cwd")), projects_dir)
-            state, waiting_kind = live_state(str(row["status"]), str(row["claude_session_id"]), str(d.get("cwd")))
+            state, waiting_kind = live_state(
+                str(row["status"]), str(row["claude_session_id"]), str(d.get("cwd")), d.get("waitingFor")
+            )
             item = {
                 "id": row["claude_session_id"],
                 "number": numbers.get(str(row["claude_session_id"])),
@@ -2442,7 +2486,9 @@ def build_server(
                 row["status"], row["moved_to"] = "moved", moved
             elif d.get("status") == "waiting":
                 row["waiting_for"] = d.get("waitingFor")
-                question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
+                question = transcripts.open_question(
+                    str(d.get("sessionId")), str(d.get("cwd")), projects_dir, d.get("waitingFor")
+                )
                 if question:
                     row["question"] = question
                 prompt = permission_prompt(d)
@@ -3114,7 +3160,9 @@ def build_server(
             api.HUB.publish("message_sent", report)
 
         delivery.add_done_callback(done)
-        return {"session": name, "status": "sending", "delivered": None, "id": item["id"]}
+        # RULE: a message still sending says it is not yet confirmed and what to do next
+        say = SENDING_SAY.format(name=name)
+        return {"session": name, "status": "sending", "delivered": None, "id": item["id"], "say": say}
 
     def numbered_turns(target: dict[str, Any]) -> list[dict[str, Any]]:
         msgs = read_transcript(target["sessionId"], target.get("cwd"))
@@ -3124,7 +3172,9 @@ def build_server(
         """Why a session can take nothing in right now: an open question, or other input."""
         if d.get("status") != "waiting":
             return None
-        question = transcripts.open_question(str(d.get("sessionId")), str(d.get("cwd")), projects_dir)
+        question = transcripts.open_question(
+            str(d.get("sessionId")), str(d.get("cwd")), projects_dir, d.get("waitingFor")
+        )
         if question:
             return {"status": "needs_choice", "question": question}
         prompt = permission_prompt(d)
@@ -3211,7 +3261,9 @@ def build_server(
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
         session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
-        wait_seconds: Annotated[float | None, Field(description=WAIT_PARAM)] = None,
+        wait_seconds: Annotated[
+            float | None, BeforeValidator(optional_wait_time), Field(description=WAIT_PARAM)
+        ] = None,
         after: Annotated[
             int | None,
             Field(description=WAIT_AFTER_PARAM),
@@ -3335,7 +3387,7 @@ def build_server(
     async def ask_active_session(
         session: Annotated[str, Field(description=SESSION_PARAM)],
         message: Annotated[str, Field(description="What to ask; the session answers you, the relay.")],
-        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        wait_seconds: Annotated[float, BeforeValidator(wait_time), Field(description=WAIT_PARAM)] = WAIT_SECONDS,
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
         handle: Annotated[str | None, Field(description=HANDLE_PARAM)] = None,
     ) -> dict[str, Any]:
@@ -3862,7 +3914,9 @@ def build_server(
         live = lookup(session)
         waiting = live.get("status") == "waiting"
         question = (
-            transcripts.open_question(str(live.get("sessionId")), str(live.get("cwd")), projects_dir)
+            transcripts.open_question(
+                str(live.get("sessionId")), str(live.get("cwd")), projects_dir, live.get("waitingFor")
+            )
             if waiting
             else None
         )
@@ -3935,7 +3989,11 @@ def build_server(
             answer_remote=across.answer,
             focus=focus_session,
             org=org_page,
+            book=prompt_book,
         ).routes(mcp)
+
+    mcp.prompt_book = prompt_book  # type: ignore[attr-defined]  # for tests
+    mcp.sweep_prompts = sweep_prompts  # type: ignore[attr-defined]  # for tests
 
     mcp.fleet = across  # type: ignore[attr-defined]  # the other machines, for tests and the CLI
     mcp.org_check = tell_programmes  # type: ignore[attr-defined]  # for tests

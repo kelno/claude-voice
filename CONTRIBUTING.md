@@ -18,8 +18,9 @@ uv run claude-voice permissions
 The `git config` line turns on the commit-msg hook, which refuses a message the gates
 would refuse later while it is still being written. The last gives Claude Code
 the permission rules for this clone and the other voice repositories. It may
-look and run the tests without asking, and may never delete history or read a
-secret. [docs/permissions.md](docs/permissions.md) lists them; `--dry-run` shows
+look and run the tests without asking, must ask before a push to main, a
+GitHub write others see or a device tool, and may never delete history or read
+a secret. [docs/permissions.md](docs/permissions.md) lists them; `--dry-run` shows
 what it would add first.
 
 The commit linter is a separate binary,
@@ -136,8 +137,15 @@ cannot be tidied at the end by squashing it, which is why `committed.toml`
 refuses a fixup and a work-in-progress commit rather than trusting you to clean
 up later.
 
-## Five more rules for every change
+## More rules for every change
 
+- **A tool's first line says what it is for.** The Claude app shows an
+  assistant each tool by the start of its description until the tool is
+  loaded. So the first line of its description says what the tool is for, in
+  one whole sentence of at most 78 characters, where the app cuts it.
+  `tests/test_surface.py` checks every tool the bridge offers itself. A
+  plugin's tools are not checked here yet; [`decisions/deferred.md`](decisions/deferred.md)
+  says when they will be.
 - **One pull request per topic.** Several small changes on one subject go
   together; changes on different subjects go apart, so each can be reviewed,
   tested and, if need be, reverted on its own.

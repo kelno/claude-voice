@@ -79,6 +79,7 @@ LAYERS = {
             "terminals",
             "permissions",
             "hints",
+            "prompts",
         ),
         1,
     ),  # parts, each about one thing
