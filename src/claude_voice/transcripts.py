@@ -1171,6 +1171,44 @@ async def stop_background(session_id: str) -> None:
         raise RuntimeError(out.decode(errors="replace").strip()[-300:] or f"claude stop exited {proc.returncode}")
 
 
+COMPACT_SECONDS = 600  # how long a compaction may take before it counts as failed
+
+
+def compact_command(cli: str, session_id: str, instructions: str | None = None) -> list[str]:
+    """The command that compacts a stopped session's conversation in place, without a terminal:
+    Claude Code runs /compact in print mode and writes the summary into the same transcript."""
+    return [cli, "-p", f"/compact {instructions or ''}".strip(), "--resume", session_id]
+
+
+async def compact_stopped(cwd: str, session_id: str, instructions: str | None = None) -> None:
+    """Compact a stopped session's conversation, as typing /compact in it would.
+
+    The session must not be running: two processes writing one conversation would clash. Its
+    PreCompact hooks run as for a /compact typed in it."""
+
+    import claude_agent_sdk
+
+    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    cli = procs.find("claude") or str(bundled)
+    proc = await asyncio.create_subprocess_exec(
+        *compact_command(cli, session_id, instructions),
+        cwd=cwd,
+        env=clean_env(os.environ),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), COMPACT_SECONDS)
+    except TimeoutError:
+        proc.kill()
+        raise RuntimeError(f"the compaction took longer than {COMPACT_SECONDS} seconds") from None
+    if proc.returncode:
+        raise RuntimeError(
+            out.decode(errors="replace").strip()[-300:] or f"claude -p /compact exited {proc.returncode}"
+        )
+
+
 def open_pull_requests(folder: str) -> list[dict[str, Any]]:
     """The open pull requests of the repository in `folder`, from the GitHub command line.
 

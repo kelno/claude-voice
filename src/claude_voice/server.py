@@ -878,6 +878,52 @@ async def wake_interrupted(
     return woken
 
 
+COMPACT_POLL_SECONDS = 2.0  # how often the bridge looks whether a session asking to be compacted is at rest
+COMPACT_GIVE_UP_SECONDS = 1800.0  # how long it waits for that turn to end before dropping the request
+
+
+async def compact_when_idle(
+    state: Callable[[], str],
+    stop: Callable[[], Awaitable[None]],
+    compact: Callable[[], Awaitable[None]],
+    wake: Callable[[], Awaitable[Any]],
+    poll: float | None = None,
+    give_up: float | None = None,
+    sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+) -> str:
+    """Compact a session once its turn has ended: stop it, compact it, wake it in place.
+
+    `state` is the session's state as session_state gives it. The turn counts as ended when the
+    session is seen at rest twice in a row, so a passing look between two steps of a turn isn't
+    taken for its end. Returns compacted, compact_failed, ended (the session went away first) or
+    gave_up (it never came to rest).
+    """
+    poll = COMPACT_POLL_SECONDS if poll is None else poll
+    give_up = COMPACT_GIVE_UP_SECONDS if give_up is None else give_up
+    waited, at_rest = 0.0, 0
+    while at_rest < 2:
+        now = state()
+        if now == "ended":
+            return "ended"
+        # RULE: a turn counts as ended only once the session is seen at rest twice in a row
+        at_rest = at_rest + 1 if now == "idle" else 0
+        if at_rest < 2:
+            if waited >= give_up:
+                return "gave_up"
+            await sleep(poll)
+            waited += poll
+    await stop()
+    try:
+        await compact()
+        outcome = "compacted"
+    except Exception as exc:
+        log.info("compaction failed: %s", exc)
+        outcome = "compact_failed"
+    # RULE: a session stopped to be compacted is always woken again, compacted or not
+    await wake()
+    return outcome
+
+
 BUSY = ("busy", "shell")  # a session's statuses while it works
 # A session whose turn has ended while a task it started runs on in the background: the task's
 # completion note will start another turn, so it is not at rest (owner, 2026-11-12, ledger F58).
@@ -959,6 +1005,7 @@ def build_server(
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] = transcripts.background_jobs,
     claude_config: Path = access.CLAUDE_CONFIG,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
+    compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = transcripts.compact_stopped,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], None] = transcripts.trust_folder,
     plugin_approvals: Path | None = None,
@@ -2690,6 +2737,62 @@ def build_server(
         permission prompt at the PC; it does clear a refusal from Claude Code's auto mode."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
+
+    compacting: set[str] = set()  # sessions waiting for their turn to end to be compacted
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    async def compact_after_turn(
+        instructions: Annotated[
+            str | None,
+            Field(description="What the summary must keep, passed to /compact as its instructions; optional."),
+        ] = None,
+    ) -> dict[str, Any]:
+        """Have your own conversation compacted once this turn ends, as /compact would.
+        For a session the bridge started, at a break you choose: first write down what must survive
+        (your notes, a keep-file), then call this and end your turn. Once the turn has ended, the
+        bridge stops you, runs /compact on the conversation and starts you again, usually within a
+        minute; your next message finds it compacted. status: scheduled or already_scheduled."""
+        d = await asking_session()
+        sid, cwd, name = str(d["sessionId"]), str(d.get("cwd")), str(d.get("name") or d["sessionId"])
+        # RULE: only a background session the bridge started is stopped to be compacted
+        if not store.was_started(sid) or d.get("kind") != "bg":
+            raise ToolError(
+                "The bridge compacts only a background session it started itself; this one isn't. Ask the"
+                " owner to type /compact in it."
+            )
+        if sid in compacting:
+            return {"session": name, "status": "already_scheduled"}
+
+        def state() -> str:
+            return session_state(next((x for x in live_sessions() if str(x.get("sessionId")) == sid), None))
+
+        async def stop() -> None:
+            await stop_background(sid)
+            deadline = time.monotonic() + start_seconds
+            while any(str(x.get("sessionId")) == sid for x in live_sessions()):
+                if time.monotonic() > deadline:
+                    raise RuntimeError("it was asked to stop but is still running")
+                await asyncio.sleep(0.2)
+
+        async def run() -> None:
+            try:
+                outcome = await compact_when_idle(
+                    state,
+                    stop,
+                    lambda: compact_stopped(cwd, sid, instructions),
+                    lambda: start_background(cwd, "", resume=sid, wake=True),
+                )
+                log.info("compact_after_turn %s (%s): %s", name, sid, outcome)
+            except Exception as exc:
+                log.warning("compact_after_turn %s (%s) broke: %s", name, sid, exc)
+            finally:
+                compacting.discard(sid)
+
+        compacting.add(sid)
+        task = asyncio.ensure_future(run())
+        in_flight.add(task)
+        task.add_done_callback(in_flight.discard)
+        return {"session": name, "status": "scheduled"}
 
     # -- the owner's confirm page and passkey registration (ADR-CV-106) --------------------
 

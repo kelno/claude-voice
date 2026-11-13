@@ -197,6 +197,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: it reads a log file whose format is Claude Code's, not a documented interface. Nothing breaks if it changes: the reason is just left out.
 - Test first: `tests/test_news.py` and `tests/test_courier.py`, the tests named after the rule.
 
+### 6z''. A session compacted at a break it chooses — fork "Compact a session's conversation after the turn that asks"
+
+- Status: an idea; nothing prepared, no branch.
+- What: a tool, `compact_after_turn`, that a background session the bridge started calls on itself, with optional instructions for the summary. Once the calling turn has ended (the session seen at rest twice in a row), the bridge stops the session, runs `claude -p "/compact <instructions>" --resume <id>` in its folder, and wakes it in place; a failed compaction still wakes it. Other sessions are refused and told to have `/compact` typed.
+- Why upstream should want it: a session driven by voice has no one at the keyboard to type `/compact`, and Claude Code's own automatic compaction fires at a size threshold, mid-task. This lets the session compact at a natural break, after writing down what must survive.
+- Expect pushback: it stops and restarts a session, which reloads its connectors; and it relies on `/compact` working in print mode on a resumed conversation, which Claude Code supports (its `/compact` is marked as working non-interactively) but doesn't document as a way to compact another session.
+- Test first: `tests/test_compact.py`.
+
 ### 6y. Updating the bridge on Windows — fork "Update the bridge on Windows, where there is no systemd"
 
 - What: `update_bridge` works without systemd. On Windows the bridge starts the updater as a detached process, and the updater restarts the bridge by ending it with exit code 75 (`RESTART_EXIT`), which the script that runs the bridge takes as "start me again"; a rollback does the same. The updater also checks health on the address the bridge listens on (`--host`), not always 127.0.0.1, which helps a Linux bridge bound to a Tailscale or WireGuard address too.
