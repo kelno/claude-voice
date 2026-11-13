@@ -309,3 +309,21 @@ async def test_the_couriers_own_words_never_reach_the_caller():
     failed = await courier.deliver("billing", "hello")
     assert failed["delivered"] is False and "Hermes" not in failed["detail"] and "Sure" not in failed["detail"]
     await courier.close()
+
+
+def send_failed(message):
+    """What Claude Code answers when SendMessage ran but could not send: not marked as an error."""
+    body = json.dumps({"success": False, "message": message})
+    return UserMessage(content=[ToolResultBlock(tool_use_id="t", content=[{"type": "text", "text": body}])])
+
+
+async def test_a_send_claude_code_answers_with_a_failure_is_not_delivered_and_says_why():
+    # Seen 2026-11-13: two sessions shared the name, Claude Code sent nothing, and the bridge said delivered.
+    clash = "2 agents are named 'billing'. Re-send with the ref of the one you mean"
+    factory = Factory([[sent_text("billing", "hi"), send_failed(clash), done("FAILED")]])
+    courier = Courier(client_factory=factory)
+    out = await courier.deliver("billing", "hi")
+    assert out["delivered"] is False
+    assert clash in out["detail"]
+    assert len(factory.clients) == 1  # the same send would fail the same way
+    await courier.close()

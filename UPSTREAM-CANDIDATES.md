@@ -181,6 +181,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: upstream just built the window, with settings and a companion-app page for it. Offer it as one more launch mode (`launch = "remote_control"` or similar) next to theirs, not as a replacement. Build it on upstream's launch settings.
 - Test first: the fork's start tests (`tests/test_start.py`), rewritten against upstream's launch settings.
 
+### 6z. A message Claude Code did not send, reported as not delivered — fork "Report a message Claude Code did not send as not delivered"
+
+- Status: ready to offer as a bug fix; nothing prepared, no branch.
+- What: when the courier's SendMessage runs but Claude Code sends nothing (its result says `success: false`, not marked as an error, as when two sessions share the name), the courier reports the message not delivered, with Claude Code's reason, and doesn't try again. Before, the courier counted it delivered as soon as the send ran.
+- Why upstream should want it: the courier is upstream's; there the relay is told "delivered" for a message no session got, then waits on a reply that never comes. Seen on the fork when resuming a session created a copy under the same name.
+- Expect pushback: little; it reads Claude Code's result format, which may change. The fallback when the result can't be read is today's behaviour.
+- Test first: `tests/test_courier.py`, a send answered with `success: false`, red on upstream's code.
+
 ### 6y. Updating the bridge on Windows — fork "Update the bridge on Windows, where there is no systemd"
 
 - What: `update_bridge` works without systemd. On Windows the bridge starts the updater as a detached process, and the updater restarts the bridge by ending it with exit code 75 (`RESTART_EXIT`), which the script that runs the bridge takes as "start me again"; a rollback does the same. The updater also checks health on the address the bridge listens on (`--host`), not always 127.0.0.1, which helps a Linux bridge bound to a Tailscale or WireGuard address too.

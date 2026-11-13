@@ -558,6 +558,20 @@ COURIER_PROMPT = (
 )
 
 
+def _send_failure(content: Any) -> str:
+    """Claude Code's reason when SendMessage ran but sent nothing, as when two sessions share the
+    name; empty when it sent. Such a result is not marked as an error."""
+    if isinstance(content, list):
+        content = "".join(str(b.get("text", "")) for b in content if isinstance(b, dict))
+    try:
+        body = json.loads(content) if isinstance(content, str) else None
+    except ValueError:
+        return ""
+    if isinstance(body, dict) and body.get("success") is False:
+        return str(body.get("message") or "no reason given")
+    return ""
+
+
 async def _only_messaging(tool: str, tool_input: dict[str, Any], context: Any) -> Any:
     if tool in MESSAGING_TOOLS:
         return PermissionResultAllow()
@@ -651,6 +665,7 @@ class Courier:
         self._job = {"name": name, "text": text, "sent": False}
         sends: set[str] = set()
         refused = False
+        failed = ""  # Claude Code's reason, when the send ran but sent nothing
         try:
             await client.query(
                 f"Session: {name}\n"
@@ -661,12 +676,19 @@ class Courier:
                 for block in getattr(m, "content", None) or []:
                     if isinstance(block, ToolUseBlock) and block.name == "SendMessage":
                         sends.add(block.id)
-                    elif isinstance(block, ToolResultBlock) and block.tool_use_id in sends and block.is_error:
-                        refused = True  # Claude Code stopped the send, e.g. to ask for permission
+                    elif isinstance(block, ToolResultBlock) and block.tool_use_id in sends:
+                        if block.is_error:
+                            refused = True  # Claude Code stopped the send, e.g. to ask for permission
+                        else:
+                            failed = failed or _send_failure(block.content)
         finally:
             sent = bool(self._job and self._job["sent"])
             self._job = None
         # What the courier writes is never passed on: it is not the session's answer.
+        # RULE: a send Claude Code answers with a failure is not delivered and says why
+        if sent and failed:
+            # Not tried again either: the same send would fail the same way.
+            return {"delivered": False, "detail": f"Claude Code did not send it: {failed}", "attempted": True}
         if sent:
             detail = ""
         elif refused:
