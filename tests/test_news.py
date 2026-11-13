@@ -242,7 +242,8 @@ async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(ser
 
 
 async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_so(served):
-    # Not news on every result: it matters when the relay writes to that session again.
+    # Said again when the relay writes to that session; the turn it started is also news while the
+    # session is in a quiet follow (owner, 2026-11-13).
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
@@ -253,7 +254,7 @@ async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_s
         desk.transcript.append(turn("assistant", "Then it is done."))
         quiet = await call(c, "list_active_sessions")
         again = await call(c, "message_active_session", session="billing-ab", message="And the invoices?")
-    assert "news" not in quiet
+    assert quiet["news"] == "[Juniper] billing-ab (idle): new turn, started by the owner typing, read with after=3"
     assert "read_session_output(after=3)" in again["owner_typed"]
 
 
@@ -1049,3 +1050,80 @@ async def test_a_new_relay_s_handle_is_not_folded_into_another_relay_s(served):
         out = await call(c, "list_active_sessions", handle="Rowan")
     assert new["handle"] in [h["handle"] for h in out["handles"]]
     assert "Also following" not in out.get("next_step", "")
+
+
+# Two levels of following (owner, 2026-11-13): a session that owes the relay a reply is followed
+# as before; once that reply is read, it stays in a quiet follow, shown only when it has a new
+# finished turn the relay hasn't read, with who started it, so a turn from the owner's typing or
+# another session isn't missed. Quiet ones that stay quiet never show, which kept the old list of
+# every session touched from turning into noise.
+
+
+async def test_a_session_stays_in_a_quiet_follow_after_its_reply_is_read(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        quiet = await call(c, "list_active_sessions")
+        desk.transcript.append(turn("user", "Now the invoices.", "human"))
+        desk.transcript.append(turn("assistant", "Invoices done."))
+        typed = await call(c, "list_active_sessions")
+        await call(c, "read_session_output", session="billing-ab", after=3)
+        desk.transcript.append(turn("user", "From another session: which folder?", "peer"))
+        desk.transcript.append(turn("assistant", "In billing."))
+        peer = await call(c, "list_active_sessions")
+    assert "news" not in quiet
+    assert typed["news"] == "[Juniper] billing-ab (idle): new turn, started by the owner typing, read with after=3"
+    assert peer["news"] == "[Juniper] billing-ab (idle): new turn, started by another session, read with after=5"
+
+
+async def test_a_new_turn_in_a_quiet_follow_wakes_a_wait(tmp_path, world):
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+            desk.transcript.append(turn("assistant", "Export done."))
+            await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+            await call(c, "message_active_session", session="ledger", message="Close the month.")
+            other.set("busy")
+            desk.transcript.append(turn("user", "Now the invoices.", "human"))
+            desk.transcript.append(turn("assistant", "Invoices done."))
+            out = await call(c, "wait_for_session")
+    assert out["session"] == "billing-ab" and out["reply"] == "Invoices done."
+
+
+async def test_a_quiet_follow_can_be_stopped(served):
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        stopped = await call(c, "follow_session", session="billing-ab", follow=False)
+        desk.transcript.append(turn("user", "Now the invoices.", "human"))
+        desk.transcript.append(turn("assistant", "Invoices done."))
+        out = await call(c, "list_active_sessions")
+    assert stopped["status"] == "not_followed"
+    assert "news" not in out
+
+
+async def test_a_quiet_follow_ends_after_a_day_with_nothing_new(tmp_path, world):
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    store = Store(tmp_path / "bridge.db")
+    old = time.time() - 25 * 3600
+    mark = {"seen": 1, "sent": None, "replied": False, "name": "billing-ab", "quiet": old}
+    store.set_setting("relay_handles", {"Juniper": {"used": time.time(), "sessions": {"sid-1": mark}}})
+    async with bridge(tmp_path, desk, store) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "list_active_sessions")
+            desk.transcript.append(turn("user", "Now the invoices.", "human"))
+            desk.transcript.append(turn("assistant", "Invoices done."))
+            out = await call(c, "list_active_sessions")
+    assert "news" not in out

@@ -200,6 +200,12 @@ HANDLE_IDLE_SECONDS = 24 * 3600
 # A pending rename written into a job record is not written again for this long, while Claude Code
 # takes the name and its lists catch up (seen within 15 s, 2026-11-05).
 RENAME_RETRY_SECONDS = 60.0
+# Once a followed session's reply is read, it stays in a quiet follow: named only when it has a new
+# finished turn the relay hasn't read, such as one the owner typed or another session asked for,
+# until stopped, until it ends, or after this long with nothing new (owner, 2026-11-13).
+QUIET_SECONDS = 24 * 3600
+# Who started a turn, by the origin Claude Code records on the message that started it.
+STARTED_BY = {"human": "the owner typing", "peer": "another session", "task-notification": "a background task"}
 # Handles handed out this close together, none passed back yet, came from one relay's calls made at
 # once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
 # relays starting within this time would merge, which the owner says doesn't happen.
@@ -411,8 +417,12 @@ News
 - A result of a call with your handle may start with news, after your handle
   in brackets: an entry for each session you follow, with its state and
   what's new, or "nothing new". A message or a question follows a session
-  until you have read the turn that answers it, and then it leaves the news;
-  follow_session follows one the owner hands you, or stops following one.
+  until you have read the turn that answers it; then it stays in a quiet
+  follow, named only when it has a new finished turn you haven't read
+  ("new turn, started by the owner typing", or by another session), which
+  also wakes a wait. A quiet follow ends when you stop it, when the session
+  ends, or after a day with nothing new. follow_session follows one the
+  owner hands you, or stops following one.
   Reading a session doesn't follow it. What you follow is your handle's, kept
   across bridge restarts, so it may name a session an earlier conversation
   messaged under that handle.
@@ -1444,14 +1454,21 @@ def build_server(
             seen = len(all_turns(sid, str(d.get("cwd")))) - 1
         mark = marks.setdefault(sid, {"seen": seen, "sent": None, "replied": False})
         mark.update(name=d.get("name") or mark.get("name") or sid, cwd=str(d.get("cwd")))
+        if seen > mark["seen"] and mark.get("quiet") is not None:
+            mark["quiet"] = manager.clock()  # something new was read: the quiet follow runs on
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
             mark.update(sent=sent, replied=False, since=manager.clock(), told=False)
             mark.pop("then", None)
 
-    def followed(session: str) -> str | None:
-        """The id of a session the relay follows, by name or id, or None."""
-        rows = [{"sessionId": k, "name": m.get("name")} for k, m in mine().items() if m.get("sent") is not None]
+    def followed(session: str, quiet: bool = False) -> str | None:
+        """The id of a session the relay follows, by name or id, or None; with `quiet`, one it
+        follows quietly too."""
+        rows = [
+            {"sessionId": k, "name": m.get("name")}
+            for k, m in mine().items()
+            if m.get("sent") is not None or (quiet and m.get("quiet") is not None)
+        ]
         try:
             found = renames.find(rows, session)
         except renames.Ambiguous as exc:
@@ -1493,6 +1510,8 @@ def build_server(
         for sid, mark in list(marks.items()):
             if mark.get("sent") is not None:
                 items.extend(followed_entry(sid, mark, live.get(sid)))
+            elif mark.get("quiet") is not None:
+                items.extend(quiet_entry(sid, mark, live.get(sid)))
             elif sid not in live:
                 del marks[sid]  # a read mark on a session that can't be read any more
         for sid, d in live.items():
@@ -1645,6 +1664,8 @@ def build_server(
         elif where == "read":
             # RULE: following a session ends once its finished turn is read
             mark.update(sent=None, replied=False, state=None)
+            # RULE: a session stays in a quiet follow after its reply is read
+            mark["quiet"] = manager.clock()
             return []
         elif where == "waiting":
             mark["state"] = "waiting"
@@ -1653,6 +1674,31 @@ def build_server(
         if state == "waiting on a permission prompt":
             return [f"{name}: {', '.join([state, *news])}"]
         return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
+
+    def quiet_new_turn(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> str | None:
+        """Who started a quietly followed session's new finished turn the relay hasn't read, or
+        None: nothing new, or a turn still running."""
+        turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
+        unread = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["seen"]]
+        if not unread or session_state(d) not in ("idle", "waiting for an answer"):
+            return None
+        starter = next((t for t in reversed(turns[: unread[0]]) if t["role"] == "user"), None)
+        return STARTED_BY.get(str((starter or {}).get("origin")), "something else")
+
+    def quiet_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
+        """A quietly followed session's entry in the news line: only a new finished turn the
+        relay hasn't read, with who started it; nothing otherwise."""
+        if d is None:
+            del mine()[sid]  # it ended: nothing more to follow
+            return []
+        mark["name"] = name = d.get("name") or mark.get("name") or sid
+        who = quiet_new_turn(sid, mark, d)
+        if who is not None:
+            return [f"{name} ({session_state(d)}): new turn, started by {who}, read with after={mark['seen']}"]
+        if manager.clock() - mark["quiet"] > QUIET_SECONDS:
+            # RULE: a quiet follow ends after a day with nothing new
+            mark.pop("quiet")
+        return []
 
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
         """Where a followed, running session stands: "unread" (its turn ended, not read yet),
@@ -2391,11 +2437,13 @@ def build_server(
         nothing is followed: tell the owner it is done (read_session_output shows what it last said)."""
         marks = mine()
         if not follow:
-            sid = followed(session)
+            sid = followed(session, quiet=True)
             if sid is None:
                 raise ToolError(f"{session!r} isn't followed; the news line names the sessions you follow")
             marks[sid].update(sent=None, replied=False)
             marks[sid].pop("then", None)
+            # RULE: a quiet follow can be stopped
+            marks[sid].pop("quiet", None)
             save_handles()
             return {"session": marks[sid].get("name") or sid, "status": "not_followed"}
         d = find_live(session)
@@ -3345,6 +3393,11 @@ def build_server(
                 if sid not in live:
                     return {"status": "session_ended", "session": mark.get("name") or sid, "session_ended": True}
                 return await wait_on(sid, 0, max(mark["sent"], mark["seen"]), max_chars)
+            for sid, mark in mine().items():
+                quiet = mark.get("sent") is None and mark.get("quiet") is not None and sid in live
+                # RULE: a new turn in a quiet follow wakes a wait
+                if quiet and quiet_new_turn(sid, mark, live[sid]) is not None:
+                    return await wait_on(sid, 0, mark["seen"], max_chars)
             if not waited:
                 return {"status": "nothing_to_wait_for", "sessions": []}
             if clock() >= deadline:
