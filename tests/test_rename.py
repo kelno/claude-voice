@@ -189,13 +189,75 @@ async def test_the_job_record_of_a_busy_session_is_never_written(tmp_path, root,
     async with Client(server(tmp_path, root, live, jobs)) as c:
         out = await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
         assert await names(c) == ["math-quest-curriculum"]
-        assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest"
-        assert out["claude_code"] == "busy" and "again" in out["note"]
-        # Asked again once it is idle, Claude Code gets the name too.
+    assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest"
+    assert out["claude_code"] == "pending" and "by itself" in out["note"] and "again" not in out["note"]
+
+
+def watching(tmp_path, root, live, jobs):
+    """The bridge as served: its watcher looks at the running sessions every few hundredths of a second."""
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root)
+    return build_server(
+        m,
+        conversations=lambda directory=None, limit=None: [],
+        live_dir=live,
+        deliver=Recorder(),
+        read_transcript=lambda sid, directory: [],
+        jobs_dir=jobs,
+        watch_interval=0.02,
+    )
+
+
+async def named_in_job(record, name, seconds=3.0):
+    """Whether the job record gets `name` within `seconds`."""
+    import asyncio
+
+    for _ in range(int(seconds / 0.02)):
+        if json.loads(record.read_text(encoding="utf-8"))["name"] == name:
+            return True
+        await asyncio.sleep(0.02)
+    return False
+
+
+async def test_a_name_given_mid_turn_reaches_claude_code_once_the_session_is_idle(tmp_path, root, live, jobs):
+    record = started(tmp_path, live, root, jobs, status="busy")
+    async with Client(watching(tmp_path, root, live, jobs)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        assert not await named_in_job(record, "math-quest-curriculum", seconds=0.2)  # still mid-turn
+        write(live, os.getpid(), SID, "math-quest", root, kind="bg")  # its turn ends
+        assert await named_in_job(record, "math-quest-curriculum")
+    saved = json.loads(record.read_text(encoding="utf-8"))
+    assert saved["respawnFlags"][:2] == ["--name", "math-quest-curriculum"] and saved["nameSource"] == "user"
+
+
+async def test_the_last_name_given_mid_turn_is_the_one_claude_code_gets(tmp_path, root, live, jobs):
+    record = started(tmp_path, live, root, jobs, status="busy")
+    async with Client(watching(tmp_path, root, live, jobs)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="first")
+        out = await call(c, "rename_session", session="first", new_name="second")
+        assert out["claude_code"] == "pending" and out["was"] == "first"
         write(live, os.getpid(), SID, "math-quest", root, kind="bg")
-        out = await call(c, "rename_session", session="math-quest-curriculum", new_name="math-quest-curriculum")
-    assert out["claude_code"] == "renamed"
-    assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest-curriculum"
+        assert await named_in_job(record, "second")
+        assert await names(c) == ["second"]
+
+
+async def test_a_pending_name_outlasts_a_bridge_restart_and_a_stop(tmp_path, root, live, jobs):
+    record = started(tmp_path, live, root, jobs, status="busy")
+    async with Client(server(tmp_path, root, live, jobs)) as c:  # this bridge stops before the turn ends
+        await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+    (live / f"{os.getpid()}.json").unlink()  # the session is stopped before its turn ends
+    async with Client(watching(tmp_path, root, live, jobs)) as c:
+        assert not await named_in_job(record, "math-quest-curriculum", seconds=0.2)  # not running: left alone
+        write(live, os.getpid(), SID, "math-quest", root, kind="bg")  # woken, idle, with its old name
+        assert await named_in_job(record, "math-quest-curriculum")
+
+
+async def test_a_name_set_in_claude_code_before_the_turn_ends_is_left_alone(tmp_path, root, live, jobs):
+    record = started(tmp_path, live, root, jobs, status="busy")
+    async with Client(watching(tmp_path, root, live, jobs)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum")
+        write(live, os.getpid(), SID, "typed-by-roy", root, kind="bg")  # renamed in Claude Code meanwhile
+        assert not await named_in_job(record, "math-quest-curriculum", seconds=0.3)
+        assert await names(c) == ["typed-by-roy"]
 
 
 async def test_a_session_without_a_job_record_is_renamed_in_the_bridge_only(tmp_path, root, live, jobs, caplog):

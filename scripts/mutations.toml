@@ -460,6 +460,12 @@ find = 'if d.get\("status"\) != "idle":'
 replace = 'if False:'
 
 [[rule]]
+name = "a name given mid-turn reaches Claude Code once the session is idle"
+file = "src/claude_voice/server.py"
+find = 'if not claude_name or d.get\("status"\) != "idle" or store.started_session\(sid\) is None:'
+replace = 'if True:'
+
+[[rule]]
 name = "the agent listens on its tailnet address only"
 file = "src/claude_voice/agent.py"
 find = 'if address is None or address not in tailnet.TAILNET:'

@@ -197,6 +197,9 @@ OLD_MARKS_SETTING = "watched_sessions"
 UNCLAIMED_HANDLE = "voice relay"
 # A handle that follows nothing and wasn't used for this long is dropped.
 HANDLE_IDLE_SECONDS = 24 * 3600
+# A pending rename written into a job record is not written again for this long, while Claude Code
+# takes the name and its lists catch up (seen within 15 s, 2026-11-05).
+RENAME_RETRY_SECONDS = 60.0
 # Handles handed out this close together, none passed back yet, came from one relay's calls made at
 # once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
 # relays starting within this time would merge, which the owner says doesn't happen.
@@ -1239,6 +1242,8 @@ def build_server(
                         await mender.step()  # a session that started without its claude.ai connectors
                     with contextlib.suppress(Exception):
                         sweep_prompts()  # whether or not anyone has the page open
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(rename_pending)  # a name given while the session was busy
                     with contextlib.suppress(Exception):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
@@ -3051,9 +3056,9 @@ def build_server(
         new_name: Annotated[str, Field(description="Any text on one line, up to 64 characters.")],
     ) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
-        A session the bridge started is renamed in Claude Code too when it is idle, and the phone
-        and the desktop app show it within seconds; for any other, only the bridge's lists know the
-        new name. claude_code: renamed, busy (mid-turn: renamed in the bridge only; rename it again
+        A session the bridge started is renamed in Claude Code too, and the phone and the desktop
+        app show it within seconds; for any other, only the bridge's lists know the new name.
+        claude_code: renamed, pending (mid-turn: the bridge renames it in Claude Code by itself
         once idle), bridge_only, or already (Claude Code had that name); note says more."""
         new_name = renames.clean(new_name)
         if not renames.valid(new_name):
@@ -3088,7 +3093,10 @@ def build_server(
             )
         # RULE: the job record of a busy session is never written
         if d.get("status") != "idle":
-            return "busy", "Renamed in the bridge; Claude Code is mid-turn, so rename it again once it is idle."
+            return "pending", (
+                "Renamed in the bridge; Claude Code is mid-turn, so the bridge gives it the new name by itself"
+                " once it is idle, even after a stop or a bridge restart. Nothing to do; a later rename replaces it."
+            )
         try:
             transcripts.rename_job(sid, new, jobs_dir)
         except OSError as exc:
@@ -3097,6 +3105,24 @@ def build_server(
                 f" so Claude Code and the desktop app keep the name {claude_name}."
             )
         return "renamed", "Renamed in Claude Code too; the session lists show it within seconds."
+
+    rename_tried: dict[str, tuple[str, float]] = {}  # session id: the name last written, and when
+
+    def rename_pending() -> None:
+        """Give Claude Code the name the bridge gave a session it started while it was mid-turn,
+        once it is idle. The bridge's name is kept in its database, so it lasts past a stop or a
+        restart of the bridge; a name set in Claude Code meanwhile wins, as the listing does."""
+        for d in reachable():
+            sid, claude_name, new = str(d.get("sessionId")), d.get("deliver_to"), str(d.get("name"))
+            # RULE: a name given mid-turn reaches Claude Code once the session is idle
+            if not claude_name or d.get("status") != "idle" or store.started_session(sid) is None:
+                continue
+            tried = rename_tried.get(sid)
+            if tried and tried[0] == new and manager.clock() - tried[1] < RENAME_RETRY_SECONDS:
+                continue  # Claude Code's lists take a few seconds to show it
+            rename_tried[sid] = (new, manager.clock())
+            outcome, _ = rename_in_claude(d, str(claude_name), new)
+            log.info("pending rename of %s -> %s (%s); Claude Code: %s", claude_name, new, sid, outcome)
 
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
