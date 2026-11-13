@@ -849,6 +849,11 @@ def load_handles(store: Store, now: float) -> dict[str, dict[str, Any]]:
     return {UNCLAIMED_HANDLE: {"used": now, "sessions": shared}} if shared else {}
 
 
+# How Claude Code lists a background session the shutdown stopped: mid-turn, at rest, or
+# waiting on a permission prompt (seen 2026-11-13).
+INTERRUPTED = ("failed", "done", "blocked")
+
+
 async def wake_interrupted(
     store: Store,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]],
@@ -860,9 +865,11 @@ async def wake_interrupted(
 ) -> list[str]:
     """Wake the sessions the bridge started or resumed that the last shutdown interrupted.
 
-    A shutdown stops every background session, and Claude Code shows each as failed; nothing
-    restarts them. The bridge stops with them, so one counts as interrupted when it was running
-    at the bridge's last look (`was_live`) and is now failed. Windows' boot time can't tell: with
+    A shutdown stops every background session, and nothing restarts them. Claude Code then shows
+    one that was mid-turn as failed, one at rest as done, and one waiting on a permission prompt
+    as blocked. The bridge stops with them, so one counts as interrupted when it was running at
+    the bridge's last look (`was_live`) and now shows one of those; one stopped on purpose shows
+    stopped, and one stopped earlier was gone from that look. Windows' boot time can't tell: with
     Fast Startup a shutdown resumes the old kernel. Each is woken in place with its saved
     options, Remote Control included, and logged. Returns their names.
 
@@ -873,7 +880,8 @@ async def wake_interrupted(
     todo = []
     for job in await background_jobs():
         sid, cwd = str(job.get("sessionId")), str(job.get("cwd") or "")
-        if job.get("state") != "failed" or not cwd or sid not in was_live or not store.was_started(sid):
+        # RULE: a session at rest when the PC shut down is woken too
+        if job.get("state") not in INTERRUPTED or not cwd or sid not in was_live or not store.was_started(sid):
             continue
         todo.append((sid, cwd, str(job.get("name") or sid)))
     if todo and ready is not None:

@@ -47,7 +47,7 @@ async def test_a_session_the_bridge_started_that_a_shutdown_interrupted_is_woken
 
 async def test_only_sessions_the_shutdown_interrupted_and_the_bridge_ran_are_woken(tmp_path):
     work, store = setup(tmp_path)
-    for sid in ("s-stopped", "s-failed-earlier", "s-done"):
+    for sid in ("s-stopped", "s-failed-earlier", "s-done-earlier", "s-running"):
         store.record_started(sid, sid, str(work))
     starter = Starter(tmp_path, register=False)
 
@@ -55,11 +55,12 @@ async def test_only_sessions_the_shutdown_interrupted_and_the_bridge_ran_are_wok
         return [
             job("s-stopped", work, state="stopped"),  # stopped on purpose
             job("s-failed-earlier", work),  # failed while the bridge watched: gone from its last look
-            job("s-done", work, state="done"),
+            job("s-done-earlier", work, state="done"),  # ended while the bridge watched
+            job("s-running", work, state="working"),  # running again already
             job("s-not-ours", work),  # the owner's own background session
         ]
 
-    assert await wake_interrupted(store, jobs, {"s-stopped", "s-done", "s-not-ours"}, starter) == []
+    assert await wake_interrupted(store, jobs, {"s-stopped", "s-running", "s-not-ours"}, starter) == []
     assert starter.calls == []
 
 
@@ -168,3 +169,18 @@ async def test_nothing_to_wake_asks_nothing_of_claude_ai(tmp_path):
 
     assert await wake_interrupted(store, jobs, set(), Starter(tmp_path, register=False), ready=ready) == []
     assert asked == []
+
+
+async def test_a_session_at_rest_when_the_pc_shut_down_is_woken_too(tmp_path):
+    # Seen 2026-11-13: after a shutdown, Claude Code listed the sessions that were mid-turn as
+    # "failed", and the ones at rest as "done", or "blocked" for one waiting on a permission prompt.
+    work, store = setup(tmp_path)
+    for sid in ("s-idle", "s-blocked", "s-busy"):
+        store.record_started(sid, sid, str(work))
+    starter = Starter(tmp_path, register=False)
+
+    async def jobs():
+        return [job("s-idle", work, state="done"), job("s-blocked", work, state="blocked"), job("s-busy", work)]
+
+    woken = await wake_interrupted(store, jobs, {"s-idle", "s-blocked", "s-busy"}, starter)
+    assert woken == ["s-idle", "s-blocked", "s-busy"]
