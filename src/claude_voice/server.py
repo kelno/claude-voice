@@ -983,6 +983,7 @@ def build_server(
     switched_off: frozenset[str] = SWITCHED_OFF,
     statusline_dir: Path = usage.STATUSLINE_DIR,
     update_log: Path = updater.LOG,
+    daemon_log: Path = transcripts.DAEMON_LOG,
     launch_update: Callable[..., None] | None = None,
     bridge_folder: Path | None = None,
     repo_config: config.Config | None = None,
@@ -1455,6 +1456,13 @@ def build_server(
         turns = all_turns(str(d.get("sessionId")), str(d.get("cwd")))
         return any(t["role"] == "assistant" and i > max(mark["sent"], mark["seen"]) for i, t in enumerate(turns))
 
+    def why_gone(sid: str) -> str:
+        """Why a session is no longer running, when Claude Code says: empty otherwise."""
+        # RULE: a session Claude Code closed for low memory says why and how to resume it
+        if sid[:8] in transcripts.closed_for_memory(daemon_log):
+            return "closed by Claude Code for low memory"
+        return ""
+
     def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A followed session's entry in the news line, or none once its finished turn is read
         (following ends there); an ended one is named once, then dropped."""
@@ -1465,7 +1473,12 @@ def build_server(
                 t["role"] == "assistant" and i > max(mark["sent"], mark["seen"])
                 for i, t in enumerate(all_turns(sid, str(mark.get("cwd"))))
             )
-            return [f"{name}: ended" + (" before you read its reply" if unread else "")]
+            why = why_gone(sid)
+            return [
+                f"{name}: ended"
+                + (" before you read its reply" if unread else "")
+                + (f", {why}; attach_conversation resumes it" if why else "")
+            ]
         mark["name"] = name
         news = []
         where, last = follow_state(sid, mark, d)
@@ -2447,7 +2460,22 @@ def build_server(
         found = named_for_voice(reachable(), session)
         if found is not None:
             return found
-        raise ToolError(f"No running session called {session!r}; see list_active_sessions")
+        raise ToolError(not_running(session))
+
+    def not_running(session: str) -> str:
+        """Why `session` can't be reached, and how to bring it back when it ran before."""
+        known = store.started_session(session)
+        if known is None:
+            return (
+                f"No running session called {session!r}; see list_active_sessions. A conversation that ran"
+                " earlier comes back with attach_conversation (list_claude_conversations finds it)."
+            )
+        sid = str(known["claude_session_id"])
+        why = why_gone(sid)
+        return (
+            f"{session!r} is not running" + (f": {why}" if why else "") + ". Its conversation is kept:"
+            f" attach_conversation with claude_session_id {sid} resumes it."
+        )
 
     def find_live(session: str) -> dict[str, Any]:
         d = find_any_live(session)

@@ -189,6 +189,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: little; it reads Claude Code's result format, which may change. The fallback when the result can't be read is today's behaviour.
 - Test first: `tests/test_courier.py`, a send answered with `success: false`, red on upstream's code.
 
+### 6z'. Why a session left the list, and how to bring it back — fork "Say when Claude Code closed a session for low memory"
+
+- Status: an idea; nothing prepared, no branch.
+- What: Claude Code's background manager closes idle background sessions when memory runs low (its `daemon.log`: "bg retire <id>: ... [low memory]"). The bridge reads that log: a followed session that ended this way says so in the news, with "attach_conversation resumes it"; and a message to a session that isn't running says whether Claude Code closed it, and gives the id to resume it with.
+- Why upstream should want it: without it, sessions drop out of the list with no word, and relays don't think of resuming them.
+- Expect pushback: it reads a log file whose format is Claude Code's, not a documented interface. Nothing breaks if it changes: the reason is just left out.
+- Test first: `tests/test_news.py` and `tests/test_courier.py`, the tests named after the rule.
+
 ### 6y. Updating the bridge on Windows — fork "Update the bridge on Windows, where there is no systemd"
 
 - What: `update_bridge` works without systemd. On Windows the bridge starts the updater as a detached process, and the updater restarts the bridge by ending it with exit code 75 (`RESTART_EXIT`), which the script that runs the bridge takes as "start me again"; a rollback does the same. The updater also checks health on the address the bridge listens on (`--host`), not always 127.0.0.1, which helps a Linux bridge bound to a Tailscale or WireGuard address too.

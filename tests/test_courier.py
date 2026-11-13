@@ -327,3 +327,18 @@ async def test_a_send_claude_code_answers_with_a_failure_is_not_delivered_and_sa
     assert clash in out["detail"]
     assert len(factory.clients) == 1  # the same send would fail the same way
     await courier.close()
+
+
+def test_the_sessions_claude_code_closed_for_low_memory_are_read_from_its_log(tmp_path):
+    from claude_voice.transcripts import closed_for_memory
+
+    log = tmp_path / "daemon.log"
+    log.write_text(
+        "[2026-11-13T00:19:50.365Z] [bg] bg retire aaaa1111: idle-prompt, idle 4h [low memory]\n"
+        "[2026-11-13T00:19:50.366Z] [bg] bg retire bbbb2222: settled, idle 2h [low memory]\n"
+        "[2026-11-13T00:19:50.367Z] [bg] bg retire cccc3333: settled, idle 8h\n"
+        "[2026-11-13T00:21:26.146Z] [bg] bg spawned bbbb2222 (fleet)\n",
+        encoding="utf-8",
+    )
+    assert closed_for_memory(log) == {"aaaa1111"}  # bbbb2222 was resumed since; cccc3333 not for memory
+    assert closed_for_memory(tmp_path / "missing.log") == set()

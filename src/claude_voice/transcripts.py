@@ -558,6 +558,28 @@ COURIER_PROMPT = (
 )
 
 
+# Claude Code's background manager writes here when it starts and closes background sessions.
+DAEMON_LOG = Path.home() / ".claude" / "daemon.log"
+_RETIRE = re.compile(r"\[bg\] bg retire (\S+?):.*\[low memory\]")
+_SPAWN = re.compile(r"\[bg\] bg spawned (\S+)")
+
+
+def closed_for_memory(log: Path = DAEMON_LOG) -> set[str]:
+    """The short ids (a session id's first 8 characters) of the background sessions Claude Code
+    closed to free memory and that haven't run since. Their conversations are kept."""
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return set()
+    closed: set[str] = set()
+    for line in lines:
+        if m := _RETIRE.search(line):
+            closed.add(m.group(1))
+        elif m := _SPAWN.search(line):
+            closed.discard(m.group(1))
+    return closed
+
+
 def _send_failure(content: Any) -> str:
     """Claude Code's reason when SendMessage ran but sent nothing, as when two sessions share the
     name; empty when it sent. Such a result is not marked as an error."""

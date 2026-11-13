@@ -71,7 +71,7 @@ def world(tmp_path):
 
 
 @contextlib.asynccontextmanager
-async def bridge(tmp_path, desk, store, *others):
+async def bridge(tmp_path, desk, store, *others, **options):
     """The bridge over HTTP, as the Claude app reaches it, for one desk session or more."""
     root = Path(desk.cwd).parent
     desks = {d.sid: d for d in (desk, *others)}
@@ -99,6 +99,7 @@ async def bridge(tmp_path, desk, store, *others):
         repo_config=config.Config(
             config.Repos(), config.Paths(None, None, None, None), None, budgets=config.Budgets({"default": 0.3})
         ),
+        **options,
     )
     uv = uvicorn.Server(uvicorn.Config(build_app(server), port=port, log_level="warning"))
     task = asyncio.create_task(uv.serve())
@@ -304,6 +305,50 @@ async def test_a_session_that_ended_before_its_reply_was_read_says_so(served):
         desk.gone()
         out = await call(c, "list_active_sessions")
     assert out["news"] == "[Juniper] billing-ab: ended before you read its reply"
+
+
+def closed_for_memory(path, short):
+    """Claude Code's background manager closing a session to free memory, as its log says it."""
+    path.write_text(
+        f"[2026-11-13T00:19:50.365Z] [bg] bg retire {short}: settled, idle 2h [low memory]\n"
+        f"[2026-11-13T00:19:50.969Z] [bg] bg settled {short} (done)\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+async def test_a_session_claude_code_closed_for_low_memory_says_why_and_how_to_resume_it(tmp_path, world):
+    # Seen 2026-11-13: eight sessions left the list at once and the relay was told nothing.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    log = closed_for_memory(tmp_path / "daemon.log", "sid-1")
+    store = Store(tmp_path / "bridge.db")
+    store.record_started("sid-1", "billing-ab", desk.cwd)
+    async with bridge(tmp_path, desk, store, daemon_log=log) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Wrap up.")
+            desk.gone()
+            out = await call(c, "list_active_sessions")
+            again = await c.call_tool(
+                "message_active_session", {"session": "billing-ab", "message": "Hi", "handle": HANDLE}
+            )
+    assert out["news"] == (
+        "[Juniper] billing-ab: ended, closed by Claude Code for low memory; attach_conversation resumes it"
+    )
+    assert again.is_error
+    text = again.content[0].text
+    assert "closed by Claude Code for low memory" in text
+    assert "attach_conversation with claude_session_id sid-1" in text
+
+
+async def test_a_session_that_is_not_running_points_to_attach_conversation(served):
+    url, desk = served
+    desk.gone()
+    http, client = conversation(url)
+    async with http, client as c:
+        out = await c.call_tool("message_active_session", {"session": "billing-ab", "message": "Hi", "handle": HANDLE})
+    assert out.is_error and "attach_conversation" in out.content[0].text
 
 
 async def test_two_sessions_are_set_apart_in_one_line(served):
