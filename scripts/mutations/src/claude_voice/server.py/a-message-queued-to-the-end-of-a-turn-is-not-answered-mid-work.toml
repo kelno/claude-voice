@@ -1,0 +1,5 @@
+[[rule]]
+name = "a message queued to the end of a turn is not answered mid-work"
+file = "src/claude_voice/server.py"
+find = 'return was_busy and asked is not None and asked.get\("origin"\) != "channel"'
+replace = 'return was_busy and asked is not None'

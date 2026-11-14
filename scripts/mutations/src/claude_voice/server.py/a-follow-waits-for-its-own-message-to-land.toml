@@ -1,0 +1,5 @@
+[[rule]]
+name = "a follow waits for its own message to land"
+file = "src/claude_voice/server.py"
+find = 'landed = own_message\(turns, mark\)'
+replace = 'landed = None'

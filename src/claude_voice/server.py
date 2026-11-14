@@ -1149,6 +1149,14 @@ def _asked_at(turns: list[dict[str, Any]], probe: str) -> dict[str, Any] | None:
     return next((t for t in turns if t["role"] == "user" and probe in t["text"]), None)
 
 
+def _mid_work(asked: dict[str, Any] | None, was_busy: bool) -> bool:
+    """Whether our message reached a busy session mid-work, so its first words after it answer it.
+    Claude Code queues a channel event to a busy session until its turn ends (none of 336 seen
+    on 2026-11-14 landed mid-turn): its first words then are the next turn's, often progress."""
+    # RULE: a message queued to the end of a turn is not answered mid-work
+    return was_busy and asked is not None and asked.get("origin") != "channel"
+
+
 def _settled(
     now: dict[str, Any],
     new_turns: list[dict[str, Any]],
@@ -1160,7 +1168,7 @@ def _settled(
     """What one look at an asked session shows: answered, not_received, waiting, or None to look again."""
     asked = _asked_at(new_turns, probe)
     answers = [t for t in new_turns if t["role"] == "assistant"]
-    if was_busy and asked is not None and any(t["index"] > asked["index"] for t in answers):
+    if asked is not None and _mid_work(asked, was_busy) and any(t["index"] > asked["index"] for t in answers):
         # Asked mid-work: its first words after our question are the answer; the
         # rest of its turn belongs to whatever it was doing.
         return "answered"
@@ -1186,7 +1194,7 @@ def _reply_turns(
     new = [t for t in fresh if t["role"] == "assistant" and t["index"] > start]
     if anchor is None and status != "still_working":
         new = new[-1:]  # the message is not in view: only the session's final words
-    elif anchor is not None and was_busy and new:
+    elif _mid_work(anchor, was_busy) and new:
         new = new[:1]
     return new, start
 
@@ -1613,9 +1621,10 @@ def build_server(
             turns_seen[sid] = (stamp, turns)
         return turns
 
-    def mark_read(d: dict[str, Any], seen: int | None = None, sent: int | None = None) -> None:
+    def mark_read(d: dict[str, Any], seen: int | None = None, sent: int | None = None, probe: str = "") -> None:
         """Move a session's read mark (to the end of its history when not given); with `sent`,
-        follow it: a finished turn after that one is expected."""
+        follow it: a finished turn after that one is expected, after the relay's own message
+        (`probe`, its first words) once it lands."""
         sid = str(d.get("sessionId"))
         marks = mine()
         if seen is None:
@@ -1626,7 +1635,7 @@ def build_server(
             mark["quiet"] = manager.clock()  # something new was read: the quiet follow runs on
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
-            mark.update(sent=sent, replied=False, since=manager.clock(), told=False)
+            mark.update(sent=sent, probe=probe, replied=False, since=manager.clock(), told=False)
             mark.pop("then", None)
 
     def followed(session: str, quiet: bool = False) -> str | None:
@@ -1775,6 +1784,7 @@ def build_server(
         elif tool in STARTING_TOOLS and structured.get("claude_session_id"):
             target = live.get(str(structured["claude_session_id"]))
         reached = structured.get("next_after")
+        probe = str(args.get("message") or "").strip()[:80]  # the relay's own words, to find where they land
         whole = isinstance(structured.get("reply_index"), int) and structured.get("reply_final")
         if isinstance(reached, int) and whole and not structured.get("reply_cut"):
             reached = max(reached, structured["reply_index"])  # the reply came whole: it is read
@@ -1786,31 +1796,34 @@ def build_server(
             ):
                 ensure_handle()  # a follow starts here
             if tool == "message_active_session":
-                follow_sent(target, reached)
+                follow_sent(target, reached, probe)
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
-                mark_read(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
+                still = structured.get("status") == "still_working"
+                mark_read(target, seen=reached, sent=reached if still else None, probe=probe)
             else:
                 mark_read(target, seen=reached)
 
-    def follow_sent(target: dict[str, Any], reached: int) -> None:
-        """Follow a session just sent a message, whose reply comes after turn `reached`. A send reads
-        nothing: what came before stays unread, and while an earlier message's reply is unread, the
-        wait for a reply starts from that message."""
+    def follow_sent(target: dict[str, Any], reached: int, probe: str = "") -> None:
+        """Follow a session just sent a message, whose reply comes after turn `reached` and after the
+        message itself (`probe`, its first words) once it lands. A send reads nothing: what came
+        before stays unread, and while an earlier message's reply is unread, the wait for a reply
+        starts from that message."""
         mark = mine().get(str(target.get("sessionId")))
         if mark is None:
-            mark_read(target, seen=reached, sent=reached)  # its history so far isn't news
+            mark_read(target, seen=reached, sent=reached, probe=probe)  # its history so far isn't news
         elif mark.get("sent") is None or not unread_reply(target, mark):
             # RULE: a send after every reply is read waits for its own reply
-            mark_read(target, seen=mark["seen"], sent=reached)
+            mark_read(target, seen=mark["seen"], sent=reached, probe=probe)
         else:
-            mark["then"] = reached  # followed once the earlier reply is read
+            mark.update(then=reached, then_probe=probe)  # followed once the earlier reply is read
 
     def unfollow_sent(target: dict[str, Any], reached: int) -> None:
         """Undo follow_sent for a message that never reached the session: no reply will come."""
         mark = mine().get(str(target.get("sessionId")))
         if mark is not None and mark.get("then") == reached:
             mark.pop("then")
+            mark.pop("then_probe", None)
         elif mark is not None and mark.get("sent") == reached:
             mark.update(sent=None, replied=False, state=None)
 
@@ -1851,7 +1864,8 @@ def build_server(
             mark["state"] = "unread"
         elif where == "read" and mark.get("then") is not None:
             # RULE: a send while a reply is unread is followed once that reply is read
-            mark.update(sent=mark.pop("then"), replied=False, since=manager.clock(), told=False)
+            then = {"sent": mark.pop("then"), "probe": mark.pop("then_probe", "")}
+            mark.update(then, replied=False, since=manager.clock(), told=False)
             return followed_entry(sid, mark, d)
         elif where == "read":
             # RULE: following a session ends once its finished turn is read
@@ -1892,12 +1906,26 @@ def build_server(
             mark.pop("quiet")
         return []
 
+    def own_message(turns: list[dict[str, Any]], mark: dict[str, Any]) -> int | None:
+        """Where the relay's own message landed after the turn it was sent at, or None: not yet, or
+        not as a turn (a message to a busy session can come in a form that isn't one)."""
+        probe = mark.get("probe")
+        if not probe:
+            return None
+        later = enumerate(turns)
+        return next((i for i, t in later if i > mark["sent"] and t["role"] == "user" and probe in t["text"]), None)
+
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
         """Where a followed, running session stands: "unread" (its turn ended, not read yet),
         "read" (read: following it is over), "waiting" (paused on a permission prompt, mid-turn)
         or "working"; and its latest message since the relay's, if any."""
         turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
-        answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["sent"]]
+        # Claude Code queues a message to a busy session until its turn ends: what comes before
+        # the relay's own message is the end of that turn, not a reply to it.
+        # RULE: a follow waits for its own message to land
+        landed = own_message(turns, mark)
+        start = mark["sent"] if landed is None else landed
+        answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > start]
         # Its turn has ended once it rests, or asks its user something (not mid-turn on a
         # prompt), or once a later message came in after its reply.
         # RULE: a background task's completion note is not a later message
@@ -3621,9 +3649,9 @@ def build_server(
         say = SENDING_SAY.format(name=name)
         return {"session": name, "status": "sending", "delivered": None, "id": item["id"], "say": say}
 
-    def numbered_turns(target: dict[str, Any]) -> list[dict[str, Any]]:
+    def numbered_turns(target: dict[str, Any], origins: bool = False) -> list[dict[str, Any]]:
         msgs = read_transcript(target["sessionId"], target.get("cwd"))
-        return [{"index": i, **turn} for i, turn in enumerate(transcripts.recent_turns(msgs, None))]
+        return [{"index": i, **turn} for i, turn in enumerate(transcripts.recent_turns(msgs, None, origins))]
 
     def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
         """Why a session can take nothing in right now: an open question, or other input."""
@@ -3700,7 +3728,7 @@ def build_server(
             # A quick turn can start and end between two looks, so a new reply
             # counts as much as having seen the session busy.
             seen_busy = seen_busy or now.get("status") in BUSY
-            new_turns = numbered_turns(now)[before:]
+            new_turns = numbered_turns(now, origins=True)[before:]
             received_late = loop.time() - started >= receive_seconds
             settled = _settled(now, new_turns, probe, was_busy, seen_busy, received_late)
             if settled == "answered" and not _reply_turns(new_turns, probe, before, "idle", was_busy)[0]:
@@ -3882,15 +3910,15 @@ def build_server(
         # Followed from here, as after a send, so a wait or a news line made while the question
         # waits sees the session working; the question's own result then moves the read mark.
         # RULE: a question follows its session from its delivery
-        ensure_handle()
-        follow_sent(target, before - 1)
-        save_handles()
         probe = message.strip()[:80]
+        ensure_handle()
+        follow_sent(target, before - 1, probe)
+        save_handles()
         target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds, began)
         if status == "not_received":
             # RULE: a question that never reached its session leaves it unfollowed
             unfollow_sent(target, before - 1)
-        fresh = numbered_turns(target)[before:] if status != "session_ended" else []
+        fresh = numbered_turns(target, origins=True)[before:] if status != "session_ended" else []
         new, start = _reply_turns(fresh, probe, before, status, was_busy)
         final = reply_is_final(status, new)
         reply = reply_of(new, max_chars, final)
