@@ -661,6 +661,39 @@ async def test_a_background_task_s_completion_note_is_not_a_later_message(served
     assert done["reply"] == "Done."
 
 
+async def test_a_wait_on_a_named_session_counts_a_background_task_still_running_as_working(served):
+    # A desktop session reads idle while a task it started runs on. The news line says more is to
+    # come, so a wait naming the session must not call its reply final in the same result.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Sleep 90 s, then say done.")
+        desk.transcript += [started_in_background("bcw"), turn("assistant", "I'll say done when it finishes.")]
+        running = await call(c, "wait_for_session", session="billing-ab", wait_seconds=0.1)
+        desk.transcript += [task_done("bcw"), turn("assistant", "Done.")]
+        done = await call(c, "wait_for_session", session="billing-ab", wait_seconds=0.1)
+    assert running["status"] == "still_working"
+    assert running["reply_final"] is False
+    assert running["next_step"].startswith("billing-ab ended its turn with a background task still running")
+    assert done["status"] == "idle"
+    assert done["reply"] == "Done." and done["reply_final"] is True
+
+
+async def test_a_read_counts_a_background_task_still_running_as_working(served):
+    # The same session read rather than waited on: its newest message is not the final reply yet.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Sleep 90 s, then say done.")
+        desk.transcript += [started_in_background("bcw"), turn("assistant", "I'll say done when it finishes.")]
+        out = await call(c, "read_session_output", session="billing-ab")
+    assert out["reply"] == "I'll say done when it finishes."
+    # The guide reads status "idle" with turns_left 0 as a final reply too.
+    assert out["status"] == "busy" and out["turns_left"] == 0
+    assert out["reply_final"] is False
+    assert out["next_step"].startswith("billing-ab ended its turn with a background task still running")
+
+
 async def test_a_followed_session_is_named_whatever_its_capitals(served):
     url, desk = served
     http, client = conversation(url)
