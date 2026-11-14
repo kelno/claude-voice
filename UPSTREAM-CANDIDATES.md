@@ -251,10 +251,41 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: a large feature, three tools and a command; a new dependency (`webauthn`); a page served by the bridge, which answers only from a private network (the owner's VPN, the computer itself, or a tailnet), so it needs one reachable from the owner's phone. `request_access` uses the same passkey in the fork (6), so the two may be offered together, or this one first with its own tools.
 - Test first: `tests/test_confirm.py`, `tests/test_passkeys.py`.
 
+### 11. A suite that keeps to its own checkout, and away from the owner's Claude Code — fork "Leave a nested checkout's pages to its own run", "Keep the owner's own Claude Code out of the suite"
+
+- Status: an idea; nothing prepared, no branch.
+- What: `tests/test_documented_commands.py` skips a folder holding its own `.git` (a Claude Code worktree under `.claude/worktrees`, a clone) and prunes skipped folders instead of walking `.venv`; `build_server` looks up `transcripts.background_sessions`, `background_jobs` and `summarize` when it is built, not when `server.py` loads, and `tests/conftest.py` puts fakes there, as it already does for GitHub and the side-question reader.
+- Why upstream should want it: anyone whose Claude Code sessions use worktrees runs each documented command once per worktree, and fails on another branch's pages. Every watched bridge in the suite ran the developer's real `claude agents` listing, and the `digest_session` case of `tests/test_api.py` made a real Haiku call on their account in every run (no login in CI, so it fails quietly there).
+- Expect pushback: little; three defaults become `None`, as `side_answer` already is.
+- Test first: `tests/test_documented_commands.py` (a nested checkout keeps its own pages), `tests/test_wake.py` and `tests/test_digest.py` (a bridge given no helper uses the one in place when built).
+
+### 12. A quick ratchet check that skips the sweep on both sides — fork "Leave the mutation sweep out of a quick check's copy of main too"
+
+- Status: an idea; nothing prepared, no branch.
+- What: with no kept levels for main, `ratchet.py check --skip-mutation` measures main in a copy; the copy now gets `--skip-mutation` too, measures no mutation, and the check compares none.
+- Why upstream should want it: `CONTRIBUTING.md` offers `--skip-mutation` as the quick look, but locally main's levels are never kept, so the copy ran the whole sweep anyway: about 30 minutes here, most of a 40-minute "quick" check.
+- Expect pushback: a quick check then says nothing about mutation; continuous integration still runs the full sweep.
+- Test first: `tests/test_ratchet.py`, the test named after the rule "a quick check measures no mutation on either side".
+
+### 13. The running commit read once per process — fork "Ask git for the running commit once per process"
+
+- Status: an idea; nothing prepared, no branch.
+- What: `metrics.version()` and `metrics.uncommitted()` are cached for the process.
+- Why upstream should want it: both describe the code the process loaded, which a later pull doesn't change until a restart; the suite builds hundreds of bridges, each asking git twice.
+- Expect pushback: small; a test that fakes git must clear the cache (`tests/test_agent.py` has a fixture for it).
+- Test first: `tests/test_agent.py`, the test that counts the git calls.
+
+### 14. The suite on parallel workers — only in the fork's `CLAUDE.md` (fork "Run the suite on eight parallel workers here")
+
+- Status: an idea; the fork changed no project file for it.
+- What: `pytest-xdist` in the dev dependencies and `-n auto` (or a fixed count) in the gates and CI. Here, 8 workers took the suite from 182 s to 37 s without coverage, green on every try; 12 or 16 workers were no faster.
+- Why upstream should want it: the suite is about 1,300 tests and grows fast; one process uses one core.
+- Expect pushback: timing tests ("answers within two seconds") get less room on a loaded runner; a new dependency. Offer it as an issue first.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.
-- The fork's `CLAUDE.md` (fork "Check how far behind upstream the fork is at each session start"): each session fetches upstream and offers the owner a resync when the fork is behind, the last sync being the merge base of `main` and `upstream/main`. It sits after upstream's own pointers, under "The owner's fork". The same section (fork "Say the fork is AI-managed") says the fork is AI-managed, maintained by kelno's own agents under kelno's private rules, and that for those agents the gates and the ratchet run as slow checks rather than before every push.
+- The fork's `CLAUDE.md` (fork "Check how far behind upstream the fork is at each session start"): each session fetches upstream and offers the owner a resync when the fork is behind, the last sync being the merge base of `main` and `upstream/main`. It sits after upstream's own pointers, under "The owner's fork". The same section (fork "Say the fork is AI-managed") says the fork is AI-managed, maintained by kelno's own agents under kelno's private rules, and that for those agents the gates run as slow checks rather than before every push, with no ratchet on the fork's own `main` and the suite on 8 parallel workers (14).
 - The guide's line saying the bridge is the owner's own software, so a change to it is a fair suggestion when a tool gets in the way (fork "Tell the relay the bridge is the owner's own project", then "Call the change feedback names a lead, not the fix"): true only of this fork.
 - The commit-msg hook calls `python3`, which the python.org installer doesn't create on Windows (only `python.exe`), so the hook fails there unless something else provides `python3`. Fixed on this PC outside the repo, with a `python3.exe` link. Worth a one-line issue at most, not a fork change.
 

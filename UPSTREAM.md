@@ -112,6 +112,16 @@ All of upstream's code is in; what is on or off here (owner):
 | Updating the bridge (`update_bridge`) | Through `systemd-run` and `systemctl`, so Linux only | Also on Windows: a detached updater, and a restart by exit code 75 that the start script answers | The bridge runs on Windows here | "Update the bridge on Windows, where there is no systemd" |
 | Tests before an update restarts (`update_bridge`) | Always run | Run only when asked (`run_tests`, `--tests`); the rollback when the new version doesn't come back healthy stays | Only the owner's own sessions commit to the fork, and they test before pushing, so the run only delayed the restart (owner, 2026-11-06). Ask for it after a resync or changes made elsewhere | "Run an update's tests only when asked" |
 
+### The suite and the checks
+
+| What | Upstream | Fork | Why | Fork commits |
+| --- | --- | --- | --- | --- |
+| Pages whose documented commands are run (`tests/test_documented_commands.py`) | Every page under the checkout, nested checkouts included | This checkout's pages only: a folder holding its own `.git` (a worktree under `.claude/worktrees`, a clone) is skipped | Sessions here work in worktrees under the main checkout: each documented command ran once per worktree, and a broken page on another branch failed the run | "Leave a nested checkout's pages to its own run" |
+| Claude Code during the suite | A watched bridge runs the real `claude agents` listing as it starts, and a digest test makes a real model call | Both faked in `tests/conftest.py`; `build_server` looks up `background_sessions`, `background_jobs` and `summarize` when it is built, so the fakes reach it | A real model call on the owner's account in every run, and slower | "Keep the owner's own Claude Code out of the suite" |
+| `ratchet.py check --skip-mutation` when main's levels aren't kept | Skips the mutation sweep on its own side; the copy of main still runs the whole sweep | The copy skips it too, and no mutation is compared | The sweep took about 30 minutes of a 40-minute quick check here | "Leave the mutation sweep out of a quick check's copy of main too" |
+| The running commit (`metrics.version`, `metrics.uncommitted`) | Asked of git each time a bridge is built | Asked once per process | The suite builds hundreds of bridges: about a thousand git processes per run | "Ask git for the running commit once per process" |
+| How the suite runs here | One process | 8 parallel workers through `uv run --with pytest-xdist`, said in the fork's `CLAUDE.md`; `pyproject.toml` and `uv.lock` as upstream's | About 5 minutes with coverage, down to about 50 s | "Run the suite on eight parallel workers here" |
+
 ## Still open in the fork
 
 - The session tree (`tree.py`, `SOCKET_PID`) links sessions that message each other through a process id read from Unix socket names. Windows uses named pipes (`\\.\pipe\LOCAL\cc-msg-…`, no pid). Name matching already works; the fallback needs the real Windows address format, now observable since messaging works. Would join candidate 8 in `UPSTREAM-CANDIDATES.md`.
