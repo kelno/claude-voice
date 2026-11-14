@@ -49,13 +49,17 @@ MODEL_NOT_FOUND_NOTE = (
 )
 
 
+# The channel that carries the bridge's relayed messages, as Claude Code names it on each event.
+RELAY_CHANNEL = "plugin:relay-channel:claude-voice"
+
+
 def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool = False) -> list[dict[str, Any]]:
     """What a person would read: prompts and Claude's text, with tool names folded in.
 
     With `origins`, a user turn also says where it came from, as Claude Code records it: "human"
     for one typed into the session, "peer" for a message from another session (the relay's own
-    among them), "channel" for one the bridge delivered through its channel, "task-notification"
-    for a background task's completion note, None if unrecorded.
+    among them), "channel" for a channel's event (`source` names the channel; RELAY_CHANNEL is the
+    bridge's own), "task-notification" for a background task's completion note, None if unrecorded.
     """
     turns: list[dict[str, Any]] = []
     pending_tools: list[str] = []
@@ -64,8 +68,14 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool 
         if m.type == "user":
             text = _prompt_text(content)
             if text:
+                source = getattr(m, "source", None) if origins else None
                 turns.append(
-                    {"role": "user", "text": text, **({"origin": getattr(m, "origin", None)} if origins else {})}
+                    {
+                        "role": "user",
+                        "text": text,
+                        **({"origin": getattr(m, "origin", None)} if origins else {}),
+                        **({"source": source} if source else {}),
+                    }
                 )
         elif m.type == "assistant" and isinstance(content, list):
             pending_tools = _assistant_turns(content, pending_tools, turns, getattr(m, "error", None))
@@ -448,6 +458,7 @@ def _lean(raw: bytes) -> Any:
         message={"role": message.get("role"), "content": content},
         error=entry.get("error"),
         origin=(entry.get("origin") or {}).get("kind"),
+        source=(entry.get("origin") or {}).get("server"),  # the channel's, for a channel event
         task=_started_in_background(entry),
         at=entry.get("timestamp"),
         ended=ended,

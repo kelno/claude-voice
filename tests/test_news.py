@@ -38,9 +38,12 @@ from claude_voice.transcripts import project_key_for_directory
 PID = os.getpid()
 
 
-def turn(role, text, origin=None):
+RELAY_CHANNEL = "plugin:relay-channel:claude-voice"
+
+
+def turn(role, text, origin=None, source=None):
     content = text if role == "user" else [{"type": "text", "text": text}]
-    return SimpleNamespace(type=role, message={"content": content}, error=None, origin=origin)
+    return SimpleNamespace(type=role, message={"content": content}, error=None, origin=origin, source=source)
 
 
 class Desk:
@@ -1183,10 +1186,27 @@ async def test_a_turn_the_relay_channel_started_is_named_as_another_relay_s(serv
         sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
         desk.transcript.append(turn("assistant", "Export done."))
         await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
-        desk.transcript.append(turn("user", "Which folder?", "channel"))
+        desk.transcript.append(turn("user", "Which folder?", "channel", RELAY_CHANNEL))
         desk.transcript.append(turn("assistant", "In billing."))
         out = await call(c, "list_active_sessions")
     assert out["news"] == "[Juniper] billing-ab (idle): new turn, started by another relay, read with after=3"
+
+
+async def test_only_the_relay_channel_counts_as_another_relay(served):
+    # Claude Code marks an event from any plugin's channel the same way; only the bridge's own
+    # channel carries relays' messages.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        desk.transcript.append(turn("user", "Build failed on main.", "channel", "plugin:ci-alerts:ci"))
+        desk.transcript.append(turn("assistant", "Looking at it."))
+        out = await call(c, "list_active_sessions")
+    assert out["news"] == (
+        "[Juniper] billing-ab (idle): new turn, started by the channel plugin:ci-alerts:ci, read with after=3"
+    )
 
 
 async def test_a_new_turn_in_a_quiet_follow_wakes_a_wait(tmp_path, world):

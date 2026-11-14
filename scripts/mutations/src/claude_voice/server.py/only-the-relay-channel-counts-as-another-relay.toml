@@ -1,0 +1,5 @@
+[[rule]]
+name = "only the relay channel counts as another relay"
+file = "src/claude_voice/server.py"
+find = 'relay = turn.get\("source"\) == transcripts.RELAY_CHANNEL'
+replace = 'relay = True'

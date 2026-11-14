@@ -77,7 +77,12 @@ def test_a_message_the_relay_channel_delivers_is_kept_as_a_turn(tmp_path):
     path.write_text("".join(json.dumps(x) + "\n" for x in lines))
 
     turns = recent_turns(read_raw_transcript("sid-1", cwd, projects_dir=tmp_path), None, origins=True)
-    assert turns[1] == {"role": "user", "text": text, "origin": "channel"}
+    assert turns[1] == {
+        "role": "user",
+        "text": text,
+        "origin": "channel",
+        "source": "plugin:relay-channel:claude-voice",
+    }
     assert [t["text"] for t in turns][2] == "In billing."
 
 

@@ -271,12 +271,18 @@ RENAME_RETRY_SECONDS = 60.0
 # until stopped, until it ends, or after this long with nothing new (owner, 2026-11-13).
 QUIET_SECONDS = 24 * 3600
 # Who started a turn, by the origin Claude Code records on the message that started it.
-STARTED_BY = {
-    "human": "the owner typing",
-    "peer": "another session",
-    "channel": "another relay",  # a message the bridge delivered through its channel
-    "task-notification": "a background task",
-}
+STARTED_BY = {"human": "the owner typing", "peer": "another session", "task-notification": "a background task"}
+
+
+def started_by(turn: dict[str, Any]) -> str:
+    """Who started a turn, from the message that started it."""
+    if turn.get("origin") == "channel":
+        # RULE: only the relay channel counts as another relay
+        relay = turn.get("source") == transcripts.RELAY_CHANNEL
+        return "another relay" if relay else f"the channel {turn.get('source') or 'of a plugin'}"
+    return STARTED_BY.get(str(turn.get("origin")), "something else")
+
+
 # Handles handed out this close together, none passed back yet, came from one relay's calls made at
 # once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
 # relays starting within this time would merge, which the owner says doesn't happen.
@@ -1889,7 +1895,7 @@ def build_server(
         if not unread or session_state(d) not in ("idle", "waiting for an answer"):
             return None
         starter = next((t for t in reversed(turns[: unread[0]]) if t["role"] == "user"), None)
-        return STARTED_BY.get(str((starter or {}).get("origin")), "something else")
+        return started_by(starter or {})
 
     def quiet_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A quietly followed session's entry in the news line: only a new finished turn the
