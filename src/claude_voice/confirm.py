@@ -46,8 +46,6 @@ CREATE TABLE IF NOT EXISTS owner_requests(
 class Caller:
     """Who made a call, as the bridge itself observed it."""
 
-    label: str | None = None  # the product, as Anthropic's servers name it
-    address: str = ""  # where the call came from
     tool_use_id: str | None = None  # a Claude Code session's id for this call, in its transcript
 
 
@@ -55,9 +53,9 @@ NOBODY = Caller()  # a call from inside the bridge, or one not seen yet
 current_caller: contextvars.ContextVar[Caller] = contextvars.ContextVar("current_caller", default=NOBODY)
 
 
-def caller_from(headers: Mapping[str, str], address: str, meta: Mapping[str, Any]) -> Caller:
+def caller_from(meta: Mapping[str, Any]) -> Caller:
     tool_use = meta.get("claudecode/toolUseId")
-    return Caller(headers.get("x-anthropic-client"), address, str(tool_use) if tool_use else None)
+    return Caller(str(tool_use) if tool_use else None)
 
 
 def iso(ts: float | None) -> str | None:

@@ -55,8 +55,6 @@ class LiveWatcher:
     ) -> None:
         self.db = store.db
         self.db.executescript(SCHEMA)
-        if "project" in {r[1] for r in self.db.execute("PRAGMA table_info(feed)")}:
-            self.db.execute("ALTER TABLE feed RENAME COLUMN project TO folder")  # its name before the rename
         self.live_dir = live_dir
         self.root = Path(root).resolve()
         self.clock = clock

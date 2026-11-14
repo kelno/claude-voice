@@ -112,17 +112,6 @@ async def call(client, name, **args):
     return res.structured_content
 
 
-def test_a_feed_kept_from_before_the_rename_says_folder(store, live, root):
-    store.db.execute(
-        "CREATE TABLE feed(seq INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL,"
-        " session TEXT NOT NULL, kind TEXT NOT NULL, text TEXT, project TEXT)"
-    )
-    w = LiveWatcher(store, live, root)
-    w.check()
-    put(live, "app-1", "busy", str(root / "app"))
-    assert [(e["session"], e["folder"]) for e in w.check()] == [("app-1", "app")]
-
-
 def test_a_reply_to_the_courier_is_news_the_voice_reads(store, live, root, monkeypatch):
     from claude_voice import transcripts
 

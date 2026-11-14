@@ -796,9 +796,7 @@ async def log_requests(ctx, call_next):
     token = transcripts.current_trace.set(trace)
     client_token = transcripts.current_client.set(caller_kind(ctx, trace))
     request = getattr(ctx, "request", None)
-    seen = (
-        confirm.caller_from(request.headers, api.caller_address(request.scope), meta) if request else confirm.Caller()
-    )
+    seen = confirm.caller_from(meta) if request else confirm.Caller()
     caller_token = confirm.current_caller.set(seen)
     started = time.monotonic()
     try:
