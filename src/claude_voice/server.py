@@ -403,7 +403,7 @@ LOG_KEPT = 3
 # the central rules. Agents are assumed to read the manual; one that doesn't is a bug to fix
 # here (the guide tool's first line, a clearer rule) first, so the tool descriptions avoid
 # repeating the manual's rules as reminders; one that slipped despite the manual may get a reminder
-# where it's needed, with a comment saying why (AGENTS.md). The app's agents load tools by search
+# where it's needed, with a comment saying why (CLIENT-TEXT.md). The app's agents load tools by search
 # and may never call guide, so the manual also comes with the first result of any MCP session that
 # hasn't read it (result_notes).
 BASE_INSTRUCTIONS = """\
