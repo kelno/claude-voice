@@ -3637,7 +3637,10 @@ def build_server(
         quiet_since: float | None = None
         while (now := live_by_pid(pid)) is not None:
             target, blocked = now, waiting(now)
-            idle = now.get("status") == "idle"
+            # At rest as the news line counts it: a turn that ended with a background task still
+            # running isn't, though Claude Code lists a desktop session in that state as idle.
+            # RULE: a wait on a named session counts a background task still running as working
+            idle = session_state(now) == "idle"
             # A message is in the transcript and the session idle on two looks running, or after
             # it was seen busy: its turn has ended, even if it wrote nothing. Claude Code may mark
             # it idle a moment before its last message can be read, so a turn that seems to have
@@ -3810,7 +3813,12 @@ def build_server(
             left = len(later) - len(picked)  # read on with next_after until this is 0
             written = [t for t in later if t["role"] == "assistant"]
         # The newest message, whole once its turn has ended, even past the page: given once, in reply.
-        reply = final_reply(written, "idle" if target.get("status") == "idle" else "still_working", size)
+        # A session whose turn ended with a background task still running reads busy, as the news
+        # line counts it, since the guide takes status idle with turns_left 0 as a final reply.
+        # RULE: a read counts a background task still running as working
+        at_rest = session_state(target) == "idle"
+        status = "busy" if target.get("status") == "idle" and not at_rest else target.get("status")
+        reply = final_reply(written, "idle" if at_rest else "still_working", size)
         turns = []
         for t, room in picked:
             t["length"] = len(t["text"])
@@ -3822,7 +3830,7 @@ def build_server(
         next_after = turns[-1]["index"] if turns else (after if after is not None else -1)
         out = {
             "session": target["name"],
-            "status": target.get("status"),
+            "status": status,
             **reply,
             "turns": turns,
             "next_after": next_after,

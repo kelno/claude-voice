@@ -132,7 +132,8 @@ async def test_read_session_output_uses_the_current_transcript(tmp_path, root, l
     _, srv = server_for(tmp_path, root, live, read=read)
     async with Client(srv) as c:
         out = await call(c, "read_session_output", session="billing-ab", limit=2)
-    assert seen == [("current-id", str(root / "billing"))]
+    # The fork reads it a second time, for background tasks still running (UPSTREAM.md).
+    assert seen and set(seen) == {("current-id", str(root / "billing"))}
     assert out["turns"][-1]["text"] == "All 12 tests pass."
     assert out["status"] == "idle"
 

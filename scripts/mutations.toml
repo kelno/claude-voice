@@ -851,6 +851,18 @@ find = 'return BACKGROUND$'
 replace = 'pass'
 
 [[rule]]
+name = "a wait on a named session counts a background task still running as working"
+file = "src/claude_voice/server.py"
+find = 'idle = session_state\(now\) == "idle"$'
+replace = 'idle = now.get("status") == "idle"'
+
+[[rule]]
+name = "a read counts a background task still running as working"
+file = "src/claude_voice/server.py"
+find = 'at_rest = session_state\(target\) == "idle"$'
+replace = 'at_rest = target.get("status") == "idle"'
+
+[[rule]]
 name = "a session name is found whatever its capitals"
 file = "src/claude_voice/renames.py"
 find = 'return name.casefold\(\) == wanted.casefold\(\) if any_case else name == wanted'
