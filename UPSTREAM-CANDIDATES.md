@@ -232,6 +232,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - What: one paragraph telling the assistant to name every session from every source when asked. Folded into 6e's manual; only worth offering as part of it.
 
+### 13. Background steps that log their failures — fork "Log a failed background step once instead of dropping it"
+
+- What: each step of the bridge's housekeeping loop (the look, other machines, the approval pick-up, the prompt sweep, the work board, and the fork's own steps) runs in `background_step`, which logs a failure once and again only when it changes or comes back after a recovery; the warm-up of the side-question reader logs its failure through a done-callback instead of dropping it.
+- Why: upstream's loop wraps each step in `contextlib.suppress(Exception)`, so a step that breaks for good leaves no trace, against upstream's own rule that an error names what is wrong and the next step.
+- Already shaped for upstream: two `# RULE` markers with their rows in `scripts/mutations/`, `tests/test_background_steps.py`. The fork's version also covers its logon wake-up; upstream's has none, so that part stays out of a pull request.
+- Expect discussion: the log level (warning) and whether to log every repeat instead of once.
+
 ### 7. Serving under a path prefix — not in the fork yet
 
 - What: the bridge works behind a reverse proxy under a path (`CLAUDE_VOICE_PUBLIC_URL=https://host/claude-voice`) only because Nginx also forwards three root paths. One of them is the bridge's own doing: the consent form posts to an absolute `/oauth/consent` (`src/claude_voice/oauth.py`, `_consent_form`). A relative action (`action='consent'`) would remove it. The other two are where OAuth clients look for metadata (RFC 9728, RFC 8414) and can't be avoided by the bridge alone; document them.

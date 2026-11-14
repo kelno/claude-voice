@@ -1,0 +1,5 @@
+[[rule]]
+name = "a wake-up that fails is logged"
+file = "src/claude_voice/server.py"
+find = 'log\.warning\("%s failed: %s: %s", what, type\(task\.exception\(\)\)\.__name__, task\.exception\(\)\)'
+replace = 'pass'

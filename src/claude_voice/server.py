@@ -963,6 +963,37 @@ def load_handles(store: Store, now: float) -> dict[str, dict[str, Any]]:
     return {UNCLAIMED_HANDLE: {"used": now, "sessions": shared}} if shared else {}
 
 
+@contextlib.contextmanager
+def background_step(name: str, failures: dict[str, str]) -> Any:
+    """Run one step of the bridge's housekeeping: a failure is logged and the loop goes on.
+
+    The loop comes round every few seconds, so a step failing the same way is logged once, and
+    again only when the failure changes or comes back after the step worked. A cancellation
+    (the bridge stopping) is not an Exception and goes through."""
+    try:
+        yield
+    except Exception as exc:
+        said = f"{type(exc).__name__}: {exc}"
+        # RULE: a failed background step is logged once until it changes
+        if failures.get(name) != said:
+            log.warning("background step %s failed: %s", name, said)
+            failures[name] = said
+    else:
+        failures.pop(name, None)
+
+
+def log_failure(what: str) -> Callable[[asyncio.Task[Any]], None]:
+    """A done-callback that logs a background task's failure instead of dropping it."""
+
+    def done(task: asyncio.Task[Any]) -> None:
+        if task.cancelled() or task.exception() is None:
+            return
+        # RULE: a wake-up that fails is logged
+        log.warning("%s failed: %s: %s", what, type(task.exception()).__name__, task.exception())
+
+    return done
+
+
 # How Claude Code lists a background session the shutdown stopped: mid-turn, at rest, or
 # waiting on a permission prompt (seen 2026-11-13).
 INTERRUPTED = ("failed", "done", "blocked")
@@ -1373,28 +1404,29 @@ def build_server(
         # Watch running sessions between polls, so short-lived states are not missed.
         task = None
         if watch_interval:
+            failures: dict[str, str] = {}  # each step's last failure, said once
 
             async def watch():
                 while True:
-                    with contextlib.suppress(Exception):
+                    with background_step("look", failures):
                         # The first look reads every running session's whole conversation, which
                         # takes many seconds; on the event loop it held back startup and every call.
                         # RULE: the bridge answers as soon as it has started, while its first look runs behind
                         await asyncio.to_thread(check)
-                    with contextlib.suppress(Exception):
+                    with background_step("other machines", failures):
                         await across.refresh()  # the other machines, asked every ten seconds
-                    with contextlib.suppress(Exception):
+                    with background_step("approval pick-up", failures):
                         await desk.pick_up()  # an approval typed while the bridge runs
-                    with contextlib.suppress(Exception):
+                    with background_step("connector repair", failures):
                         await mender.step()  # a session that started without its claude.ai connectors
-                    with contextlib.suppress(Exception):
+                    with background_step("prompt sweep", failures):
                         sweep_prompts()  # whether or not anyone has the page open
-                    with contextlib.suppress(Exception):
+                    with background_step("pending rename", failures):
                         await asyncio.to_thread(rename_pending)  # a name given while the session was busy
-                    with contextlib.suppress(Exception):
+                    with background_step("sign-in check", failures):
                         # Claude Code is asked at most once an hour, off the event loop: it can take seconds.
                         signin_due[:] = [i["text"] for i in await asyncio.to_thread(board._sign_in)]
-                    with contextlib.suppress(Exception):
+                    with background_step("work board", failures):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
                     await asyncio.sleep(watch_interval)
@@ -1415,12 +1447,12 @@ def build_server(
             task = asyncio.create_task(watch())
             # The service keeps the side-question reader ready, so the first answer is quick too.
             warming = asyncio.create_task(transcripts.shared_reader().warm())
-            warming.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            warming.add_done_callback(log_failure("warming the side-question reader"))
             # The served bridge starts at logon: bring back what the last shutdown stopped.
             waking = asyncio.create_task(
                 wake_interrupted(manager.store, background_jobs, was_live, start_background, connectors_reachable)
             )
-            waking.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            waking.add_done_callback(log_failure("the wake-up of interrupted sessions"))
         if channels is not None:
             await channels.start()
         # The software report is built on a thread of its own, so the bridge listens at once.
