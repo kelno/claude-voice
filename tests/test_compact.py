@@ -185,7 +185,9 @@ async def test_a_compaction_given_up_is_told_to_the_session_with_why(bridge, mon
 
 
 @pytest.mark.parametrize("linked", [True, False])
-async def test_a_session_woken_from_a_compaction_without_its_remote_control_link_is_logged(bridge, monkeypatch, caplog, linked):
+async def test_a_session_woken_from_a_compaction_without_its_remote_control_link_is_logged(
+    bridge, monkeypatch, caplog, linked
+):
     # The wake un-archives the claude.ai session and reattaches to it; where claude.ai refuses
     # (an untrusted device), the session runs on without Remote Control, out of the app's list.
     monkeypatch.setattr(server, "RELISTED_SECONDS", 0.3)
