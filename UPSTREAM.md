@@ -3,7 +3,7 @@
 How this fork, [kelno/claude-voice](https://github.com/kelno/claude-voice), differs from [claude-voice](https://github.com/roykollensvendsen/claude-voice) by Roy Kollen Svendsen and why, upstream's rules for a pull request, and how one is checked here. What could go back upstream is in `UPSTREAM-CANDIDATES.md`. Written to be picked up cold, by people and agents.
 
 - "The owner" is kelno, who maintains this fork; "the relay" is the voice assistant in the Claude app that talks to the bridge for them; "agents" are the Claude sessions that do the work.
-- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (kelno's rules for forks say how), so fork commits keep their hashes; the last merge took upstream's `9300d23`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
+- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (kelno's rules for forks say how), so fork commits keep their hashes; the last merge took upstream's `b828d15`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
 
 ## Upstream's rules
 
@@ -20,7 +20,7 @@ The full ratchet switches every rule off in turn, one test run per rule in `scri
 
 ## Differences from upstream
 
-Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `9300d23`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
+Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `b828d15`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
 
 ### Decision records
 
@@ -82,6 +82,9 @@ All of upstream's code is in; what is on or off here (owner):
 - The first look and the software report run off the event loop, so the bridge answers at once after a restart: on, as upstream.
 - The agent protocol, frozen as version 1 (`docs/agent-protocol.md`): in, for the hub, inactive here.
 - Quality levels: as upstream (ADR-CV-009). Continuous integration keeps main's levels with each run, and the software panel shows them.
+- Short session numbers in every list (third 2026-11-14 resync): on, as upstream (owner, 2026-11-14). `list_active_sessions` and `session_tree` give each session its short number, as `fleet_recap` already did; the fork's own numbering counts only the sessions running on this PC, since sessions run inside the bridge are retired here.
+- Why the bridge last restarted, in `health`, and the `claude-voice restart --why` command (third 2026-11-14 resync): in, inert here (owner, 2026-11-14). Both rely on systemd, which this Windows PC doesn't use, so the reason stays empty; the updater still writes its note, which nothing reads here.
+- The warning three days before Claude Code's sign-in runs out (third 2026-11-14 resync): in, on the work page as upstream, which isn't used here; the owner chose to have it also reach the relay (owner, 2026-11-14), which is fork work still to do.
 
 ### Same tools, different behaviour
 
