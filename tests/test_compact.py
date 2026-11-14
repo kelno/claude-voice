@@ -14,16 +14,16 @@ import pytest
 from fakes import FakeClaude
 from test_confirm import call, outcome, reached, transcript
 
-from claude_voice import confirm, procs, server, transcripts
+from claude_voice import confirm, jobs, procs, server
 from claude_voice.server import build_server, compact_when_idle
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
 
 def test_the_compaction_runs_headless_on_the_stopped_conversation_with_its_instructions():
-    command = transcripts.compact_command("claude", "sid-1", "Keep the open questions.")
+    command = jobs.compact_command("claude", "sid-1", "Keep the open questions.")
     assert command == ["claude", "-p", "/compact Keep the open questions.", "--resume", "sid-1"]
-    assert transcripts.compact_command("claude", "sid-1") == ["claude", "-p", "/compact", "--resume", "sid-1"]
+    assert jobs.compact_command("claude", "sid-1") == ["claude", "-p", "/compact", "--resume", "sid-1"]
 
 
 class Steps:

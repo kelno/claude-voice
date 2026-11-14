@@ -99,7 +99,7 @@ LAYERS = {
         1,
     ),  # parts, each about one thing
     **dict.fromkeys(
-        ("events", "tree", "session_modes", "machines", "plugin_desk", "org", "connectors", "answers"), 2
+        ("events", "tree", "session_modes", "machines", "plugin_desk", "org", "connectors", "answers", "jobs"), 2
     ),  # parts built from parts
     **dict.fromkeys(("api", "phone_hook", "agent", "fleet"), 3),  # the doors in from outside
     "server": 4,  # where it is all put together

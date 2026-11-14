@@ -54,6 +54,7 @@ from . import (
     fork,
     gitstatus,
     hints,
+    jobs,
     launch,
     machines,
     metrics,
@@ -1210,7 +1211,7 @@ def build_server(
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
     claude_config: Path = access.CLAUDE_CONFIG,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
-    compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = transcripts.compact_stopped,
+    compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = jobs.compact_stopped,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], Any] | None = None,
     plugin_approvals: Path | None = None,
@@ -1238,7 +1239,7 @@ def build_server(
     statusline_dir: Path = usage.STATUSLINE_DIR,
     presence: Presence | None = None,
     update_log: Path = updater.LOG,
-    daemon_log: Path = transcripts.DAEMON_LOG,
+    daemon_log: Path = jobs.DAEMON_LOG,
     launch_update: Callable[..., None] | None = None,
     bridge_folder: Path | None = None,
     repo_config: config.Config | None = None,
@@ -1246,8 +1247,8 @@ def build_server(
     desktop_env: Mapping[str, str] | None = None,
     ci_status: Callable[..., dict[str, Any] | None] = software.latest_run,
     kept_levels: Callable[..., list[dict[str, Any]]] = software.kept_levels,
-    jobs_dir: Path = transcripts.JOBS_DIR,
-    read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
+    jobs_dir: Path = jobs.JOBS_DIR,
+    read_prompt: Callable[[str], str | None] = jobs.pending_prompt,
     kept_mutations: Callable[..., dict[str, Any] | None] = software.kept_mutations,
     main_head: Callable[..., str | None] = software.head,
     work_board: work.Board | None = None,
@@ -1300,8 +1301,8 @@ def build_server(
     side_answer = side_answer or transcripts.shared_reader()
     # The helpers that run Claude Code are looked up when the bridge is built, not when this
     # module loads, so a stand-in put in their place before then is the one used.
-    background_sessions = background_sessions or transcripts.background_sessions
-    background_jobs = background_jobs or transcripts.background_jobs
+    background_sessions = background_sessions or jobs.background_sessions
+    background_jobs = background_jobs or jobs.background_jobs
     summarize = summarize or transcripts.summarize
     host: doctor.Host = doctor_host or doctor.RealHost()
     repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
@@ -1827,7 +1828,7 @@ def build_server(
     def why_gone(sid: str) -> str:
         """Why a session is no longer running, when Claude Code says: empty otherwise."""
         # RULE: a session Claude Code closed for low memory says why and how to resume it
-        if sid[:8] in transcripts.closed_for_memory(daemon_log):
+        if sid[:8] in jobs.closed_for_memory(daemon_log):
             return "closed by Claude Code for low memory"
         return ""
 
@@ -3437,7 +3438,7 @@ def build_server(
                 " once it is idle, even after a stop or a bridge restart. Nothing to do; a later rename replaces it."
             )
         try:
-            transcripts.rename_job(sid, new, jobs_dir)
+            jobs.rename_job(sid, new, jobs_dir)
         except OSError as exc:
             return "bridge_only", (
                 f"The new name is the bridge's only: Claude Code's job record for it couldn't be written ({exc}),"

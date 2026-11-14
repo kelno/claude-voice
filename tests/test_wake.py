@@ -13,6 +13,7 @@ from fakes import FakeClaude
 from mcp.client import Client
 from test_start import Starter
 
+from claude_voice import jobs as claude_jobs
 from claude_voice import transcripts
 from claude_voice.server import build_server, wake_interrupted
 from claude_voice.sessions import SessionManager
@@ -126,7 +127,7 @@ async def test_a_bridge_given_no_background_list_asks_the_one_in_place_when_it_i
         asked.append(True)
         return []
 
-    monkeypatch.setattr(transcripts, "background_jobs", jobs)
+    monkeypatch.setattr(claude_jobs, "background_jobs", jobs)
     work, store = setup(tmp_path)
     live = tmp_path / "live"
     live.mkdir()

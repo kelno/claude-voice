@@ -394,7 +394,7 @@ async def test_a_not_delivered_message_is_logged_with_its_reason(caplog):
 
 
 def test_the_sessions_claude_code_closed_for_low_memory_are_read_from_its_log(tmp_path):
-    from claude_voice.transcripts import closed_for_memory
+    from claude_voice.jobs import closed_for_memory
 
     log = tmp_path / "daemon.log"
     log.write_text(

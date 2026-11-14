@@ -39,7 +39,7 @@ def no_real_claude_code(monkeypatch):
     asks a small model through it: slow, and a real model call on the owner's account. The suite
     answers both itself, with no background sessions and a fixed digest. A test that wants other
     answers passes its own to the bridge."""
-    from claude_voice import transcripts
+    from claude_voice import jobs, transcripts
 
     async def no_background_jobs():
         return []
@@ -47,7 +47,7 @@ def no_real_claude_code(monkeypatch):
     async def a_fixed_digest(text, question, language=None):
         return "The suite's own digest."
 
-    monkeypatch.setattr(transcripts, "background_jobs", no_background_jobs)
+    monkeypatch.setattr(jobs, "background_jobs", no_background_jobs)
     monkeypatch.setattr(transcripts, "summarize", a_fixed_digest)
 
 

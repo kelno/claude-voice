@@ -6,10 +6,10 @@ import os
 from fakes import FakeClaude
 from mcp.client import Client
 
+from claude_voice.jobs import prompt_from_screen
 from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
-from claude_voice.transcripts import prompt_from_screen
 
 ESC = "\x1b"
 SCREEN = (

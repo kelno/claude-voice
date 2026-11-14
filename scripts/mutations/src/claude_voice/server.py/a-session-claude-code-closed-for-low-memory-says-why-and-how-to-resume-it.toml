@@ -1,5 +1,5 @@
 [[rule]]
 name = "a session Claude Code closed for low memory says why and how to resume it"
 file = "src/claude_voice/server.py"
-find = 'if sid\[:8\] in transcripts\.closed_for_memory\(daemon_log\):'
+find = 'if sid\[:8\] in jobs\.closed_for_memory\(daemon_log\):'
 replace = 'if False:'
