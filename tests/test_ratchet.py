@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import subprocess
 import sys
 import textwrap
 
@@ -190,6 +191,55 @@ def test_layering_and_duplication_may_not_get_worse(change, metric):
 def test_a_base_without_a_new_measure_has_nothing_to_compare_with():
     now = {**BASE, "layer_violations": 0, "duplication": 2.0}
     assert problems(BASE, now) == []
+
+
+def test_a_measure_the_base_did_not_take_has_nothing_to_compare_with():
+    # A quick check measures no mutation, so a base it measured has none to compare.
+    assert problems(measured(mutation=None), measured(mutation=None)) == []
+
+
+# -- a quick check -----------------------------------------------------------------------
+
+
+def fake_run(calls: list, levels: dict | None = None):
+    """Stands in for ratchet._run: records each command and answers as the real tools would."""
+
+    def run(*command, cwd=None, env=None):
+        calls.append(command)
+        for arg in command:
+            if arg.startswith("--cov-report=json:"):
+                pathlib.Path(arg[len("--cov-report=json:") :]).write_text('{"totals": {"percent_covered": 90.0}}')
+        if "measure" in command:
+            pathlib.Path(command[command.index("--out") + 1]).write_text(json.dumps(levels or BASE))
+        out = {"pytest": "400 passed", "ruff": "[]"}.get(command[2] if len(command) > 2 else "", "")
+        return subprocess.CompletedProcess(command, 0, out, "")
+
+    return run
+
+
+def test_a_quick_check_measures_no_mutation_on_either_side(monkeypatch):
+    """Switching every rule off in turn is what takes the time; a quick check leaves it out on its
+    own side and in the copy of main it measures alike."""
+    calls: list = []
+    monkeypatch.setattr(ratchet, "_run", fake_run(calls))
+    quick = ratchet.measure(skip_mutation=True)
+    assert quick["mutation"] is None
+    assert not [c for c in calls if "scripts/mutate.py" in c]
+
+    copies = []
+    monkeypatch.setattr(ratchet, "measure_at", lambda ref, skip_mutation=False: copies.append(skip_mutation) or quick)
+    monkeypatch.setattr(ratchet, "measure", lambda skip_mutation=False, recorded=None: quick)
+    monkeypatch.setattr(sys, "argv", ["ratchet.py", "check", "--base", "origin/main", "--skip-mutation"])
+    assert ratchet.main() == 0
+    assert copies == [True]
+
+
+def test_the_copy_of_main_is_measured_with_the_check_s_own_skip(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(ratchet, "_run", fake_run(calls, levels=measured(mutation=None)))
+    assert ratchet.measure_at("origin/main", skip_mutation=True)["mutation"] is None
+    measuring = [c for c in calls if "measure" in c]
+    assert len(measuring) == 1 and "--skip-mutation" in measuring[0]
 
 
 def test_a_new_module_must_keep_every_function_at_fifteen_or_below():

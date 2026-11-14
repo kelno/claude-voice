@@ -18,8 +18,10 @@ takes as long again. `quality.json` holds only the suite's time budget, a limit 
     uv run python scripts/ratchet.py measure --out FILE  # measure only
 
 `check` reads exceptions from the environment variable RATCHET_EXCEPTIONS (continuous
-integration passes the pull request's text). `--skip-mutation` keeps the base's
-mutation figures, for a quick local look; continuous integration never skips it.
+integration passes the pull request's text). `--skip-mutation` leaves out the mutation
+sweep, which switches every rule off in turn, for a quick local look: the check keeps main's
+kept figures, or, measuring main in a copy, skips it there too and compares no mutation.
+Continuous integration never skips it.
 """
 
 from __future__ import annotations
@@ -234,8 +236,9 @@ def measure(skip_mutation: bool = False, recorded: dict[str, Any] | None = None)
     lint = _run("uv", "run", "ruff", "check", ".", "--output-format", "json")
     types = _run("uv", "run", "mypy", "src")
     type_errors = re.search(r"Found (\d+) errors?", types.stdout)
-    if skip_mutation and recorded:
-        mutation = recorded["mutation"]
+    if skip_mutation:
+        # RULE: a quick check measures no mutation on either side
+        mutation = recorded["mutation"] if recorded else None
     else:
         mutate = _run("uv", "run", "python", "scripts/mutate.py")
         tally = re.search(r"(\d+)/(\d+) rules turned off", mutate.stdout)
@@ -282,8 +285,8 @@ def compare(base: dict[str, Any], now: dict[str, Any], allowed: set[str], budget
     its time budget. Better levels need no recording: main measures its own."""
     found = []
     for metric in (*HIGHER, *LOWER):
-        if metric not in base:
-            continue  # a measure added since the base: nothing to compare with yet
+        if base.get(metric) is None:
+            continue  # a measure added since the base, or one a quick check left out: nothing to compare with
         # RULE: a measure that gets worse fails the check
         if _worse(metric, base[metric], now[metric]) and metric not in allowed:
             found.append(f"{metric} got worse: {base[metric]} -> {now[metric]}")
@@ -333,7 +336,7 @@ def base_levels(kept: Path | None, measure_base: Callable[[], dict[str, Any]]) -
     return measure_base()
 
 
-def measure_at(ref: str) -> dict[str, Any]:
+def measure_at(ref: str, skip_mutation: bool = False) -> dict[str, Any]:
     """Measure `ref` in a copy of it, with this ratchet, so both sides are measured alike.
 
     The copy keeps its own tests and scripts unchanged: this ratchet runs from where it is
@@ -349,7 +352,8 @@ def measure_at(ref: str) -> dict[str, Any]:
                 raise SystemExit(f"Cannot install {ref} to measure it:\n{synced.stderr[-2000:]}")
             env = {**os.environ, "RATCHET_ROOT": str(copy)}
             here = str(Path(__file__).resolve())
-            measured = _run("uv", "run", "python", here, "measure", "--out", str(out), cwd=copy, env=env)
+            quick = ["--skip-mutation"] if skip_mutation else []
+            measured = _run("uv", "run", "python", here, "measure", "--out", str(out), *quick, cwd=copy, env=env)
             if measured.returncode:
                 raise SystemExit(f"Measuring {ref} failed:\n{measured.stdout[-2000:]}{measured.stderr[-2000:]}")
             return dict(json.loads(out.read_text()))
@@ -366,7 +370,7 @@ def main() -> int:
     parser.add_argument("--skip-mutation", action="store_true")
     args = parser.parse_args()
     if args.action == "measure":
-        now = measure()
+        now = measure(args.skip_mutation)
         if args.out:
             write_levels(args.out, now)
         print(json.dumps(now, indent=2, sort_keys=True))
@@ -374,7 +378,7 @@ def main() -> int:
     if not args.base:
         print("check needs --base, the ref to compare with (usually origin/main).", file=sys.stderr)
         return 1
-    base = base_levels(args.levels, lambda: measure_at(args.base))
+    base = base_levels(args.levels, lambda: measure_at(args.base, args.skip_mutation))
     now = measure(args.skip_mutation, base)
     if args.out:
         write_levels(args.out, now)

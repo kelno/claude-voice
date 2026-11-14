@@ -46,7 +46,9 @@ Docker and about two minutes. Run it when you touch the README's first steps,
 the setup check or the packaging.
 
 The ratchet takes about ten minutes, because it switches every rule off in
-turn; `--skip-mutation` gives a quick look that keeps main's mutation figures.
+turn; `--skip-mutation` gives a quick look without that. It keeps main's
+mutation figures, or, when it measures main in a copy, leaves the sweep out
+there too and compares no mutation.
 
 Run them after the last edit, not before it. A file edited after the format
 gate ran will fail in continuous integration, which is the cheapest possible
