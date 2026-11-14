@@ -1,0 +1,5 @@
+[[rule]]
+name = "a question follows its session from its delivery"
+file = "src/claude_voice/server.py"
+find = 'follow_sent\(target, before - 1\)'
+replace = 'pass'

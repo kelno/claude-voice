@@ -1,0 +1,5 @@
+[[rule]]
+name = "a question that never reached its session leaves it unfollowed"
+file = "src/claude_voice/server.py"
+find = 'unfollow_sent\(target, before - 1\)'
+replace = 'pass'

@@ -1750,21 +1750,33 @@ def build_server(
             ):
                 ensure_handle()  # a follow starts here
             if tool == "message_active_session":
-                # A send reads nothing: what came before stays unread, and while an earlier
-                # message's reply is unread, the wait for a reply starts from that message.
-                mark = mine().get(str(target.get("sessionId")))
-                if mark is None:
-                    mark_read(target, seen=reached, sent=reached)  # its history so far isn't news
-                elif mark.get("sent") is None or not unread_reply(target, mark):
-                    # RULE: a send after every reply is read waits for its own reply
-                    mark_read(target, seen=mark["seen"], sent=reached)
-                else:
-                    mark["then"] = reached  # followed once the earlier reply is read
+                follow_sent(target, reached)
             elif tool == "ask_active_session" and not structured.get("reply_final"):
                 # Asked, and the answer hadn't come when the call returned: it is a reply to wait for.
                 mark_read(target, seen=reached, sent=reached if structured.get("status") == "still_working" else None)
             else:
                 mark_read(target, seen=reached)
+
+    def follow_sent(target: dict[str, Any], reached: int) -> None:
+        """Follow a session just sent a message, whose reply comes after turn `reached`. A send reads
+        nothing: what came before stays unread, and while an earlier message's reply is unread, the
+        wait for a reply starts from that message."""
+        mark = mine().get(str(target.get("sessionId")))
+        if mark is None:
+            mark_read(target, seen=reached, sent=reached)  # its history so far isn't news
+        elif mark.get("sent") is None or not unread_reply(target, mark):
+            # RULE: a send after every reply is read waits for its own reply
+            mark_read(target, seen=mark["seen"], sent=reached)
+        else:
+            mark["then"] = reached  # followed once the earlier reply is read
+
+    def unfollow_sent(target: dict[str, Any], reached: int) -> None:
+        """Undo follow_sent for a message that never reached the session: no reply will come."""
+        mark = mine().get(str(target.get("sessionId")))
+        if mark is not None and mark.get("then") == reached:
+            mark.pop("then")
+        elif mark is not None and mark.get("sent") == reached:
+            mark.update(sent=None, replied=False, state=None)
 
     def unread_reply(d: dict[str, Any], mark: dict[str, Any]) -> bool:
         """Whether the session wrote anything after the relay's message that the relay hasn't read."""
@@ -3825,8 +3837,17 @@ def build_server(
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
+        # Followed from here, as after a send, so a wait or a news line made while the question
+        # waits sees the session working; the question's own result then moves the read mark.
+        # RULE: a question follows its session from its delivery
+        ensure_handle()
+        follow_sent(target, before - 1)
+        save_handles()
         probe = message.strip()[:80]
         target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds, began)
+        if status == "not_received":
+            # RULE: a question that never reached its session leaves it unfollowed
+            unfollow_sent(target, before - 1)
         fresh = numbered_turns(target)[before:] if status != "session_ended" else []
         new, start = _reply_turns(fresh, probe, before, status, was_busy)
         final = reply_is_final(status, new)

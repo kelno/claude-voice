@@ -71,14 +71,16 @@ def world(tmp_path):
 
 
 @contextlib.asynccontextmanager
-async def bridge(tmp_path, desk, store, *others, **options):
-    """The bridge over HTTP, as the Claude app reaches it, for one desk session or more."""
+async def bridge(tmp_path, desk, store, *others, lands=True, **options):
+    """The bridge over HTTP, as the Claude app reaches it, for one desk session or more; with
+    `lands` false, a message said delivered never shows in the session's conversation."""
     root = Path(desk.cwd).parent
     desks = {d.sid: d for d in (desk, *others)}
 
     async def deliver(name, text):
         # The relayed message lands in the session's conversation, marked as from another session.
-        next(d for d in desks.values() if d.name == name).transcript.append(turn("user", text, "peer"))
+        if lands:
+            next(d for d in desks.values() if d.name == name).transcript.append(turn("user", text, "peer"))
         return {"delivered": True, "detail": "DELIVERED"}
 
     if not any(store.get_setting(k) for k in ("relay_handles", "read_marks", "watched_sessions")):
@@ -271,6 +273,20 @@ async def test_a_question_answered_in_its_own_result_leaves_its_session_unfollow
         asked = await asking
         out = await call(c, "wait_for_session")
     assert asked["status"] == "answered" and asked["reply"] == "Yes, it is."
+    assert out["status"] == "nothing_to_wait_for"
+
+
+async def test_a_question_that_never_reached_its_session_leaves_it_unfollowed(tmp_path, world):
+    # Followed from its delivery, but the message never showed in the session's conversation: no
+    # reply will come, so nothing is left to wait for.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), lands=False, receive_seconds=0.05) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            asked = await call(c, "ask_active_session", session="billing-ab", message="Is it done?")
+            out = await call(c, "wait_for_session")
+    assert asked["status"] == "not_received"
     assert out["status"] == "nothing_to_wait_for"
 
 
