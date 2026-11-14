@@ -593,12 +593,9 @@ async def test_a_session_paused_on_the_owner_wakes_a_wait_once(served):
     assert "billing-ab waits on the owner's answer" in second["next_step"]
 
 
-async def test_a_wait_with_no_length_given_runs_to_the_caller_s_limit(served, monkeypatch):
+async def test_a_wait_with_no_length_given_runs_to_the_caller_s_limit(served):
     # The long wait is the plan in the Claude app: it goes to the background and its result wakes
     # the relay, so the relay shouldn't have to pick a length (owner, 2026-11-11).
-    # The short default wait other tools use is set under the test bridge's limit, so a wait that
-    # stopped there instead of at the limit would show.
-    monkeypatch.setattr("claude_voice.server.WAIT_SECONDS", 0.05)
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:

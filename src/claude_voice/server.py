@@ -152,12 +152,13 @@ START_OWNER_CHOSE_PARAM = (
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
-# A question asked without a length of wait: Claude's voice mode moves a call still running after
-# about 10 seconds to the background and asks the assistant to speak, so a default one ends first.
-# With the server proxy's overhead an 8 s wait crossed it once (2026-11-06), so 5 s.
-# wait_for_session is the exception: its wait runs to the caller's limit, going to the background
-# on purpose, since its result wakes the relay (owner, 2026-11-11; ledger Q14, F58).
-WAIT_SECONDS = 5.0
+# A wait given no length runs to the caller's limit, on every tool that waits. In the Claude app
+# it goes to the background after about 10 s, on purpose: its result wakes the relay (owner,
+# 2026-11-11; ledger Q14, F58). A 5 s default used to keep a question under that mark, but the
+# app counts the 10 s across the turn, and a question first waits for its delivery: from
+# 2026-11-06 to 11-14, none of the 29 questions answered from the app ended under 5 s, and 27
+# crossed the mark anyway, then woke the relay with "still_working" only for it to wait again
+# (ledger Q80; the bridge log).
 MAX_WAIT_SECONDS = 300.0  # no wait runs longer, whatever the caller's limit
 # The model a session starts on when none is asked for. Claude Code's own default follows the
 # account, which can be a model the owner doesn't want for everyday work.
@@ -171,8 +172,10 @@ SESSION_PARAM = "A running session's name or id, from list_active_sessions."
 # A template: build_server fills in the configured limit as each tool is registered, so the text
 # says what the bridge it runs in is set to.
 WAIT_PARAM = (
-    "At most the caller's limit, {claude_app:g} s for the Claude app. That app sends a call past "
-    "about 10 s to the background and brings its result back later."
+    "Best left out: the call ends with its result, or at the bridge's limit ({claude_app:g} s through "
+    "the claude.ai connector). The Claude app sends a call past about 10 s to the background, and "
+    "its result wakes you; a Claude Code session simply waits. A shorter wait only means calling "
+    "again."
 )
 MAX_CHARS_PARAM = "How long each message or excerpt in the result may be before it is cut."
 LANGUAGE_PARAM = 'The language to answer in, such as "norsk".'
@@ -1091,6 +1094,10 @@ def optional_wait_time(value: Any) -> float | None:
     return None if value is None else wait_time(value)
 
 
+# The wait every tool that waits takes; left out, it runs to the caller's limit (within_budget).
+OptionalWait = Annotated[float | None, BeforeValidator(optional_wait_time), Field(description=WAIT_PARAM)]
+
+
 def _not_sent(target: dict[str, Any], outcome: dict[str, Any]) -> dict[str, Any]:
     """The answer to a question that was never sent: the session, why, and no reply."""
     return {
@@ -1259,10 +1266,12 @@ def build_server(
     host: doctor.Host = doctor_host or doctor.RealHost()
     repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
 
-    def within_budget(seconds: float) -> float:
+    def within_budget(seconds: float | None) -> float:
         """How long a call may wait: what it asked for, never past five minutes or the time
-        budget of the client calling (the Claude app drops a call after about 30 seconds)."""
+        budget of the client calling; asked for nothing, all of that."""
         budget = repos.budgets.seconds(transcripts.current_client.get())
+        # RULE: a wait with no length given runs to the caller's limit
+        seconds = MAX_WAIT_SECONDS if seconds is None else seconds
         # RULE: a wait never runs past the callers time budget
         return max(min(seconds, MAX_WAIT_SECONDS, budget), 0)
 
@@ -3617,7 +3626,7 @@ def build_server(
         return {**t, "text": RELAYED_STUB + transcripts.clip(words, RELAYED_STUB_CHARS), "relayed": True}
 
     async def await_reply(
-        target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float
+        target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float | None
     ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
         """Watch a session we just sent a message until it settles, ends or the wait runs out.
 
@@ -3656,9 +3665,7 @@ def build_server(
     @tool(annotations=READ_ONLY)
     async def wait_for_session(
         session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
-        wait_seconds: Annotated[
-            float | None, BeforeValidator(optional_wait_time), Field(description=WAIT_PARAM)
-        ] = None,
+        wait_seconds: OptionalWait = None,
         after: Annotated[
             int | None,
             Field(description=WAIT_AFTER_PARAM),
@@ -3668,22 +3675,18 @@ def build_server(
     ) -> dict[str, Any]:
         """Wait for a session's turn to end or need input; then its reply.
         With no session named, it waits on every session you follow and returns the first with news (`after` then plays
-        no part); left out, wait_seconds is the
-        caller's limit: keep it so, since in the Claude app the wait goes to the background and its result wakes you.
-        Sends nothing; reply is the newest message among those returned, empty when the session wrote nothing new; at
-        most 30 turns come back, and read_session_output(after=next_after) reads the rest while turns_left is above 0;
-        status: "idle" (its turn has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or question
-        says what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the conversation now
-        lives in moved_to), or, with no session named, "nothing_to_wait_for" (at once: no session you follow is working
-        or has a turn you haven't read); reply_final: its turn ended with something new, and reply is whole up to 12,000
-        characters (reply_cut past that)."""
-        # RULE: a wait with no length given runs to the caller's limit
-        seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds
+        no part). Sends nothing; reply is the newest message among those returned, empty when the session wrote nothing
+        new; at most 30 turns come back, and read_session_output(after=next_after) reads the rest while turns_left is
+        above 0; status: "idle" (its turn has ended), "needs_input" or "needs_choice" (it waits for its user; prompt or
+        question says what for), "still_working" (the wait ran out; call again), "session_ended" or "moved" (the
+        conversation now lives in moved_to), or, with no session named, "nothing_to_wait_for" (at once: no session you
+        follow is working or has a turn you haven't read); reply_final: its turn ended with something new, and reply is
+        whole up to 12,000 characters (reply_cut past that)."""
         if session is None:
-            return await wait_on_followed(seconds, max_chars)
-        return await wait_on(session, seconds, after, max_chars)
+            return await wait_on_followed(wait_seconds, max_chars)
+        return await wait_on(session, wait_seconds, after, max_chars)
 
-    async def wait_on_followed(wait_seconds: float, max_chars: int) -> dict[str, Any]:
+    async def wait_on_followed(wait_seconds: float | None, max_chars: int) -> dict[str, Any]:
         """Wait on every session the relay follows until one has news: a finished turn it hasn't
         read, a pause on a permission prompt it wasn't told of, or an end; then that one's reply,
         the oldest followed first. Following nothing, it returns at once."""
@@ -3718,7 +3721,7 @@ def build_server(
                 return {"status": "still_working", "sessions": waited}
             await asyncio.sleep(poll_seconds)
 
-    async def wait_on(session: str, wait_seconds: float, after: int | None, max_chars: int) -> dict[str, Any]:
+    async def wait_on(session: str, wait_seconds: float | None, after: int | None, max_chars: int) -> dict[str, Any]:
         """Wait on one session, as wait_for_session with a session named."""
         target = find_live(session)
         moved = moved_to(target)
@@ -3790,7 +3793,7 @@ def build_server(
     async def ask_active_session(
         session: Annotated[str, Field(description=SESSION_PARAM)],
         message: Annotated[str, Field(description="What to ask; the session answers you, the relay.")],
-        wait_seconds: Annotated[float, BeforeValidator(wait_time), Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        wait_seconds: OptionalWait = None,
         max_chars: Annotated[int, Field(description=MAX_CHARS_PARAM)] = 600,
         handle: Annotated[str | None, Field(description=HANDLE_PARAM)] = None,
     ) -> dict[str, Any]:
@@ -4010,7 +4013,7 @@ def build_server(
         forks[fork_id] = {"task": asyncio.create_task(run()), "session": target.get("name"), "started": now}
         return fork_id
 
-    async def collect_fork(fork_id: str, wait_seconds: float) -> dict[str, Any]:
+    async def collect_fork(fork_id: str, wait_seconds: float | None) -> dict[str, Any]:
         entry = forks.get(fork_id)
         if entry is None:
             raise ToolError(
@@ -4029,11 +4032,11 @@ def build_server(
         question: Annotated[
             str, Field(description="What to ask; each question forks the session anew, from its latest state.")
         ],
-        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        wait_seconds: OptionalWait = None,
     ) -> dict[str, Any]:
         """Ask the side session, a read-only fork that reads code, and wait for it.
         The fork can read the files in the session's folder; the session keeps working, untouched.
-        status "answered", "still_working" (read it later with read_forked_session(fork_id)),
+        status "answered", "still_working" (wait on with read_forked_session(fork_id)),
         "timed_out", or "error" with `detail`."""
         return await collect_fork(start_fork(session, question), wait_seconds)
 
@@ -4055,7 +4058,7 @@ def build_server(
         fork_id: Annotated[
             str, Field(description="The fork_id ask_forked_session or message_forked_session returned.")
         ],
-        wait_seconds: Annotated[float, Field(description=WAIT_PARAM)] = WAIT_SECONDS,
+        wait_seconds: OptionalWait = None,
     ) -> dict[str, Any]:
         """The side session's answer, waiting for it; call again on still_working.
         status "answered", "still_working" (call again), "timed_out" (it worked five minutes and

@@ -194,5 +194,6 @@ async def test_a_wait_s_description_gives_the_limit_the_bridge_is_configured_wit
     async with Client(srv) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
     for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
-        assert "180 s for the Claude app" in tools[name].input_schema["properties"]["wait_seconds"]["description"]
+        wait = tools[name].input_schema["properties"]["wait_seconds"]["description"]
+        assert "180 s through the claude.ai connector" in wait
         assert "20 s" not in (tools[name].description or "")
