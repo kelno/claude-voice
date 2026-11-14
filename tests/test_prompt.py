@@ -97,7 +97,8 @@ def test_a_waiting_prompt_is_read_with_the_claude_code_the_bridge_finds(monkeypa
         ran.append(command)
         return Done()
 
-    monkeypatch.setattr(procs, "find", lambda name: "C:/Users/owner/.local/bin/claude.exe" if name == "claude" else None)
+    installed = "C:/Users/owner/.local/bin/claude.exe"
+    monkeypatch.setattr(procs, "find", lambda name: installed if name == "claude" else None)
     monkeypatch.setattr(subprocess, "run", run)
     assert "Fetch(https://example.org)" in (jobs.pending_prompt("job-1") or "")
-    assert ran == [["C:/Users/owner/.local/bin/claude.exe", "logs", "job-1"]]
+    assert ran == [[installed, "logs", "job-1"]]

@@ -18,6 +18,15 @@ from typing import Any
 from . import procs
 from .transcripts import clean_env
 
+
+def claude_cli() -> str:
+    """The Claude Code program the fork runs: the one installed for the owner, found where a
+    service's PATH may not reach (procs.find), else the one bundled with the Agent SDK."""
+    import claude_agent_sdk
+
+    return procs.find("claude") or str(Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude")
+
+
 # Claude Code keeps one record per background session here, as <short id>/state.json.
 JOBS_DIR = Path("~/.claude/jobs").expanduser()
 
@@ -54,12 +63,11 @@ def prompt_from_screen(screen: str) -> str | None:
 
 def pending_prompt(job_id: str) -> str | None:
     """The permission prompt a background session waits on, read from its screen (`claude logs`)."""
-    import shutil
     import subprocess
 
     try:
         out = subprocess.run(
-            [shutil.which("claude") or "claude", "logs", job_id],
+            [claude_cli(), "logs", job_id],
             capture_output=True,
             timeout=15,
             stdin=subprocess.DEVNULL,
@@ -123,10 +131,7 @@ def closed_for_memory(log: Path = DAEMON_LOG) -> set[str]:
 async def background_jobs() -> list[dict[str, Any]]:
     """Every background session Claude Code knows, finished ones too, as `claude agents` lists them:
     sessionId, cwd, name, and state (running, done, stopped, failed, ...)."""
-    import claude_agent_sdk
-
-    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
-    cli = procs.find("claude") or str(bundled)
+    cli = claude_cli()
     listing = await asyncio.create_subprocess_exec(
         cli, "agents", "--json", "--all", stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE
     )
@@ -158,10 +163,7 @@ async def compact_stopped(cwd: str, session_id: str, instructions: str | None = 
     The session must not be running: two processes writing one conversation would clash. Its
     PreCompact hooks run as for a /compact typed in it."""
 
-    import claude_agent_sdk
-
-    bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
-    cli = procs.find("claude") or str(bundled)
+    cli = claude_cli()
     proc = await asyncio.create_subprocess_exec(
         *compact_command(cli, session_id, instructions),
         cwd=cwd,
