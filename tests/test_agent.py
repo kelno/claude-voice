@@ -321,7 +321,19 @@ def test_agent_install_with_sessions_needs_claude_code_signed_in(tmp_path):
     assert not m.unit.exists()
 
 
-def test_an_installed_copy_says_its_version_without_git(monkeypatch):
+@pytest.fixture
+def fresh_version():
+    """What this process read of its own commit, forgotten before and after the test."""
+    from claude_voice import metrics
+
+    metrics.version.cache_clear()
+    metrics.uncommitted.cache_clear()
+    yield
+    metrics.version.cache_clear()
+    metrics.uncommitted.cache_clear()
+
+
+def test_an_installed_copy_says_its_version_without_git(monkeypatch, fresh_version):
     import subprocess
 
     from claude_voice import metrics
@@ -331,3 +343,24 @@ def test_an_installed_copy_says_its_version_without_git(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", no_git)
     assert metrics.version() not in ("", "unknown")
+
+
+def test_the_running_commit_is_asked_of_git_once_per_process(monkeypatch, fresh_version):
+    """The commit and the uncommitted changes describe the code this process loaded, which stays
+    as it is while the process runs; a bridge built again and again (the suite builds hundreds)
+    asks git once."""
+    import subprocess
+
+    from claude_voice import metrics
+
+    asked = []
+
+    def git(args, **k):
+        asked.append(args[1])
+        return subprocess.CompletedProcess(args, 0, "abc1234\n", "")
+
+    monkeypatch.setattr(subprocess, "run", git)
+    for _ in range(3):
+        assert metrics.version() == "abc1234"
+        assert metrics.uncommitted() is True
+    assert sorted(asked) == ["rev-parse", "status"]

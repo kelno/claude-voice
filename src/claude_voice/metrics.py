@@ -6,6 +6,7 @@ Kept in memory only; the voice app stores history over time on its side.
 from __future__ import annotations
 
 import contextlib
+import functools
 import time
 from collections import deque
 from datetime import UTC, datetime
@@ -78,8 +79,12 @@ def memory_rss_mb() -> int:
         return 0
 
 
+@functools.cache
 def version() -> str:
-    """The commit this bridge runs from, when it runs from a git checkout."""
+    """The commit this bridge runs from, when it runs from a git checkout.
+
+    Read once per process: it describes the code this process loaded, which a later pull leaves
+    as it is until a restart."""
     import subprocess
     from pathlib import Path
 
@@ -113,8 +118,11 @@ def installed_version() -> str:
     return dist.version
 
 
+@functools.cache
 def uncommitted() -> bool | None:
-    """Whether the checkout this bridge runs from has changes not committed; None when unknown."""
+    """Whether the checkout this bridge runs from has changes not committed; None when unknown.
+
+    Like `version`, read once per process: both describe the code this process loaded."""
     import subprocess
     from pathlib import Path
 
