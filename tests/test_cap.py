@@ -157,17 +157,16 @@ async def test_a_call_the_client_drops_is_logged_with_how_long_it_ran(caplog):
     assert any("ask_active_session" in r.message and "cancelled" in r.message for r in caplog.records)
 
 
-async def test_a_wait_asked_without_a_length_ends_before_voice_mode_backgrounds_it(tmp_path, root, live):
-    # Claude's voice mode moves a call still running after about 10 s to the background and
-    # asks the assistant to speak; a default wait comes back before that, so waits chain silently.
-    # With the server proxy's overhead an 8 s wait crossed it once (2026-11-06), so 5 s.
-    # wait_for_session runs to the caller's limit instead, going to the background on purpose:
-    # its result wakes the relay (owner, 2026-11-11), tested in test_news.py.
+async def test_no_tool_that_waits_sets_a_length_of_its_own(tmp_path, root, live):
+    # Left out, every wait runs to the caller's limit, tested in test_news.py. A short default,
+    # meant to come back before the Claude app sends a call to the background at about 10 s,
+    # rarely did: the app counts those seconds across the turn, and an ask's delivery came first.
+    # Its "still_working" then woke the relay only to wait again (bridge log, 2026-11-06 to 14).
     _, server = bridge(tmp_path, root, live, FakeClaude())
     async with Client(server) as client:
         tools = {t.name: t for t in (await client.list_tools()).tools}
-    for name in ("ask_active_session", "ask_forked_session", "read_forked_session"):
-        assert tools[name].input_schema["properties"]["wait_seconds"]["default"] == 5, name
+    for name in ("wait_for_session", "ask_active_session", "ask_forked_session", "read_forked_session"):
+        assert tools[name].input_schema["properties"]["wait_seconds"].get("default") is None, name
 
 
 async def test_a_result_that_took_a_while_says_where_a_late_one_comes_from(tmp_path, root, live, monkeypatch):

@@ -612,6 +612,21 @@ async def test_a_wait_with_no_length_given_runs_to_the_caller_s_limit(served, mo
     assert out["status"] == "still_working" and took >= 0.3  # the test bridge's limit is 0.3 s
 
 
+async def test_a_question_with_no_length_given_waits_to_the_caller_s_limit(served):
+    # As a wait does: in the Claude app a short one crossed the app's ~10 s mark anyway, then woke
+    # the relay with "still_working" only for it to wait again (bridge log, 2026-11-06 to 11-14).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+        desk.set("busy")
+        started = asyncio.get_running_loop().time()
+        out = await call(c, "ask_active_session", session="billing-ab", message="Is the export done?")
+        took = asyncio.get_running_loop().time() - started
+    assert tools["ask_active_session"].input_schema["properties"]["wait_seconds"].get("default") is None
+    assert out["status"] == "still_working" and took >= 0.3  # the test bridge's limit is 0.3 s
+
+
 def started_in_background(task_id):
     """The tool result that starts a task in the background, as the session's transcript keeps it."""
     out = turn("user", "")
