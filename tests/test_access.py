@@ -289,3 +289,23 @@ async def test_the_bridges_own_messengers_are_not_listed(world):
     async with Client(srv) as c:
         listed = (await call(c, "list_active_sessions"))["sessions"]
     assert listed == []
+
+
+def test_a_new_folder_is_trusted_by_itself_even_inside_a_repository(tmp_path):
+    # The owner approved trusting only a folder the bridge has just made, so a new folder inside a
+    # repository is trusted on its own, unlike a folder the owner opens with a passkey.
+    config = tmp_path / ".claude.json"
+    config.write_text(json.dumps({"projects": {"C:/elsewhere": {"hasTrustDialogAccepted": True}}}), encoding="utf-8")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    new = repo / "new"
+    new.mkdir()
+    assert access.trust_new_folder(new, config) == new.resolve().as_posix()
+    projects = json.loads(config.read_text(encoding="utf-8"))["projects"]
+    assert projects == {"C:/elsewhere": {"hasTrustDialogAccepted": True}, new.resolve().as_posix(): {"hasTrustDialogAccepted": True}}
+
+
+def test_a_new_folder_s_trust_that_cannot_be_written_says_why(tmp_path):
+    # Claude Code then asks in the window; the bridge raises, so its caller can log it.
+    with pytest.raises(OSError):
+        access.trust_new_folder(tmp_path / "new", tmp_path / "missing.json")
