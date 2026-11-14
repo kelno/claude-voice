@@ -221,10 +221,13 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         asked = outcome(await call(app, "confirm_ask", ask, tool_use_id="toolu_ask"))
         code = asked["code"]
         assert asked["running"]["design"].endswith("/docs/owner-confirmation.md")
-        assert code in asked["tell_the_relay"]
         assert 'at the PC, ask them to type their OK in the session "desk"' in asked["tell_the_relay"]
+        # The session hands the relay the link itself, so no relay has to turn a code into one.
+        assert asked["link"] in asked["tell_the_relay"] and "confirm_with_owner" not in asked["tell_the_relay"]
+        assert '"Allow Bash(git push:*)"' in asked["tell_the_relay"]  # so the relay can say what it asks
 
         handed = outcome(await call(app, "confirm_with_owner", {"code": code}))
+        assert handed["link"] == asked["link"]
         assert handed["summary"] == "Allow Bash(git push:*)" and handed["from"] == "desk"
         page = await app.get(path_of(handed["link"]), headers={"x-forwarded-for": PHONE})
         assert page.status_code == 200 and "Allow Bash(git push:*)" in page.text

@@ -17,8 +17,8 @@ Once, at the PC: the owner runs `claude-voice passkey add`, which prints a one-t
 Then, for each request:
 
 1. The session writes what it wants approved and calls the bridge tool `confirm_ask` with it. The summary is exact, not a paraphrase: the file, the text to add, the permission string, the command. The bridge records the request: a short code, the summary, which session asked, the time, and a long random link. A request expires after 15 minutes and is answered once; a summary is at most 300 characters.
-2. The session gives the relay the code, in its reply.
-3. The relay calls `confirm_with_owner` with the code. The bridge returns the request's link and summary; the relay sends the owner the link in the chat and says in a few words what it's for.
+2. The bridge returns the code and the request's link to the session, with a line for the relay that holds the link and the summary; the session puts that line in its reply word for word.
+3. The relay sends the owner the link in the chat and says in a few words what it's for. A relay given only a code gets the link with `confirm_with_owner`. Until 2026-11-14 the session got only the code and the relay always made that call; relays sometimes passed the bare code on instead, and a session retelling the line could drop the instruction, so the owner got a code they could do nothing with.
 4. The owner opens the link. The page, served by the bridge from the owner's own network only, shows the request as the bridge stored it: the code, which session asked, the summary. The owner taps Confirm, and the passkey asks for the owner's fingerprint, face or PIN; or taps Decline.
 5. On Confirm, the bridge has made a one-time challenge for this request; the passkey signs it, for the bridge's own address only. The bridge checks the signature against the registered public key, that the owner was verified, that the challenge was made for this request and not used before, and that the address signed is its own. Only then does it mark the request confirmed.
 6. The bridge tells the session, by message, that its request is confirmed. That message is only a nudge: the session then calls `confirm_check` with the code, and acts only if the result says confirmed and shows its summary.
@@ -33,7 +33,7 @@ A confirmation is the owner's OK in the conversation. Two things from Claude Cod
 
 ## What each party can observe
 
-- **The session** sees what it sent to `confirm_ask` and what `confirm_check` returns, straight from the bridge, with no message in between.
+- **The session** sees what it sent to `confirm_ask`, the request's code and link, and what `confirm_check` returns, straight from the bridge, with no message in between. The link lets it do nothing more than the relay can: only the owner's passkey confirms.
 - **The relay** sees the code, the summary and the link. It never holds the passkey and can't produce its signature.
 - **The owner** sees the page: the request as the bridge stored it, not the relay's retelling.
 - **The bridge** sees which session asked (the tool call's id, found in that session's transcript), and the passkey's signature with what it signed: the challenge, and the address of the page it was made on.

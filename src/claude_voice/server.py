@@ -2978,7 +2978,8 @@ def build_server(
         ],
     ) -> dict[str, Any]:
         """Get the owner's own OK on your summary, which a relayed message can't give.
-        Put the result's tell_the_relay line in your reply and end your turn. The owner confirms on
+        Put the result's tell_the_relay line in your reply word for word, link included, and end
+        your turn: the owner needs the link, not the code. The owner confirms on
         the bridge's page with their passkey and the bridge then messages you, but you act only on
         your own confirm_check, which you may call at any time; the result's running.design link
         says how it works and why. Ask at once, not after reporting back, also when Claude Code's
@@ -2992,11 +2993,13 @@ def build_server(
         relay = (
             "Please get the owner's confirmation. If the owner has told you they're at the PC, ask them to"
             f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
-            f' can\'t; otherwise call confirm_with_owner with code "{asked["code"]}" and send the owner the'
-            f" link it returns. It expires at {asked['expires_at']}."
+            " can't; otherwise send the owner the link below as text in the chat, not aloud, and say in a few words"
+            f' what it asks them to confirm: "{asked["summary"]}". It expires at {asked["expires_at"]}.'
+            f" Link: {link_to(asked)}"
         )
         return {
             "code": asked["code"],
+            "link": link_to(asked),
             "summary": asked["summary"],
             "expires_at": asked["expires_at"],
             "tell_the_relay": relay,
@@ -3007,11 +3010,12 @@ def build_server(
     def confirm_with_owner(
         code: Annotated[str, Field(description="The code the session's confirm_ask gave it.")],
     ) -> dict[str, Any]:
-        """Get the link where the owner confirms a session's confirm_ask request.
-        Send the owner the link in the chat and tell them in a few words what the returned summary
-        asks, since the page shows the request as the bridge stored it and the owner confirms it
-        there with their passkey. Nothing else confirms it, so never pass on an OK the owner gave
-        aloud; an expired or answered request needs a new confirm_ask from the session."""
+        """Get the link for a confirm_ask request when a session gave only its code.
+        A session's request normally comes with its link already. Send the owner the link in the
+        chat and tell them in a few words what the returned summary asks, since the page shows the
+        request as the bridge stored it and the owner confirms it there with their passkey.
+        Nothing else confirms it, so never pass on an OK the owner gave aloud; an expired or
+        answered request needs a new confirm_ask from the session."""
         req = confirmations.by_code(code)
         if req is None or req["kind"] != "session":
             raise ToolError(f"No request {code}: ask the session for its code.")
