@@ -66,7 +66,9 @@ ran in the last day, with the session the owner talks to:
 
 - `number`: the session's short number, for saying it aloud ("number 3"). A
   new session gets the smallest number no running session uses, and keeps it while
-  it lives; a number is free again as soon as its session ends. Every place that takes
+  it lives; a number is free again ten minutes after its session ends, so "number 3"
+  does not change meaning mid-conversation. A session on another machine gets its
+  number from the same pool, so no two sessions share one. Every place that takes
   a session, in this API and in the voice tools, also takes its number as `3`,
   `nr 3`, `nummer 3` or `number 3`. It is on the `active` object and the
   `status` event too.
@@ -274,7 +276,7 @@ not on every refresh.
 
 | Call | Answer |
 | --- | --- |
-| `GET /api/v1/health/software` | `{"as_of", "repos": [{"name", "url", "as_of", "metrics": [{"id", "label", "value", "unit", "text", "status": "ok"\|"warn"\|"bad"\|"exempt"\|"unknown", "url", "trend": [≤30 values, oldest first]}]}]}` |
+| `GET /api/v1/health/software` | `{"as_of", "repos": [{"name", "url", "as_of", "metrics": [{"id", "label", "value", "unit", "text", "status": "ok"\|"warn"\|"bad"\|"exempt"\|"unknown", "url", "trend": [≤30 values, oldest first]}], "mutations": {"killed", "total", "rules": [{"name", "file", "tests_red", "own_test_red"}], "run", "url"}\|null}]}` |
 
 One entry for claude-voice, one for claude-voice-ui and one for each plugin's
 own repository (the one its checked-out branch pushes to), read from the levels
@@ -303,6 +305,14 @@ reason = "the tool table is one long match on the tool's name"
 approved = "Roy, 2026-11-11, in pull request #212"
 ```
 
+`mutations` is the newest mutation report the followed branch kept with a
+finished run of its checks, as `quality-mutations`, rule by rule: how many
+tests went red with the rule switched off (`tests_red`), and whether the test
+named after the rule was one of them (`own_test_red`). `killed` counts the
+rules whose own test went red; `run` and `url` name the run it came from. It is
+`null` for a repository whose checks keep no such report yet, and a report
+without its rules (an older tool's) is skipped rather than shown half.
+
 An exempt measure's `text` ends with the reason. A measure inside its limit
 stays `ok` whatever the file says, and an entry missing its reason or its
 approval is ignored.
@@ -315,7 +325,10 @@ approval is ignored.
 
 What waits on the owner is the manager session's own list, read fresh on every
 call from `~/.local/state/claude-voice/waiting.json`; an item with no `id` or
-`text` is left out. The open pull requests are those of claude-voice,
+`text` is left out. Three days before Claude Code's sign-in runs out, the bridge
+puts an item of its own first, with the `id` `claude-login`, saying to run
+`claude` and type `/login`. It asks `claude auth status` for the date at most once
+an hour, and reads no secret to do it. The open pull requests are those of claude-voice,
 claude-voice-ui and every plugin's repository, asked of GitHub at most once a
 minute; a repository whose pull requests could not be read is named in
 `unreadable` rather than shown as having none. `text` and `command` are plain

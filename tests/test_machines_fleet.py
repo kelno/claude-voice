@@ -23,13 +23,14 @@ async def hub_with_laptop(tmp_path, http=None):
     return laptop, deliver
 
 
-def the_hub(tmp_path, laptop, http=None):
+def the_hub(tmp_path, laptop, http=None, **options):
     return bridge_with(
         tmp_path / "hub-home",
         machines=[SPEC],
         machine_folder=tmp_path / "hub",
         http=http or laptop.http,
         whois=laptop.whois,
+        **options,
     )
 
 
@@ -105,3 +106,53 @@ async def test_looking_across_machines_never_waits_long_for_one():
     await across.refresh()
     assert time.monotonic() - started < fleet.ASK_SECONDS + 1  # both asked at once, each cut off
     assert [m["error"] for m in across.rows()] == ["did not answer", "did not answer"]
+
+
+async def test_a_session_on_another_machine_gets_its_number_from_the_same_pool_as_the_hub(tmp_path):
+    laptop, deliver = await hub_with_laptop(tmp_path)
+    async with laptop:
+        await approve(laptop, tmp_path / "hub")
+        hub = the_hub(tmp_path, laptop)
+        listed = (await call(hub, "list_active_sessions")).structured_content["sessions"]
+        again = (await call(hub, "list_active_sessions")).structured_content["sessions"]
+        there = next(s for s in listed if s["name"] == "lukas-laptop/mod")
+        sent = await call(hub, "message_active_session", session=f"nummer {there['number']}", message="hei")
+    assert isinstance(there["number"], int)
+    assert [s["number"] for s in again] == [s["number"] for s in listed]
+    # The fork adds the bridge's note for the session after the message.
+    assert not sent.is_error and [(n, t.split("\n\n")[0]) for n, t in deliver.sent] == [("mod", "hei")]
+
+
+def _numbers_in(body):
+    """Every `number` anywhere in an answer."""
+    if isinstance(body, dict):
+        return [v for k, v in body.items() if k == "number"] + [n for v in body.values() for n in _numbers_in(v)]
+    if isinstance(body, list):
+        return [n for v in body for n in _numbers_in(v)]
+    return []
+
+
+async def test_a_session_number_from_another_machine_is_never_passed_on(tmp_path):
+    laptop, _ = await hub_with_laptop(tmp_path)
+    async with laptop:
+        await approve(laptop, tmp_path / "hub")
+        hub = the_hub(tmp_path, laptop)
+        listed = (await call(hub, "lukas-laptop_list_active_sessions")).structured_content
+        tree = (await call(hub, "lukas-laptop_session_tree")).structured_content
+        recap = (await call(hub, "lukas-laptop_fleet_recap")).structured_content
+        page = (await call(hub, "get_active_session", session="lukas-laptop/mod")).structured_content
+    assert listed["sessions"] and tree["nodes"] and recap["sessions"]
+    # The laptop numbers its sessions from its own pool, so its "1" may be the hub's own #1.
+    assert _numbers_in([listed, tree, recap, page]) == []
+
+
+async def test_a_session_on_another_machine_is_made_the_active_one_by_its_number(tmp_path):
+    laptop, _ = await hub_with_laptop(tmp_path)
+    async with laptop:
+        await approve(laptop, tmp_path / "hub")
+        hub = the_hub(tmp_path, laptop, switched_off=frozenset())  # set_active_session is off in the fork
+        listed = (await call(hub, "list_active_sessions")).structured_content["sessions"]
+        there = next(s for s in listed if s["name"] == "lukas-laptop/mod")
+        made = await call(hub, "set_active_session", session=f"nummer {there['number']}")
+    assert not made.is_error, made.content
+    assert made.structured_content["name"] == "lukas-laptop/mod"

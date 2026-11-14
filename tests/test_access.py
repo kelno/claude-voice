@@ -96,7 +96,16 @@ async def test_a_session_outside_the_open_folders_is_listed_as_needing_approval(
     notes = listed["Notes"]
     assert notes["access"] == "folder_not_open"
     assert notes["folder"] == str(world["elsewhere"].resolve())
-    assert set(notes) == {"claude_session_id", "name", "folder", "status", "kind", "access", "minutes_since_update"}
+    assert set(notes) == {
+        "claude_session_id",
+        "name",
+        "folder",
+        "status",
+        "kind",
+        "access",
+        "minutes_since_update",
+        "number",
+    }
 
 
 async def test_a_session_needing_approval_cannot_be_read_or_messaged(world):

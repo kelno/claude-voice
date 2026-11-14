@@ -39,9 +39,14 @@ class Service:
         self.healthy = healthy
         self.healthy_after_rollback = healthy_after_rollback
         self.restarts = 0
+        self.said = []  # each note and each restart, in the order they happened
 
     def restart(self):
         self.restarts += 1
+        self.said.append("restart")
+
+    def note(self, reason, frm, to):
+        self.said.append((reason, frm, to))
 
     def health(self):
         return self.healthy if self.restarts == 1 else self.healthy_after_rollback
@@ -56,6 +61,7 @@ def run(clone, tmp_path, service, tests_pass=True, tested=True):
         tests=(lambda folder: (tests_pass, "12 passed" if tests_pass else "1 failed")) if tested else None,
         restart=service.restart,
         healthy=service.health,
+        note=service.note,
     )
     steps = [s["step"] for s in json.loads(log.read_text())["steps"]]
     return outcome, steps
@@ -119,6 +125,32 @@ def test_an_update_runs_the_tests_only_when_asked(install, tmp_path):
     outcome, steps = run(clone, tmp_path, service, tests_pass=False, tested=False)
     assert "test" not in steps and outcome["result"] == "rolled_back"  # failing tests were never run
     assert git(clone, "rev-parse", "HEAD") == before and service.restarts == 2
+
+
+def test_an_update_notes_why_before_it_restarts_the_bridge(install, tmp_path):
+    origin, clone = install
+    before = git(clone, "rev-parse", "HEAD")
+    new = commit(origin, "b")
+    service = Service()
+    run(clone, tmp_path, service)
+    assert service.said == [("update", before, new), "restart"]
+
+
+def test_a_rollback_notes_why_before_it_restarts_the_bridge(install, tmp_path):
+    origin, clone = install
+    before = git(clone, "rev-parse", "HEAD")
+    new = commit(origin, "b")
+    service = Service(healthy=False)
+    run(clone, tmp_path, service)
+    assert service.said == [("update", before, new), "restart", ("rollback", new, before), "restart"]
+
+
+def test_an_update_whose_tests_fail_notes_nothing(install, tmp_path):
+    origin, clone = install
+    commit(origin, "b")
+    service = Service()
+    run(clone, tmp_path, service, tests_pass=False)
+    assert service.said == []
 
 
 def test_only_one_update_runs_at_a_time(install, tmp_path):

@@ -228,7 +228,7 @@ def test_a_quick_check_measures_no_mutation_on_either_side(monkeypatch):
 
     copies = []
     monkeypatch.setattr(ratchet, "measure_at", lambda ref, skip_mutation=False: copies.append(skip_mutation) or quick)
-    monkeypatch.setattr(ratchet, "measure", lambda skip_mutation=False, recorded=None: quick)
+    monkeypatch.setattr(ratchet, "measure", lambda skip_mutation=False, recorded=None, mutations=None: quick)
     monkeypatch.setattr(sys, "argv", ["ratchet.py", "check", "--base", "origin/main", "--skip-mutation"])
     assert ratchet.main() == 0
     assert copies == [True]

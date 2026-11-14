@@ -64,6 +64,7 @@ from . import (
     procs,
     prompts,
     renames,
+    restarts,
     roles,
     session_modes,
     software,
@@ -719,9 +720,8 @@ def _parse_cursor(cursor: str | None) -> int | None:
 
 
 REMOTE_ID = re.compile(r"session_[A-Za-z0-9]+")
-# A session named by its short number, as said aloud: "3", "nr 3", "nr. 3", "nummer 3", "number 3".
 SIMPLE_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")  # a new folder: one plain name
-SPOKEN_NUMBER = re.compile(r"(?:nr\.?|nummer|number)?\s*(\d{1,4})", re.IGNORECASE)
+SPOKEN_NUMBER = fleet.SPOKEN_NUMBER  # a session named by its short number
 
 
 def app_url(bridge_session_id: Any) -> str | None:
@@ -1204,6 +1204,7 @@ def build_server(
     kept_levels: Callable[..., list[dict[str, Any]]] = software.kept_levels,
     jobs_dir: Path = transcripts.JOBS_DIR,
     read_prompt: Callable[[str], str | None] = transcripts.pending_prompt,
+    kept_mutations: Callable[..., dict[str, Any] | None] = software.kept_mutations,
     main_head: Callable[..., str | None] = software.head,
     work_board: work.Board | None = None,
     terminals: Terminals | None = None,
@@ -1868,6 +1869,7 @@ def build_server(
     # doesn't pass the server's instructions to the model, so they reach it through the guide.
     told = voice_instructions(repos.voice_instructions_file)
     across = fleet.Fleet()  # the other machines, filled in once they are started below
+    across.numbers = manager.store
     across.publish = api.HUB.publish
     mcp = MCPServer(
         "claude-voice",
@@ -2133,6 +2135,12 @@ def build_server(
         mcp, repos.machines, machine_folder, http=machine_http, whois=machine_whois
     )
 
+    def local_numbers(live_ids: list[str] | None = None) -> dict[str, int]:
+        """The short number of every session on this machine, as the page shows it."""
+        if live_ids is None:
+            live_ids = [str(r["claude_session_id"]) for r in running()]
+        return store.number_sessions(live_ids, scope=lambda sid: "/" not in sid)
+
     @tool(annotations=READ_ONLY)
     def fleet_recap() -> dict[str, Any]:
         """Every running session with its status and one line on what it is doing.
@@ -2141,7 +2149,7 @@ def build_server(
         sessions = []
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         live_rows = running()
-        numbers = store.number_sessions([str(r["claude_session_id"]) for r in live_rows])
+        numbers = local_numbers([str(r["claude_session_id"]) for r in live_rows])
         for row in live_rows:
             if "access" in row:
                 # Not open to the bridge: nothing is read from it.
@@ -2465,6 +2473,7 @@ def build_server(
         {"claude-voice": repos.repos.claude_voice, "claude-voice-ui": repos.repos.claude_voice_ui}
         | {name: repo for name, repo, _ in plugin_repos},
         run=software._gh,
+        login_expiry=lambda: work.read_login_expiry(),  # looked up late, so the suite can stand in for it
     )
 
     def software_listed() -> list[tuple[str, str, Path | None, str]]:
@@ -2490,6 +2499,7 @@ def build_server(
                     ci_status(repo, branch=branch),
                     kept_levels(repo, branch=branch),
                     branch=branch,
+                    mutations=kept_mutations(repo, branch=branch),
                 )
                 for name, repo, folder, branch in software_listed()
             ],
@@ -2624,12 +2634,17 @@ def build_server(
         """Every session running now, with status; a waiting one carries its prompt.
         Claude Code sessions on this machine: status busy, idle or waiting (prompt says what it
         asks); kind "desktop", "terminal" or "background" (no window); side_chat marks a desktop
-        aside. A session outside the folders open to the bridge (the root and what's under it, and
-        those opened with request_access; open in an app doesn't count) shows only its name, folder
-        and status, with access "folder_not_open" (request_access opens it once the owner confirms)
-        or "folder_closed" (inside or holding a secret or system folder; never opened). handles: the
+        aside; number is the short number any tool taking a session also takes. A session outside
+        the folders open to the bridge (the root and what's under it, and those opened with
+        request_access; open in an app doesn't count) shows only its name, folder and status, with
+        access "folder_not_open" (request_access opens it once the owner confirms) or
+        "folder_closed" (inside or holding a secret or system folder; never opened). handles: the
         relay handles in use, with the sessions each follows."""
-        return {"sessions": running(), "handles": handles_in_use()}
+        rows = running()
+        numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
+        # RULE: every list of sessions shows the number the page shows
+        sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
+        return {"sessions": sessions, "handles": handles_in_use()}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
         """Where a running session's conversation went, if Claude Code continued it elsewhere."""
@@ -4096,17 +4111,20 @@ def build_server(
 
     @tool(annotations=READ_ONLY)
     def session_tree() -> dict[str, Any]:
-        """The sessions as a tree, with which ones have messaged each other lately.
-        The bridge, the Claude Code sessions running on this machine, helper agents, and for
-        each which others it has sent messages to in the last day (talks_to); `version` changes
-        when the shape changes."""
-        return tree.build()
+        """The sessions to choose from, as a tree, with which ones message each other.
+        The bridge, the Claude Code sessions running on this machine, helper agents, and for each
+        which others it has sent messages to in the last day (talks_to).
+        `version` changes when the shape changes; whats_new reports that as kind "tree_changed".
+        `number` is each session's short number, as on the page."""
+        built = tree.build()
+        numbers = local_numbers()
+        return {**built, "nodes": [{**n, "number": numbers.get(str(n["id"]))} for n in built["nodes"]]}
 
     @tool(annotations=READ_ONLY)
     def health() -> dict[str, Any]:
-        """The bridge's own state: version, uptime, calls and errors per tool, folders.
-        Since when and which version, memory, the last restart, calls/errors/latency per tool
-        since start, the latest errors, courier, channels, watcher, and the root and granted folders."""
+        """The bridge's own state: version, memory, calls and errors per tool, folders.
+        Also since when it runs, its last restart and why, the latency per tool since start, the latest
+        errors, the courier, channels and watcher, and the root and granted folders."""
         snap = METRICS.snapshot()
         courier = transcripts.shared_courier()
         offered = [p.status() for p in active_plugins]
@@ -4117,7 +4135,7 @@ def build_server(
                 "up_since": started_at,
                 "version": running_version,
                 "memory_rss_mb": metrics.memory_rss_mb(),
-                "last_restart": {"at": restart["at"], "reason": restart["reason"]},
+                "last_restart": {k: restart.get(k) for k in RESTART_FIELDS},
                 "restarts_total": restart["total"],
             },
             "tools": snap["tools"],
@@ -4263,7 +4281,7 @@ def build_server(
         Read from its transcript; it never makes a summary."""
         live = lookup(session)
         sid, cwd = str(live.get("sessionId")), str(live.get("cwd"))
-        numbers = store.number_sessions([str(d.get("sessionId")) for d in live_sessions()])
+        numbers = local_numbers()  # every session here at once, so no other number moves
         entries = detail.read(projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl")
         return {
             "session": sid,
@@ -4482,7 +4500,7 @@ def serve_forever(cfg: Config) -> None:
     oauth = OAuthProvider(
         store, login_secret=token, public_url=cfg.public_url, static_token=token, access_ttl=cfg.access_ttl
     )
-    restart = metrics.restart_info("~/.local/state/claude-voice/restarts")
+    restart = restarts.restart_info(config.STATE_DIR)
     server = build_server(
         manager,
         oauth=oauth,
@@ -4504,6 +4522,8 @@ def serve_forever(cfg: Config) -> None:
     web_server(app, cfg.host, cfg.port).run()
 
 
+#: What health says about the last restart: when, why, who asked, and the commits it brought.
+RESTART_FIELDS = ("at", "reason", "by", "changes", "from", "to", "note")
 SHUTDOWN_SECONDS = 5  # how long a stop waits for open requests; event streams never end
 
 

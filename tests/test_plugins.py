@@ -161,7 +161,7 @@ def bridge(tmp_path, specs, approve=True, factory=None):
     )
 
 
-def bridge_with(tmp_path, machines, machine_folder, http, whois):
+def bridge_with(tmp_path, machines, machine_folder, http, whois, **options):
     """The bridge with other machines in its settings and nothing else."""
     store = Store(tmp_path / "b.db")
     (tmp_path / "home").mkdir(exist_ok=True)
@@ -175,6 +175,7 @@ def bridge_with(tmp_path, machines, machine_folder, http, whois):
         machine_folder=machine_folder,
         machine_http=http,
         machine_whois=whois,
+        **options,
     )
 
 
