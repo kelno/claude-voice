@@ -53,6 +53,7 @@ from . import (
     fleet,
     fork,
     gitstatus,
+    handles,
     hints,
     jobs,
     launch,
@@ -252,17 +253,6 @@ GUIDED_KEPT = 1000
 # turn its result reached (`next_after`), or by the `claude_session_id` it started or resumed.
 READ_MARKING_TOOLS = ("message_active_session", "read_session_output", "wait_for_session", "ask_active_session")
 STARTING_TOOLS = ("start_active_session", "attach_conversation")
-# Relay handles exist only because the bridge has no way to tell voice relays apart by itself: they
-# all reach it over one connection, with nothing identifying the conversation. If that ever becomes
-# possible, all of the handle machinery below can be replaced by it (owner, 2026-11-12).
-# Where each relay's read marks and the sessions it follows are kept, by its handle, so a bridge
-# restart doesn't drop them: {handle: {"used": when, "sessions": {session id: mark}}}.
-HANDLES_SETTING = "relay_handles"
-# A handle the bridge hands out: "@" and four letters of mixed case, such as "@kQzw", so no one takes
-# it for a name, nor for the owner's codes (P62, F70); l, I, o and O left out, as easily misread.
-HANDLE_LETTERS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
-# A handle that follows nothing and wasn't used for this long is dropped.
-HANDLE_IDLE_SECONDS = 24 * 3600
 # A pending rename written into a job record is not written again for this long, while Claude Code
 # takes the name and its lists catch up (seen within 15 s, 2026-11-05).
 RENAME_RETRY_SECONDS = 60.0
@@ -285,13 +275,6 @@ def started_by(turn: dict[str, Any]) -> str:
     return STARTED_BY.get(str(turn.get("origin")), "something else")
 
 
-# Handles handed out this close together, none passed back yet, came from one relay's calls made at
-# once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
-# relays starting within this time would merge, which the owner says doesn't happen.
-MERGE_SECONDS = 10
-# A handle handed out to a call that forgot or mistyped the relay's own, not passed back since, is
-# folded into the relay's handle when it next passes it, within this time (owner, 2026-11-13).
-STRAY_SECONDS = 60
 MERGED = "Also following {sessions}, from your calls a moment ago without your handle: they are under this handle now."
 # The tools that take a relay's handle: those that follow or read sessions, and the list.
 HANDLED_TOOLS = (
@@ -962,11 +945,6 @@ def result_notes(
     return note
 
 
-def load_handles(store: Store) -> dict[str, dict[str, Any]]:
-    """Each relay's read marks and what it follows, by handle, as the database kept them."""
-    return dict(store.get_setting(HANDLES_SETTING) or {})
-
-
 @contextlib.contextmanager
 def background_step(name: str, failures: dict[str, str]) -> Any:
     """Run one step of the bridge's housekeeping: a failure is logged and the loop goes on.
@@ -1485,7 +1463,7 @@ def build_server(
     # (`replied`). Once that turn is read, `sent` is cleared and `quiet` set: a quiet follow,
     # until it ends. Kept in the database: a bridge restart doesn't end the voice call, which runs
     # in the Claude app's cloud, and the relay, in that call or a new one, still needs its replies.
-    relays = load_handles(manager.store)
+    relays = handles.Handles(manager.store, manager.clock)
     # What a call without a handle marks: thrown away once the call is done.
     nameless: dict[str, dict[str, Any]] = {}
     # A Claude Code session's handle, by the MCP connection it calls over (one per session).
@@ -1494,33 +1472,18 @@ def build_server(
     def mine() -> dict[str, dict[str, Any]]:
         """The calling relay's marks, by session id: those of its handle."""
         handle = call_handle()
-        if handle is None:
-            return nameless
-        # RULE: each handle follows its own sessions
-        return relays.setdefault(handle, {"used": manager.clock(), "sessions": {}})["sessions"]
+        return nameless if handle is None else relays.marks(handle)
 
-    def follows(handle: str) -> list[str]:
-        """The sessions a handle follows, by name."""
-        return [str(m.get("name") or sid) for sid, m in relays[handle]["sessions"].items() if m.get("sent") is not None]
+    relays.drop_idle()  # those left idle while the bridge was down
 
-    def handles_in_use() -> list[dict[str, Any]]:
-        return [{"handle": h, "follows": follows(h)} for h in relays]
-
-    def drop_idle_handles() -> None:
-        now = manager.clock()
-        for h in list(relays):
-            # RULE: a handle following nothing unused for a day is dropped
-            if h != call_handle() and not follows(h) and now - relays[h].get("used", 0) > HANDLE_IDLE_SECONDS:
-                del relays[h]
-
-    drop_idle_handles()  # those left idle while the bridge was down
-
-    def save_handles() -> None:
-        manager.store.set_setting(HANDLES_SETTING, relays)
-
-    def in_use_said(template: str, **fields: str) -> str:
-        """`template` with the handles in use, after the note on a handle given that isn't one."""
-        in_use = [f"{h['handle']} (follows {', '.join(h['follows']) or 'nothing'})" for h in handles_in_use()]
+    def in_use_said(template: str, but: str | None = None, **fields: str) -> str:
+        """`template` with the handles in use, `but` left out, after the note on a handle given that
+        isn't one."""
+        in_use = [
+            f"{h['handle']} (follows {', '.join(h['follows']) or 'nothing'})"
+            for h in relays.in_use()
+            if h["handle"] != but
+        ]
         given = (relay_call.get() or {}).get("unknown")
         said = template.format(in_use=f"; in use: {', '.join(in_use)}" if in_use else "", **fields)
         return (UNKNOWN_HANDLE.format(given=given) if given else "") + said
@@ -1531,45 +1494,10 @@ def build_server(
         # RULE: a call that follows without a handle gets a new one
         if state is None or state.get("handle") is not None or not state.get("wanted"):
             return
-        while True:
-            # RULE: a handle looks like a code, not a name
-            handle = "@" + "".join(secrets.choice(HANDLE_LETTERS) for _ in range(4))
-            mixed = handle != handle.lower() and handle != handle.upper()
-            if mixed and not any(h.casefold() == handle.casefold() for h in relays):
-                break
-        state["told"] = in_use_said(NEW_HANDLE, new=handle)  # said before it is in use itself
-        now = manager.clock()
-        relays[handle] = {"used": now, "sessions": {}, "handed_out": now, "claimed": False}
+        handle = relays.hand_out()
+        state["told"] = in_use_said(NEW_HANDLE, but=handle, new=handle)
         state["handle"] = state["minted"] = handle
-        save_handles()
-
-    def merge_batch(handle: str) -> list[str]:
-        """Fold into `handle` the handles handed out with it that no one has passed back: calls a
-        relay made at once without one, each given its own. Returns what they followed."""
-        own, now = relays[handle], manager.clock()
-        if own.get("handed_out") is not None:
-            own["claimed"] = True
-        merged = []
-        for other in [h for h in relays if h != handle]:
-            theirs = relays[other]
-            if theirs.get("claimed") is not False:
-                continue
-            # RULE: handles handed out at the same moment merge on first use
-            batch = own.get("handed_out") is not None and abs(theirs["handed_out"] - own["handed_out"]) <= MERGE_SECONDS
-            # A relay that forgot or mistyped its handle wrote to a session it already had: a new
-            # relay's first handle, on sessions this one never touched, is left alone, even while
-            # another relay's waits call every half minute.
-            followed = [sid for sid, m in theirs["sessions"].items() if m.get("sent") is not None]
-            # RULE: a stray handle folds into the next handle passed that already had its sessions
-            stray = now - theirs["handed_out"] <= STRAY_SECONDS and bool(followed)
-            stray = stray and all(sid in own["sessions"] for sid in followed)
-            if batch or stray:
-                merged += follows(other)
-                for sid, mark in theirs["sessions"].items():
-                    if own["sessions"].get(sid, {}).get("sent") is None:
-                        own["sessions"][sid] = mark
-                del relays[other]
-        return merged
+        relays.save()
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
         """The calling relay's handle: the one it passed, matched whatever its capitals; for a
@@ -1577,20 +1505,18 @@ def build_server(
         given = str(args.get("handle") or "").strip()
         handle = None
         if given:
-            # Only a handle the bridge handed out and still keeps: a typo would quietly start an empty list.
-            handle = next((h for h in relays if h.casefold() == given.casefold()), None)
+            handle = relays.find(given)
             state = relay_call.get()
             if handle is None and state is not None:
-                # RULE: a handle not in use counts as none
                 state["unknown"] = given
             elif handle is not None and state is not None:
-                state["merged"] = merge_batch(handle)
+                state["merged"] = relays.merge_batch(handle)
         elif from_claude_code():
             handle = claude_code_handles.get(connection or "") or await claude_code_name()
             if connection:
                 claude_code_handles[connection] = handle
         if handle is not None:
-            relays.setdefault(handle, {"used": 0, "sessions": {}})["used"] = manager.clock()
+            relays.touch(handle)
         return handle
 
     async def claude_code_name() -> str:
@@ -1690,7 +1616,7 @@ def build_server(
         """
         handle = call_handle()
         marks = mine()
-        before = json.dumps(relays, sort_keys=True)
+        before = relays.snapshot()
         active_before = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
@@ -1725,9 +1651,9 @@ def build_server(
         elif handle is None and tool in HANDLED_TOOLS and state.get("wanted") and not from_claude_code():
             step = in_use_said(NO_HANDLE)
         nameless.clear()
-        drop_idle_handles()
-        if json.dumps(relays, sort_keys=True) != before:
-            save_handles()
+        relays.drop_idle(keep=handle)
+        if relays.snapshot() != before:
+            relays.save()
         # RULE: the news line starts with the handle
         news = (f"[{handle}] " if handle else "") + " | ".join(items)
         minted = {"handle": state["minted"]} if state.get("minted") else {}
@@ -2701,7 +2627,7 @@ def build_server(
             marks[sid].pop("then", None)
             # RULE: a quiet follow can be stopped
             marks[sid].pop("quiet", None)
-            save_handles()
+            relays.save()
             return {"session": marks[sid].get("name") or sid, "status": "not_followed"}
         d = find_live(session)
         sid = str(d.get("sessionId"))
@@ -2714,7 +2640,7 @@ def build_server(
             marks = mine()
             mark = marks.get(sid)
             mark_read(d, seen=mark["seen"] if mark else None, sent=len(all_turns(sid, str(d.get("cwd")))) - 1)
-            save_handles()
+            relays.save()
         return {"session": d.get("name"), "status": "following"}
 
     def under_root(cwd: str | None) -> str | None:
@@ -2756,7 +2682,7 @@ def build_server(
         numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
         # RULE: every list of sessions shows the number the page shows
         sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
-        return {"sessions": sessions, "handles": handles_in_use()}
+        return {"sessions": sessions, "handles": relays.in_use()}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
         """Where a running session's conversation went, if Claude Code continued it elsewhere."""
@@ -3922,7 +3848,7 @@ def build_server(
         probe = message.strip()[:80]
         ensure_handle()
         follow_sent(target, before - 1, probe)
-        save_handles()
+        relays.save()
         target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds, began)
         if status == "not_received":
             # RULE: a question that never reached its session leaves it unfollowed

@@ -1,5 +1,5 @@
 [[rule]]
 name = "a stray handle folds into the next handle passed that already had its sessions"
-file = "src/claude_voice/server.py"
+file = "src/claude_voice/handles.py"
 find = 'stray = now - theirs\["handed_out"\] <= STRAY_SECONDS and bool\(followed\)'
 replace = 'stray = False'

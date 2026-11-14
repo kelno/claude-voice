@@ -1,0 +1,5 @@
+[[rule]]
+name = "a handle looks like a code, not a name"
+file = "src/claude_voice/handles.py"
+find = 'if mixed and not any'
+replace = 'if not any(h.casefold() == handle.casefold() for h in self.all):'

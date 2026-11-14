@@ -1,0 +1,5 @@
+[[rule]]
+name = "each handle follows its own sessions"
+file = "src/claude_voice/handles.py"
+find = 'return self.all.setdefault\(handle, \{"used": self.clock\(\), "sessions": \{\}\}\)\["sessions"\]'
+replace = 'return self.all.setdefault("shared", {"used": self.clock(), "sessions": {}})["sessions"]'

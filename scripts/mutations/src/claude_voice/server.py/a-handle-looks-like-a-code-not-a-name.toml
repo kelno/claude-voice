@@ -1,5 +1,0 @@
-[[rule]]
-name = "a handle looks like a code, not a name"
-file = "src/claude_voice/server.py"
-find = 'if mixed and not any'
-replace = 'if not any(h.casefold() == handle.casefold() for h in relays):'

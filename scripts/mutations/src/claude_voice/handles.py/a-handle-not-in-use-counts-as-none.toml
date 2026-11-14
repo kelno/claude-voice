@@ -1,0 +1,5 @@
+[[rule]]
+name = "a handle not in use counts as none"
+file = "src/claude_voice/handles.py"
+find = 'return next\(\(h for h in self.all if h.casefold\(\) == given.casefold\(\)\), None\)'
+replace = 'return next((h for h in self.all if h.casefold() == given.casefold()), given)'

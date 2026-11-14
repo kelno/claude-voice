@@ -1,5 +1,0 @@
-[[rule]]
-name = "each handle follows its own sessions"
-file = "src/claude_voice/server.py"
-find = 'return relays.setdefault\(handle, \{"used": manager.clock\(\), "sessions": \{\}\}\)\["sessions"\]'
-replace = 'return relays.setdefault("shared", {"used": manager.clock(), "sessions": {}})["sessions"]'

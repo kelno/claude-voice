@@ -1,5 +1,0 @@
-[[rule]]
-name = "a handle not in use counts as none"
-file = "src/claude_voice/server.py"
-find = 'handle = next\(\(h for h in relays if h.casefold\(\) == given.casefold\(\)\), None\)'
-replace = 'handle = next((h for h in relays if h.casefold() == given.casefold()), given)'
