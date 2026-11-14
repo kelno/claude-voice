@@ -8,6 +8,7 @@ from fakes import FakeClaude
 from mcp.client import Client
 from test_live import msg
 
+from claude_voice import transcripts
 from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
@@ -66,6 +67,20 @@ async def test_the_conversation_is_summed_up_by_someone_else_and_only_the_digest
     text, question = summarize.calls[0]
     assert "Fix the export" in text and "Fixed; tests pass." in text and "Bash" in text
     assert question is None
+
+
+async def test_a_bridge_given_no_summarizer_uses_the_one_in_place_when_it_is_built(setup, monkeypatch):
+    """The suite puts a fake in place of the summarizer that runs the owner's own Claude Code
+    (conftest.py). A bridge built without one uses that fake, not the summarizer that was in
+    place when the server module loaded."""
+    monkeypatch.setattr(transcripts, "summarize", Summarizer("From the one in place."))
+    m = SessionManager(Store(setup / "b.db"), project_root=setup / "src", client_factory=FakeClaude())
+    server = build_server(
+        m, conversations=lambda **k: [], live_dir=setup / "live", read_transcript=lambda sid, directory: TURNS
+    )
+    async with Client(server) as c:
+        out = (await c.call_tool("digest_session", {"session": "billing-ab"})).structured_content
+    assert out["digest"] == "From the one in place."
 
 
 async def test_a_question_is_passed_on(setup):

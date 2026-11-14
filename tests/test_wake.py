@@ -116,6 +116,31 @@ async def test_the_served_bridge_wakes_what_was_running_at_its_last_look(tmp_pat
     assert starter.options == [{"resume": "s-mine", "wake": True}]
 
 
+async def test_a_bridge_given_no_background_list_asks_the_one_in_place_when_it_is_built(tmp_path, monkeypatch):
+    """The suite puts a fake in place of the helper that asks the owner's own Claude Code for its
+    background sessions (conftest.py). A bridge built without one asks that fake, not the helper
+    that was in place when the server module loaded."""
+    asked = []
+
+    async def jobs():
+        asked.append(True)
+        return []
+
+    monkeypatch.setattr(transcripts, "background_jobs", jobs)
+    work, store = setup(tmp_path)
+    live = tmp_path / "live"
+    live.mkdir()
+    m = SessionManager(store, project_root=work, client_factory=FakeClaude())
+    srv = build_server(m, live_dir=live, watch_interval=60.0, start_background=Starter(tmp_path, register=False))
+    async with Client(srv) as c:
+        for _ in range(100):
+            if asked:
+                break
+            await asyncio.sleep(0.01)
+        await c.list_tools()
+    assert asked
+
+
 async def test_the_sessions_to_wake_wait_until_claude_ai_answers(tmp_path):
     # Seen 2026-11-13: the bridge woke a session at logon before the network was back after a
     # sleep, and the session ran without any claude.ai connector (ledger Q104).

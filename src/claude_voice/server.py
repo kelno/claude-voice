@@ -1151,8 +1151,8 @@ def build_server(
     watch_interval: float | None = None,
     restart: dict[str, Any] | None = None,
     start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
-    background_sessions: Callable[[], Awaitable[set[str]]] = transcripts.background_sessions,
-    background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] = transcripts.background_jobs,
+    background_sessions: Callable[[], Awaitable[set[str]]] | None = None,
+    background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
     claude_config: Path = access.CLAUDE_CONFIG,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = transcripts.compact_stopped,
@@ -1166,7 +1166,7 @@ def build_server(
     start_seconds: float = 20.0,
     list_prs: Callable[[str], list[dict[str, Any]]] | None = None,
     ui_origins: list[str] | None = None,
-    summarize: Callable[[str, str | None, str | None], Awaitable[str]] = transcripts.summarize,
+    summarize: Callable[[str, str | None, str | None], Awaitable[str]] | None = None,
     digest_chars: int = 150_000,
     side_answer: Callable[[str, str, str | None], Awaitable[str]] | None = None,
     side_chars: int = 8_000,
@@ -1238,6 +1238,11 @@ def build_server(
         rename=renamed,
     )
     side_answer = side_answer or transcripts.shared_reader()
+    # The helpers that run Claude Code are looked up when the bridge is built, not when this
+    # module loads, so a stand-in put in their place before then is the one used.
+    background_sessions = background_sessions or transcripts.background_sessions
+    background_jobs = background_jobs or transcripts.background_jobs
+    summarize = summarize or transcripts.summarize
     host: doctor.Host = doctor_host or doctor.RealHost()
     repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
 

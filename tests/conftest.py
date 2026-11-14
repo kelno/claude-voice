@@ -34,6 +34,24 @@ def no_real_side_reader(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_claude_code(monkeypatch):
+    """A watched bridge asks the owner's own Claude Code for its background sessions, and a digest
+    asks a small model through it: slow, and a real model call on the owner's account. The suite
+    answers both itself, with no background sessions and a fixed digest. A test that wants other
+    answers passes its own to the bridge."""
+    from claude_voice import transcripts
+
+    async def no_background_jobs():
+        return []
+
+    async def a_fixed_digest(text, question, language=None):
+        return "The suite's own digest."
+
+    monkeypatch.setattr(transcripts, "background_jobs", no_background_jobs)
+    monkeypatch.setattr(transcripts, "summarize", a_fixed_digest)
+
+
+@pytest.fixture(autouse=True)
 def no_github(monkeypatch):
     """A watched server asks GitHub for the open pull requests, and waits for the answer before
     its next look at the sessions. The suite answers as if GitHub's command line were missing."""
