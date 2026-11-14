@@ -128,6 +128,7 @@ The fork's agents follow their owner's rules, not upstream's rules for agents; `
 | What | Upstream | Fork | Why | Fork commits |
 | --- | --- | --- | --- | --- |
 | Upstream's skills in `.claude/skills/` (`code-quality`, `manage`, `org-chart`, `review-contribution`, `write-commit`, `write-plugin`) | Listed to every session in the repository | Kept unchanged, each switched off by name in `.claude/settings.json` (`skillOverrides`, which takes no wildcard); `tests/test_upstream_skills_off.py` fails when a skill isn't switched off, so a resync bringing a new one stops by itself, and when the list names one that no longer exists. A session preparing a pull request to upstream can still read them as files | They are upstream's rules for agents, and they clashed with the owner's: `write-commit` held back a commit the owner had approved (owner, 2026-11-15) | "Switch off upstream's skills for the fork's agents" |
+| The Stop hook in `.claude/settings.json` (`scripts/hooks/unanswered_peer.py`) | Holds a session's turn back once while another session's SendMessage to it is unanswered | Not declared; the script and its tests stay as upstream has them | It is upstream's steering, and different rules in one repository only; a reminder like it would be one of the owner's own hooks, for every repository. It never fired here (owner, 2026-11-15) | "Drop upstream's Stop hook from the fork's settings" |
 
 ### The suite and the checks
 
