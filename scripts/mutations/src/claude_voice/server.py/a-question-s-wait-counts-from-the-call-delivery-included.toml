@@ -1,0 +1,5 @@
+[[rule]]
+name = "a question's wait counts from the call delivery included"
+file = "src/claude_voice/server.py"
+find = 'deadline = began \+ within_budget\(wait_seconds\)'
+replace = 'deadline = started + within_budget(wait_seconds)'

@@ -3626,16 +3626,18 @@ def build_server(
         return {**t, "text": RELAYED_STUB + transcripts.clip(words, RELAYED_STUB_CHARS), "relayed": True}
 
     async def await_reply(
-        target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float | None
+        target: dict[str, Any], before: int, was_busy: bool, probe: str, wait_seconds: float | None, began: float
     ) -> tuple[dict[str, Any], str, dict[str, Any] | None]:
         """Watch a session we just sent a message until it settles, ends or the wait runs out.
 
+        The wait counts from `began`, when the call came in; whether the message arrived, from now.
         Gives back the session as last seen, the status, and what it waits for, if anything."""
         pid, seen_busy = target.get("pid"), False
         loop = asyncio.get_running_loop()
         started = loop.time()
         quiet_since: float | None = None
-        deadline = started + within_budget(wait_seconds)
+        # RULE: a question's wait counts from the call delivery included
+        deadline = began + within_budget(wait_seconds)
         while True:
             now = live_by_pid(pid)
             if now is None:
@@ -3806,6 +3808,7 @@ def build_server(
         (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
         user to pick one of question.options). A session Claude Code closed for low memory is
         resumed first; resumed says so."""
+        began = asyncio.get_running_loop().time()  # a resume and the delivery count toward the wait
         target, resumed = await find_live_or_wake(session)
         woke = {"resumed": resumed} if resumed else {}
         moved = moved_to(target)
@@ -3823,7 +3826,7 @@ def build_server(
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 
         probe = message.strip()[:80]
-        target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds)
+        target, status, blocked = await await_reply(target, before, was_busy, probe, wait_seconds, began)
         fresh = numbered_turns(target)[before:] if status != "session_ended" else []
         new, start = _reply_turns(fresh, probe, before, status, was_busy)
         final = reply_is_final(status, new)
