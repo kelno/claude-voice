@@ -33,12 +33,19 @@ SETTING = "relay_handles"
 LETTERS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
 # A handle that follows nothing and wasn't used for this long is dropped.
 IDLE_SECONDS = 24 * 3600
-# Handles handed out this close together, none passed back yet, came from one relay's calls made at
-# once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
-# relays starting within this time would merge, which the owner says doesn't happen.
+# Handles handed out this close together, none passed back yet, are taken for one relay's calls made
+# at once without a handle: the first passed back takes the others over (owner, 2026-11-12). Safe
+# because the owner talks to one relay at a time, so two conversations don't start within ten
+# seconds of each other; two that did would merge. Within one bridge run a voice conversation's calls
+# already share its handle by their MCP session id (server.py, conversation_handles), so this now
+# only meets calls that came over different MCP sessions, as across a bridge restart.
 MERGE_SECONDS = 10
 # A handle handed out to a call that forgot or mistyped the relay's own, not passed back since, is
-# folded into the relay's handle when it next passes it, within this time (owner, 2026-11-13).
+# folded into the relay's handle when it next passes it, within this time, if it follows only
+# sessions the relay's handle already had: that keeps a new relay's first handle, on sessions of its
+# own, from being swallowed (owner, 2026-11-13). Within one bridge run a voice call that leaves its
+# handle out already gets its conversation's by its MCP session id, so this now covers the slip just
+# after a bridge restart, when that id changed. Never seen happen; kept for that case.
 STRAY_SECONDS = 60
 
 

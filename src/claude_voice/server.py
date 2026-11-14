@@ -297,9 +297,13 @@ HANDLE_PARAM = (
 # the Claude app tells its assistant to report as a failure (owner, 2026-11-12).
 NEW_HANDLE = (
     'Your handle is "{new}": pass it as handle on every call that takes one from now on, since what you '
-    "follow is kept under it. If you already had one in this conversation, pass that one instead: this "
-    "call's follow moves into it. After a compaction, take yours back (the one following your "
-    "sessions){in_use}. Machinery, not your name: don't say it to the owner."
+    "follow is kept under it. If you already had one in this conversation, pass that one instead from now "
+    "on. After a compaction, take yours back (the one following your sessions){in_use}. Machinery, not "
+    "your name: don't say it to the owner."
+)
+SAME_HANDLE = (
+    'Your handle is "{handle}", the one this conversation already has: pass it as handle on every call that '
+    "takes one. Machinery, not your name: don't say it to the owner."
 )
 NO_HANDLE = (
     "No handle passed, so nothing you follow is shown: your first send, question or follow gives you one. If "
@@ -473,10 +477,9 @@ News
   a handle, a code such as "@kQzw", and keeps what each follows apart under
   it. Your first send, question or follow without one goes ahead and gets one
   (the result's handle and next_step): pass it as handle on every call that
-  takes one from then on. Calls made together without one each get one: pass
-  any one of them next, and the bridge moves the others into it. So does a
-  call where you forgot or mistyped yours: pass yours next, and that call's
-  follow moves into it. A handle the bridge doesn't know (a typo, or one
+  takes one from then on. In voice, a call of yours without it, even one made
+  while your first still waits, gets the same one until the bridge restarts;
+  so pass yours anyway. A handle the bridge doesn't know (a typo, or one
   dropped after a day following nothing) counts as none, with the handles in
   use listed. It is machinery between you and the bridge, not your name: never
   say it to the owner (name the sessions instead). Keep yours for the whole
@@ -890,7 +893,7 @@ def result_notes(
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
         if waiting:
             waits[session] = waits.get(session, 0) + 1
-        state: dict[str, Any] = {"wanted": bool(connection) and news is not None}
+        state: dict[str, Any] = {"wanted": bool(connection) and news is not None, "connection": connection}
         token = relay_call.set(state)
         try:
             if who is not None and ctx.method == "tools/call":
@@ -1462,6 +1465,20 @@ def build_server(
     nameless: dict[str, dict[str, Any]] = {}
     # A Claude Code session's handle, by the MCP connection it calls over (one per session).
     claude_code_handles: dict[str, str] = {}
+    # A voice conversation's handle, by the MCP session id its calls carry. A relay learns its handle
+    # only when the call that hands it out comes back, which a question can hold for minutes; in voice
+    # it goes on in the background, and a second call made meanwhile, without the handle, would get
+    # another one, and the replies under it would go unheard (owner, 2026-11-14). Every call of one
+    # voice conversation carries the same id, so the second gets the same handle. The id is no handle
+    # itself: it changes at every bridge restart, and a chat continued by typing carries none, so it is
+    # kept here only, and the relay's own handle carries it past those. In memory: after a restart the
+    # ids are new anyway.
+    conversation_handles: dict[str, str] = {}
+
+    def conversation_handle(connection: str | None) -> str | None:
+        """The handle a voice conversation already has, by its MCP session id, if still kept."""
+        handle = conversation_handles.get(connection or "")
+        return handle if handle is not None and handle in relays.all else None
 
     def mine() -> dict[str, dict[str, Any]]:
         """The calling relay's marks, by session id: those of its handle."""
@@ -1488,9 +1505,18 @@ def build_server(
         # RULE: a call that follows without a handle gets a new one
         if state is None or state.get("handle") is not None or not state.get("wanted"):
             return
+        # Should two calls of one conversation both start before either has a handle, the one that
+        # comes back second takes the first's rather than a handle of its own.
+        known = conversation_handle(state.get("connection"))
+        if known is not None:
+            state["handle"] = state["minted"] = known
+            state["told"] = SAME_HANDLE.format(handle=known)
+            return
         handle = relays.hand_out()
         state["told"] = in_use_said(NEW_HANDLE, but=handle, new=handle)
         state["handle"] = state["minted"] = handle
+        if state.get("connection"):
+            conversation_handles[state["connection"]] = handle
         relays.save()
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
@@ -1509,8 +1535,16 @@ def build_server(
             handle = claude_code_handles.get(connection or "") or await claude_code_name()
             if connection:
                 claude_code_handles[connection] = handle
+            relays.touch(handle)
+            return handle
+        if handle is None:
+            # A second call made while the first still waits, or one that left its handle out.
+            # RULE: a voice call without a handle gets its conversation's handle
+            handle = conversation_handle(connection)
         if handle is not None:
             relays.touch(handle)
+            if connection:
+                conversation_handles[connection] = handle  # the one this conversation uses now
         return handle
 
     async def claude_code_name() -> str:

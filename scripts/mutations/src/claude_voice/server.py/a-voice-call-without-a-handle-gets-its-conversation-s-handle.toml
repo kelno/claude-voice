@@ -1,0 +1,5 @@
+[[rule]]
+name = "a voice call without a handle gets its conversation's handle"
+file = "src/claude_voice/server.py"
+find = 'handle = conversation_handle\(connection\)'
+replace = 'handle = None'

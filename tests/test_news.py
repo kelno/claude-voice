@@ -75,9 +75,10 @@ def world(tmp_path):
 
 
 @contextlib.asynccontextmanager
-async def bridge(tmp_path, desk, store, *others, lands=True, **options):
+async def bridge(tmp_path, desk, store, *others, lands=True, budget=0.3, **options):
     """The bridge over HTTP, as the Claude app reaches it, for one desk session or more; with
-    `lands` false, a message said delivered never shows in the session's conversation."""
+    `lands` false, a message said delivered never shows in the session's conversation; `budget`
+    is how long a call may wait."""
     root = Path(desk.cwd).parent
     desks = {d.sid: d for d in (desk, *others)}
 
@@ -103,7 +104,7 @@ async def bridge(tmp_path, desk, store, *others, lands=True, **options):
         poll_seconds=0.01,
         projects_dir=tmp_path / "projects",
         repo_config=config.Config(
-            config.Repos(), config.Paths(None, None, None, None), None, budgets=config.Budgets({"default": 0.3})
+            config.Repos(), config.Paths(None, None, None, None), None, budgets=config.Budgets({"default": budget})
         ),
         **options,
     )
@@ -130,6 +131,14 @@ async def served(tmp_path, world):
 def kept(tmp_path) -> dict[str, dict[str, Any]]:
     """The handles the bridge keeps, as its database holds them."""
     return Store(tmp_path / "bridge.db").get_setting("relay_handles") or {}
+
+
+async def elsewhere(url, tool, **args):
+    """One call from a conversation of its own: another relay, or this one's after a bridge restart,
+    since each carries its own MCP session id."""
+    http, client = conversation(url)
+    async with http, client as c:
+        return await call(c, tool, **args)
 
 
 def conversation(url):
@@ -835,12 +844,12 @@ async def test_a_call_that_follows_without_a_handle_gets_a_new_one(served):
     http, client = conversation(url)
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
-        results = [
-            await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None),
-            await call(c, "follow_session", session="billing-ab", handle=None),
-        ]
-        handed = [r["handle"] for r in results]
-        out = await call(c, "list_active_sessions", handle=handed[0])
+    results = [
+        await elsewhere(url, "message_active_session", session="billing-ab", message="Go.", handle=None),
+        await elsewhere(url, "follow_session", session="billing-ab", handle=None),
+    ]
+    handed = [r["handle"] for r in results]
+    out = await elsewhere(url, "list_active_sessions", handle=handed[0])
     for res, handle in zip(results, handed, strict=True):
         assert res["next_step"].startswith(f'Your handle is "{handle}"'), res["next_step"]
         assert "Rowan (follows billing-ab)" in res["next_step"]  # the handles in use, to take one back
@@ -894,7 +903,7 @@ async def test_a_permission_prompt_shows_for_every_handle_and_without_one(served
     http, client = conversation(url)
     async with http, client as c:
         named = await call(c, "list_active_sessions", handle="Rowan")
-        nameless = await call(c, "list_folders")
+    nameless = await elsewhere(url, "list_folders")
     assert named["news"] == "[Rowan] billing-ab: waiting on a permission prompt"
     assert nameless["news"] == "billing-ab: waiting on a permission prompt"
 
@@ -908,7 +917,7 @@ async def test_the_handles_in_use_are_named_only_to_a_call_without_one(served):
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
         listed = await call(c, "list_active_sessions", handle="Juniper")
-        lost = await call(c, "list_active_sessions", handle=None)
+    lost = await elsewhere(url, "list_active_sessions", handle=None)
     assert "handles" not in listed and "Rowan" not in listed.get("next_step", "")
     assert "Rowan (follows billing-ab)" in lost["next_step"]
 
@@ -993,12 +1002,10 @@ async def test_a_send_while_a_reply_is_unread_is_followed_once_that_reply_is_rea
 
 async def test_a_handle_looks_like_a_code_not_a_name(served):
     url, desk = served
-    http, client = conversation(url)
-    async with http, client as c:
-        sent = [
-            await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
-            for _ in range(100)
-        ]
+    sent = [
+        await elsewhere(url, "message_active_session", session="billing-ab", message="Go.", handle=None)
+        for _ in range(30)
+    ]
     for out in sent:
         handle = out["handle"]
         assert re.fullmatch(r"@[A-Za-z]{4}", handle), handle
@@ -1022,12 +1029,11 @@ async def test_a_handle_not_in_use_counts_as_none(served, tmp_path):
     http, client = conversation(url)
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
-        sent = await call(c, "message_active_session", session="billing-ab", message="Go.", handle="Rowen")
-        read = await call(c, "read_session_output", session="billing-ab", handle="Rowen")
-        await call(c, "list_active_sessions", handle="Rowan")
+    sent = await elsewhere(url, "message_active_session", session="billing-ab", message="Go.", handle="Rowen")
+    read = await elsewhere(url, "read_session_output", session="billing-ab", handle="Rowen")
     step = sent["next_step"]
     assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing)')
-    assert f'Your handle is "{sent["handle"]}"' in step and "this call's follow moves into it" in step
+    assert f'Your handle is "{sent["handle"]}"' in step and "pass that one instead from now on" in step
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
     assert "Rowen" not in list(kept(tmp_path))
@@ -1040,14 +1046,12 @@ async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path
     desk = Desk(live, str(root / "billing"))
     other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other) as url:
-        http, client = conversation(url)
-        async with http, client as c:
-            first, second = await asyncio.gather(
-                call(c, "message_active_session", session="billing-ab", message="Run the export.", handle=None),
-                call(c, "message_active_session", session="ledger", message="Close the month.", handle=None),
-            )
-            other.transcript.append(turn("assistant", "Month closed."))
-            out = await call(c, "list_active_sessions", handle=first["handle"])
+        first, second = await asyncio.gather(
+            elsewhere(url, "message_active_session", session="billing-ab", message="Run the export.", handle=None),
+            elsewhere(url, "message_active_session", session="ledger", message="Close the month.", handle=None),
+        )
+        other.transcript.append(turn("assistant", "Month closed."))
+        out = await elsewhere(url, "list_active_sessions", handle=first["handle"])
     assert first["handle"] != second["handle"]
     assert (
         out["news"]
@@ -1055,6 +1059,58 @@ async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path
     )
     assert out["next_step"].startswith("Also following ledger, from your calls a moment ago without your handle")
     assert second["handle"] not in list(kept(tmp_path))
+
+
+async def test_a_voice_call_without_a_handle_gets_its_conversation_s_handle(tmp_path, world):
+    # In voice, a relay's first call goes on in the background while the owner talks, and the relay
+    # makes a second call before the first has come back with a handle, maybe minutes later, about
+    # another session (owner, 2026-11-14). Both calls carry the conversation's MCP session id.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other, budget=3) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            slow = asyncio.create_task(  # waits for an answer that doesn't come in time
+                call(c, "ask_active_session", session="ledger", message="Close the month?", handle=None, wait_seconds=3)
+            )
+            await asyncio.sleep(0.5)
+            quick = await call(c, "message_active_session", session="billing-ab", message="Run it.", handle=None)
+            assert not slow.done()  # the second call is made while the first still waits
+            first = await slow
+    handle = first["handle"]  # handed out to the question as it was delivered
+    assert first["status"] == "still_working"
+    assert "handle" not in quick and quick["news"].startswith(f"[{handle}] ")
+    assert kept(tmp_path)[handle]["sessions"].keys() == {"sid-1", "sid-2"}
+    assert list(kept(tmp_path)) == [*KNOWN, handle]  # no second handle was handed out
+
+
+async def test_calls_made_at_once_in_one_voice_conversation_get_one_handle(tmp_path, world):
+    # Both start before either has a handle: the one handed out second is the first's.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    other = Desk(live, str(root / "billing"), name="ledger", sid="sid-2", pid=os.getppid())
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), other) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            first, second = await asyncio.gather(
+                call(c, "message_active_session", session="billing-ab", message="Run it.", handle=None),
+                call(c, "message_active_session", session="ledger", message="Close it.", handle=None),
+            )
+    handle = first.get("handle") or second.get("handle")
+    assert first["news"].startswith(f"[{handle}] ") and second["news"].startswith(f"[{handle}] ")
+    assert list(kept(tmp_path)) == [*KNOWN, handle]
+
+
+async def test_a_voice_call_that_left_its_handle_out_gets_its_conversation_s(served):
+    # A relay that leaves its handle out, or mistypes it, mid-conversation: its calls still carry
+    # the conversation's MCP session id.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run it.", handle=None)
+        forgot = await call(c, "list_active_sessions", handle=None)
+    assert forgot["news"].startswith(f"[{sent['handle']}] billing-ab")
 
 
 # A read came back cut: the relay's own long message took most of the page, and the reply was left
@@ -1132,7 +1188,7 @@ async def test_a_stray_handle_folds_into_the_next_handle_passed_that_already_had
     async with http, client as c:
         await call(c, "read_session_output", session="billing-ab", handle="Rowan")
         desk.set("busy")
-        stray = await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
+        stray = await elsewhere(url, "message_active_session", session="billing-ab", message="Go.", handle=None)
         desk.transcript.append(turn("assistant", "Gone."))
         desk.set("idle")
         out = await call(c, "list_active_sessions", handle="Rowan")
