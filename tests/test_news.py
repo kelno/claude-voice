@@ -1,4 +1,4 @@
-"""A news line on every result: how the sessions the relay watches stand, without a call of its own.
+"""A news line on every result: how the sessions the relay follows stand, without a call of its own.
 
 With several sessions running, a relay misses replies. Counting every unread message turned into
 noise when one session posted many progress lines, and the relay stopped reading the line; a set

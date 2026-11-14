@@ -1455,12 +1455,8 @@ def build_server(
             if stop_software:
                 stop_software()
 
-    # Each relay's marks, by its handle, then by Claude session id: the last turn it has read
-    # (`seen`), and, while it follows the session, the turn after which it expects a finished turn
-    # (`sent`: its message, its question, or a hand-off) and whether that turn was seen to end
-    # (`replied`). Once that turn is read, `sent` is cleared and `quiet` set: a quiet follow,
-    # until it ends. Kept in the database: a bridge restart doesn't end the voice call, which runs
-    # in the Claude app's cloud, and the relay, in that call or a new one, still needs its replies.
+    # Each relay's marks, by its handle, then by Claude session id: what a mark holds is in
+    # following.py, how handles are kept in handles.py.
     relays = handles.Handles(manager.store, manager.clock)
     # What a call without a handle marks: thrown away once the call is done.
     nameless: dict[str, dict[str, Any]] = {}
@@ -1608,9 +1604,10 @@ def build_server(
 
         A message or a question to a session follows it, and so does follow_session; reading one
         only moves the read mark. News is a finished turn the relay hasn't read, a permission prompt
-        waiting, and a followed session having ended, said once. Following ends once the finished
-        turn is read. Progress lines are not news: the relay can read them, but naming them every
-        time made a busy session drown the rest.
+        waiting, and a followed session having ended, said once. Once the finished turn is read, the
+        session stays in a quiet follow: news only when another turn of it ends. Progress lines are
+        not news: the relay can read them, but naming them every time made a busy session drown the
+        rest.
         """
         handle = call_handle()
         marks = mine()
@@ -1772,7 +1769,7 @@ def build_server(
 
     def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A followed session's entry in the news line, or none once its finished turn is read
-        (following ends there); an ended one is named once, then dropped."""
+        (it moves to a quiet follow there); an ended one is named once, then dropped."""
         name = (d or {}).get("name") or mark.get("name") or sid
         if d is None:
             del mine()[sid]  # said once, then dropped, since it can't be read any more
@@ -2569,7 +2566,9 @@ def build_server(
         this follows one you haven't written to. The news line names it, and any turn it finishes
         counts, even one answering the owner's own typing. A session at rest (not one whose turn ended
         with a background task still running) has nothing to finish: status "already_done", and
-        nothing is followed: tell the owner it is done (read_session_output shows what it last said)."""
+        nothing is followed: tell the owner it is done (read_session_output shows what it last said).
+        Once you have read the turn, it stays quietly followed: named again only when another turn
+        of it ends, until follow=false or a day with nothing new."""
         marks = mine()
         if not follow:
             sid = followed(session, quiet=True)
