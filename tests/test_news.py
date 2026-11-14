@@ -241,6 +241,39 @@ async def test_a_question_still_unanswered_when_ask_returns_is_a_reply_later(ser
     assert out["news"] == f"[Juniper] billing-ab (idle): reply to you, read with after={asked['next_after']}"
 
 
+async def test_a_question_follows_its_session_from_its_delivery(served):
+    # A question may now wait up to the caller's limit, in the Claude app in the background; a wait
+    # with no session named, made meanwhile, answered "nothing_to_wait_for", so the relay could tell
+    # the owner nothing was pending while the session was answering (the branch's review, 2026-11-14).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        desk.set("busy")
+        asking = asyncio.create_task(call(c, "ask_active_session", session="billing-ab", message="Is it done?"))
+        await asyncio.sleep(0.1)
+        during = await call(c, "wait_for_session", wait_seconds=0.05)
+        asked = await asking
+    assert during["status"] == "still_working" and during["sessions"] == ["billing-ab"]
+    assert asked["status"] == "still_working"
+
+
+async def test_a_question_answered_in_its_own_result_leaves_its_session_unfollowed(served):
+    # Followed from its delivery, the session stops being followed once the question's own result
+    # shows the answer, as after a wait that shows it.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        desk.set("busy")
+        asking = asyncio.create_task(call(c, "ask_active_session", session="billing-ab", message="Is it done?"))
+        await asyncio.sleep(0.05)
+        desk.transcript.append(turn("assistant", "Yes, it is."))
+        desk.set("idle")
+        asked = await asking
+        out = await call(c, "wait_for_session")
+    assert asked["status"] == "answered" and asked["reply"] == "Yes, it is."
+    assert out["status"] == "nothing_to_wait_for"
+
+
 async def test_a_send_to_a_session_the_owner_typed_in_since_the_last_read_says_so(served):
     # Said again when the relay writes to that session; the turn it started is also news while the
     # session is in a quiet follow (owner, 2026-11-13).
