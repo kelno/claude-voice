@@ -109,6 +109,7 @@ def bridge(tmp_path, monkeypatch):
         done.append(("wake", cwd, options))
 
     async def deliver(name, text):
+        done.append(("told", name, text))
         return {"delivered": True}
 
     bridge_server = build_server(
@@ -159,3 +160,21 @@ async def test_only_a_background_session_the_bridge_started_is_stopped_to_be_com
     assert refused.get("isError")
     assert "/compact" in refused["content"][0]["text"]
     assert bridge["done"] == []
+
+
+async def test_a_compaction_given_up_is_told_to_the_session_with_why(bridge, monkeypatch, caplog):
+    monkeypatch.setattr(server, "COMPACT_GIVE_UP_SECONDS", 0.2)
+    bridge["store"].record_started("sid-7", "desk", bridge["cwd"])
+    # Its turn has ended but Claude Code says a background task still runs: never at rest.
+    (bridge["live"] / "7.json").write_text(json.dumps({**bridge["entry"], "status": "shell"}), encoding="utf-8")
+    caplog.set_level("INFO", logger="claude_voice")
+    async with reached(bridge["server"]) as app:
+        await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact")
+        for _ in range(100):
+            if bridge["done"]:
+                break
+            await asyncio.sleep(0.05)
+    [(step, name, text)] = bridge["done"]
+    assert (step, name) == ("told", "desk")
+    assert "gave up" in text and "background task still running" in text and "compact_after_turn" in text
+    assert any("gave_up" in r.message and "background task still running" in r.message for r in caplog.records)

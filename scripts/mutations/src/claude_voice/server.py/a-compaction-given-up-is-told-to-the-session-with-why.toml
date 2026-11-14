@@ -1,0 +1,5 @@
+[[rule]]
+name = "a compaction given up is told to the session with why"
+file = "src/claude_voice/server.py"
+find = 'await send_into\(d, told\)'
+replace = 'pass'

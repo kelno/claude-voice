@@ -3044,7 +3044,9 @@ def build_server(
         For a session the bridge started, at a break you choose: first write down what must survive
         (your notes, a keep-file), then call this and end your turn. Once the turn has ended, the
         bridge stops you, runs /compact on the conversation and starts you again, usually within a
-        minute; your next message finds it compacted. status: scheduled or already_scheduled."""
+        minute; your next message finds it compacted. status: scheduled or already_scheduled;
+        if your turn never seems to end within 30 minutes (a background task still running counts
+        as not ended), it gives up and sends you a message saying what it saw."""
         d = await asking_session()
         sid, cwd, name = str(d["sessionId"]), str(d.get("cwd")), str(d.get("name") or d["sessionId"])
         # RULE: only a background session the bridge started is stopped to be compacted
@@ -3067,6 +3069,24 @@ def build_server(
                     raise RuntimeError("it was asked to stop but is still running")
                 await asyncio.sleep(0.2)
 
+        async def gave_up() -> None:
+            """Say why the compaction was dropped, in the log and to the session that asked."""
+            d = next((x for x in live_sessions() if str(x.get("sessionId")) == sid), None)
+            seen = session_state(d)
+            tasks = transcripts.background_tasks(read_transcript(sid, cwd), d.get("startedAt")) if d else []
+            counted = f"; background tasks counted as running: {', '.join(tasks)}" if tasks else ""
+            log.info("compact_after_turn %s (%s): gave_up, last seen %s%s", name, sid, seen, counted)
+            if d is None:
+                return
+            minutes = round(COMPACT_GIVE_UP_SECONDS / 60)
+            told = (
+                f"The bridge gave up compacting this session: in {minutes} minutes it never saw your turn"
+                f" end. Last seen: {seen}{counted}. Stop a task you no longer need with TaskStop, end"
+                " your turn, and call compact_after_turn again; or ask the owner to type /compact."
+            )
+            # RULE: a compaction given up is told to the session with why
+            await send_into(d, told)
+
         async def run() -> None:
             try:
                 outcome = await compact_when_idle(
@@ -3075,7 +3095,10 @@ def build_server(
                     lambda: compact_stopped(cwd, sid, instructions),
                     lambda: start_background(cwd, "", resume=sid, wake=True),
                 )
-                log.info("compact_after_turn %s (%s): %s", name, sid, outcome)
+                if outcome == "gave_up":
+                    await gave_up()
+                else:
+                    log.info("compact_after_turn %s (%s): %s", name, sid, outcome)
             except Exception as exc:
                 log.warning("compact_after_turn %s (%s) broke: %s", name, sid, exc)
             finally:
