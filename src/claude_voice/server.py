@@ -1920,8 +1920,9 @@ def build_server(
         probe = mark.get("probe")
         if not probe:
             return None
-        later = enumerate(turns)
-        return next((i for i, t in later if i > mark["sent"] and t["role"] == "user" and probe in t["text"]), None)
+        # RULE: a message the owner typed is never taken for the relay's own
+        relayed = [i for i, t in enumerate(turns) if t.get("origin") in ("peer", "channel")]
+        return next((i for i in relayed if i > mark["sent"] and probe in turns[i]["text"]), None)
 
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
         """Where a followed, running session stands: "unread" (its turn ended, not read yet),

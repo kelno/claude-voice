@@ -138,3 +138,19 @@ async def test_a_message_queued_to_the_end_of_a_turn_is_not_answered_mid_work(tm
             out = await call(c, "ask_active_session", session="billing-ab", message="Which folder?", wait_seconds=5)
             await work
     assert (out["status"], out["reply"], out["reply_final"]) == ("answered", "In billing.", True)
+
+
+async def test_a_message_the_owner_typed_is_never_taken_for_the_relay_s_own(tmp_path, world):  # noqa: F811
+    # A short relayed message ("Yes, go ahead") can match words the owner typed in the session
+    # while the relay's message waited for the turn to end; the follow must not start from them.
+    desk, log = busy_on_the_owners_turn(tmp_path, world)
+    hub = Hub()
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), channels=hub) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Yes, go ahead")
+            log.add(typed("Yes, go ahead and push too."))  # the owner, at the PC
+            log.add(said("Tests fixed."))  # the end of the owner's turn
+            log.add(channel(hub.handed[0]))  # the relay's message, queued until then
+            busy = await call(c, "list_active_sessions")
+    assert busy["news"] == "[Juniper] billing-ab (busy): nothing new"
