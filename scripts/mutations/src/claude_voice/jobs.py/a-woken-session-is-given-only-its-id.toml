@@ -1,0 +1,5 @@
+[[rule]]
+name = "a woken session is given only its id"
+file = "src/claude_voice/jobs.py"
+find = 'return \[cli, "--resume", session_id, "--bg"\]'
+replace = 'return [cli, "--bg", "--name", session_id, "--resume", session_id]'

@@ -37,8 +37,9 @@ def no_real_side_reader(monkeypatch):
 def no_real_claude_code(monkeypatch):
     """A watched bridge asks the owner's own Claude Code for its background sessions, and a digest
     asks a small model through it: slow, and a real model call on the owner's account. The suite
-    answers both itself, with no background sessions and a fixed digest. A test that wants other
-    answers passes its own to the bridge."""
+    answers both itself, with no background sessions and a fixed digest. A wake would start one of
+    the owner's real conversations: the suite refuses it. A test that wants other answers passes
+    its own to the bridge."""
     from claude_voice import jobs, transcripts
 
     async def no_background_jobs():
@@ -47,7 +48,11 @@ def no_real_claude_code(monkeypatch):
     async def a_fixed_digest(text, question, language=None):
         return "The suite's own digest."
 
+    async def no_real_wake(cwd, session_id):
+        raise AssertionError(f"the suite woke a real Claude Code session ({session_id}); pass wake_background")
+
     monkeypatch.setattr(jobs, "background_jobs", no_background_jobs)
+    monkeypatch.setattr(jobs, "wake_background", no_real_wake)
     monkeypatch.setattr(transcripts, "summarize", a_fixed_digest)
 
 

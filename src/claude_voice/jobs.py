@@ -1,6 +1,6 @@
 """Claude Code's background jobs, as the fork drives them: listing them, renaming one through its job
 record, reading the permission prompt one waits on, telling which Claude Code closed for low memory,
-and compacting a stopped one's conversation.
+waking a former one in place, and compacting a stopped one's conversation.
 
 These are the fork's own; they live apart from upstream's transcripts.py so a merge from upstream
 doesn't meet them there.
@@ -146,6 +146,41 @@ async def background_jobs() -> list[dict[str, Any]]:
 async def background_sessions() -> set[str]:
     """The ids of every conversation Claude Code has run as a background session, finished ones too."""
     return {str(j["sessionId"]) for j in await background_jobs()}
+
+
+WAKE_SECONDS = 60  # how long Claude Code may take to hand a woken session to the background
+
+
+def wake_command(cli: str, session_id: str) -> list[str]:
+    """The command that continues a former background session in place.
+
+    Claude Code saved that session's options in its job record (its name, Remote Control, model,
+    permission mode, the relay channel) and starts it again with them. Given any other flag, it
+    would start a copy of the conversation instead, so this takes nothing but the id; anything to
+    change about a woken session is changed after it is running.
+    """
+    # RULE: a woken session is given only its id
+    return [cli, "--resume", session_id, "--bg"]
+
+
+async def wake_background(cwd: str, session_id: str) -> str:
+    """Continue a former background session in place (wake_command): a session a shutdown
+    interrupted, one stopped for a compaction or a restart, or a conversation the relay attaches
+    to. Returns what Claude Code printed, such as a "note:" line."""
+    proc = await asyncio.create_subprocess_exec(
+        *wake_command(claude_cli(), session_id),
+        cwd=cwd,
+        env=clean_env(os.environ),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await asyncio.wait_for(proc.communicate(), WAKE_SECONDS)
+    if proc.returncode:
+        raise RuntimeError(
+            out.decode(errors="replace").strip()[-300:] or f"claude --resume --bg exited {proc.returncode}"
+        )
+    return out.decode(errors="replace")
 
 
 COMPACT_SECONDS = 600  # how long a compaction may take before it counts as failed

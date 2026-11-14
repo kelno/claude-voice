@@ -106,8 +106,8 @@ def bridge(tmp_path, monkeypatch):
     async def compact(cwd, sid, instructions):
         done.append(("compact", cwd, sid, instructions))
 
-    async def start(cwd, name, **options):
-        done.append(("wake", cwd, options))
+    async def wake(cwd, session_id):
+        done.append(("wake", cwd, session_id))
         if woken:
             (live / "7.json").write_text(json.dumps(woken), encoding="utf-8")
 
@@ -123,7 +123,7 @@ def bridge(tmp_path, monkeypatch):
         projects_dir=projects,
         claude_config=tmp_path / "claude.json",
         stop_background=stop,
-        start_background=start,
+        wake_background=wake,
         compact_stopped=compact,
     )
     return {
@@ -154,7 +154,7 @@ async def test_a_session_the_bridge_started_is_compacted_after_the_turn_that_ask
     assert bridge["done"] == [
         ("stop", "sid-7"),
         ("compact", bridge["cwd"], "sid-7", "Keep the plan."),
-        ("wake", bridge["cwd"], {"resume": "sid-7", "wake": True}),
+        ("wake", bridge["cwd"], "sid-7"),
     ]
 
 

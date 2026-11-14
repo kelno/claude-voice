@@ -220,3 +220,11 @@ def test_a_window_runs_claude_code_through_the_owners_login_shell():
 def test_only_a_shell_that_takes_these_options_is_used(shell, used):
     expected = None if sys.platform == "win32" else used  # Windows has no login shell to use
     assert transcripts.login_shell({"SHELL": shell}) == expected
+
+
+def test_a_woken_session_is_given_only_its_id():
+    # Claude Code starts a former background session again with the options it saved for it;
+    # given any other flag, it would start a copy of the conversation instead.
+    from claude_voice.jobs import wake_command
+
+    assert wake_command("claude", "0f1e2d3c") == ["claude", "--resume", "0f1e2d3c", "--bg"]

@@ -998,7 +998,6 @@ def background_command(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
-    wake: bool = False,
     channel: bool = False,
 ) -> list[str]:
     """The command that starts a named session, on a model and effort if given, with extra
@@ -1007,13 +1006,11 @@ def background_command(
     runs through `shell` as a login shell, so it gets the owner's PATH and settings. With
     `resume`, it continues that conversation, in its permission mode and with its folders.
 
-    A conversation that has been a background session before keeps its saved options, and
-    Claude Code starts a copy of it when given any other flag; `wake` continues it in place.
+    A conversation that has been a background session before is continued in place by
+    jobs.wake_command instead: given these flags, Claude Code would start a copy of it.
     With `channel`, a background session runs the relay channel; Claude Code keeps both flags
     in its job record, so a woken session keeps it.
     """
-    if wake and resume:
-        return [cli, "--resume", resume, "--bg"]
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
     relay = channel and not terminal
@@ -1051,7 +1048,6 @@ async def start_background(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
-    wake: bool = False,
 ) -> str:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal,
     or inside a terminal window when `terminal` is given.
@@ -1078,7 +1074,6 @@ async def start_background(
         resume,
         permission_mode,
         add_dirs,
-        wake,
         channel_installed(),
     )
     if terminal:

@@ -24,13 +24,20 @@ class Starter:
         self.note = note  # what Claude Code prints, e.g. a "note:" line
         self.calls = []
         self.options = []
+        self.woken = []
 
     async def __call__(self, cwd, name, **how):
         self.calls.append((cwd, name))
         self.options.append(how)
         sid = how.get("resume") if how.get("resume") and not self.copies else f"sid-{name}"
-        if how.get("wake"):
-            name = "Prompt test"  # a woken session keeps the name it was saved with
+        return self.registered(cwd, name, sid)
+
+    async def wake(self, cwd, session_id):
+        """Stands in for `claude --resume <id> --bg`: a woken session keeps the name it was saved with."""
+        self.woken.append((cwd, session_id))
+        return self.registered(cwd, "Prompt test", session_id)
+
+    def registered(self, cwd, name, sid):
         if self.register:
             (self.live / f"{name}.json").write_text(
                 json.dumps({"pid": PID, "sessionId": sid, "cwd": cwd, "name": name, "kind": "bg", "status": "idle"})
@@ -139,6 +146,7 @@ def resuming(tmp_path, world, starter, grant=None, background_sessions=no_backgr
         conversations=convs,
         live_dir=live,
         start_background=starter,
+        wake_background=starter.wake,
         start_seconds=1.0,
         background_sessions=background_sessions,
         **options,
@@ -153,7 +161,7 @@ async def test_a_former_background_session_is_woken_in_place_with_its_saved_opti
     starter = Starter(world[1], note="note: woke session 0f1e2d3c with its saved options (--name).")
     async with Client(resuming(tmp_path, world, starter, background_sessions=known)) as c:
         out = (await c.call_tool("attach_conversation", {"claude_session_id": OLD})).structured_content
-    assert starter.options == [{"resume": OLD, "wake": True}]
+    assert starter.woken == [(str(world[0] / "billing"), OLD)] and starter.options == []
     assert out["name"] == "Prompt test" and out["claude_session_id"] == OLD and "copied_from" not in out
     assert out["claude_code_note"].startswith("note: woke session")
 
@@ -206,7 +214,7 @@ async def test_a_message_to_a_session_claude_code_closed_for_low_memory_resumes_
         out = (
             await c.call_tool("message_active_session", {"session": "Prompt test", "message": "Hi"})
         ).structured_content
-    assert starter.options == [{"resume": OLD, "wake": True}]  # woken in place, not copied
+    assert [sid for _, sid in starter.woken] == [OLD] and starter.options == []  # woken in place, not copied
     assert delivered == ["Prompt test"] and out["delivered"] is True
     assert "low memory" in out["resumed"]
 
@@ -559,4 +567,6 @@ async def test_a_session_that_started_without_its_claude_ai_connectors_is_restar
                 break
             await asyncio.sleep(0.05)
     assert stopped == [OLD]
-    assert starter.options == [{"resume": OLD, "wake": True}]  # resumed in place, its conversation kept
+    assert [sid for _, sid in starter.woken] == [
+        OLD
+    ] and starter.options == []  # resumed in place, its conversation kept

@@ -39,10 +39,9 @@ async def test_a_session_the_bridge_started_that_a_shutdown_interrupted_is_woken
         return [job("s-mine", work, name="Triplicate")]
 
     with caplog.at_level(logging.INFO, logger="claude_voice"):
-        woken = await wake_interrupted(store, jobs, {"s-mine"}, starter)
+        woken = await wake_interrupted(store, jobs, {"s-mine"}, starter.wake)
     assert woken == ["Triplicate"]
-    assert starter.calls == [(str(work), "")]
-    assert starter.options == [{"resume": "s-mine", "wake": True}]
+    assert starter.woken == [(str(work), "s-mine")]
     assert any("Triplicate" in r.message and "woke" in r.message for r in caplog.records)
 
 
@@ -61,7 +60,7 @@ async def test_only_sessions_the_shutdown_interrupted_and_the_bridge_ran_are_wok
             job("s-not-ours", work),  # the owner's own background session
         ]
 
-    assert await wake_interrupted(store, jobs, {"s-stopped", "s-running", "s-not-ours"}, starter) == []
+    assert await wake_interrupted(store, jobs, {"s-stopped", "s-running", "s-not-ours"}, starter.wake) == []
     assert starter.calls == []
 
 
@@ -70,15 +69,15 @@ async def test_a_session_that_will_not_wake_is_logged_and_the_others_still_are(t
     for sid in ("s-broken", "s-fine"):
         store.record_started(sid, sid, str(work))
 
-    async def starter(cwd, name, **options):
-        if options["resume"] == "s-broken":
+    async def wake(cwd, session_id):
+        if session_id == "s-broken":
             raise RuntimeError("Workspace not trusted")
 
     async def jobs():
         return [job("s-broken", work), job("s-fine", work)]
 
     with caplog.at_level(logging.INFO, logger="claude_voice"):
-        woken = await wake_interrupted(store, jobs, {"s-broken", "s-fine"}, starter)
+        woken = await wake_interrupted(store, jobs, {"s-broken", "s-fine"}, wake)
     assert woken == ["s-fine"]
     assert any("s-broken" in r.message and "Workspace not trusted" in r.message for r in caplog.records)
 
@@ -104,17 +103,22 @@ async def test_the_served_bridge_wakes_what_was_running_at_its_last_look(tmp_pat
         return True
 
     srv = build_server(
-        m, live_dir=live, watch_interval=60.0, start_background=starter, background_jobs=jobs, connectors_reachable=up
+        m,
+        live_dir=live,
+        watch_interval=60.0,
+        wake_background=starter.wake,
+        background_jobs=jobs,
+        connectors_reachable=up,
     )
     with store.db:  # what the bridge saw running before the shutdown
         store.db.execute("INSERT INTO live_snapshot VALUES(?,?,?)", ("Triplicate", "idle", "s-mine"))
     async with Client(srv) as c:
         for _ in range(100):
-            if starter.calls:
+            if starter.woken:
                 break
             await asyncio.sleep(0.01)
         await c.list_tools()
-    assert starter.options == [{"resume": "s-mine", "wake": True}]
+    assert [sid for _, sid in starter.woken] == ["s-mine"]
 
 
 async def test_a_bridge_given_no_background_list_asks_the_one_in_place_when_it_is_built(tmp_path, monkeypatch):
@@ -154,13 +158,13 @@ async def test_the_sessions_to_wake_wait_until_claude_ai_answers(tmp_path):
         order.append("asked")
         return next(answers)
 
-    async def starter(cwd, name, **options):
+    async def wake(cwd, session_id):
         order.append("woken")
 
     async def jobs():
         return [job("s-mine", work, name="Triplicate")]
 
-    woken = await wake_interrupted(store, jobs, {"s-mine"}, starter, ready=ready, retry=0)
+    woken = await wake_interrupted(store, jobs, {"s-mine"}, wake, ready=ready, retry=0)
     assert woken == ["Triplicate"]
     assert order == ["asked", "asked", "asked", "woken"]
 
@@ -177,7 +181,7 @@ async def test_the_sessions_are_woken_anyway_when_claude_ai_never_answers(tmp_pa
         return [job("s-mine", work, name="Triplicate")]
 
     with caplog.at_level(logging.INFO, logger="claude_voice"):
-        woken = await wake_interrupted(store, jobs, {"s-mine"}, starter, ready=never, retry=0, patience=0.05)
+        woken = await wake_interrupted(store, jobs, {"s-mine"}, starter.wake, ready=never, retry=0, patience=0.05)
     assert woken == ["Triplicate"]
     assert any("claude.ai" in r.message for r in caplog.records)
 
@@ -193,7 +197,7 @@ async def test_nothing_to_wake_asks_nothing_of_claude_ai(tmp_path):
     async def jobs():
         return []
 
-    assert await wake_interrupted(store, jobs, set(), Starter(tmp_path, register=False), ready=ready) == []
+    assert await wake_interrupted(store, jobs, set(), Starter(tmp_path, register=False).wake, ready=ready) == []
     assert asked == []
 
 
@@ -208,7 +212,7 @@ async def test_a_session_at_rest_when_the_pc_shut_down_is_woken_too(tmp_path):
     async def jobs():
         return [job("s-idle", work, state="done"), job("s-blocked", work, state="blocked"), job("s-busy", work)]
 
-    woken = await wake_interrupted(store, jobs, {"s-idle", "s-blocked", "s-busy"}, starter)
+    woken = await wake_interrupted(store, jobs, {"s-idle", "s-blocked", "s-busy"}, starter.wake)
     assert woken == ["s-idle", "s-blocked", "s-busy"]
 
 
@@ -228,4 +232,4 @@ async def test_a_session_still_running_is_never_woken(tmp_path):
             job("s-dead", work, state="done"),
         ]
 
-    assert await wake_interrupted(store, jobs, {"s-running", "s-dead"}, starter) == ["s-dead"]
+    assert await wake_interrupted(store, jobs, {"s-running", "s-dead"}, starter.wake) == ["s-dead"]

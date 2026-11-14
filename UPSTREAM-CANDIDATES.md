@@ -183,10 +183,10 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - What: one line in the manual's relay scope. Fork-specific wording; only with 6e.
 
-### 6x. Starting sessions in the background on Remote Control — fork "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Continue a former background session instead of copying it", "Leave a conversation that is still running as it is when attached"
+### 6x. Starting sessions in the background on Remote Control — fork "Start new work as background sessions, a window only when asked", "Resume earlier conversations as background sessions", "Continue a former background session instead of copying it", "Leave a conversation that is still running as it is when attached", "Wake a former background session through a command of its own"
 
 - Status: an idea for later (owner); nothing prepared, no branch.
-- What: a session the bridge starts, or resumes from an earlier conversation, runs as an ordinary Claude Code background session with Remote Control on, with no window; the owner opens it from the phone or the desktop app.
+- What: a session the bridge starts, or resumes from an earlier conversation, runs as an ordinary Claude Code background session with Remote Control on, with no window; the owner opens it from the phone or the desktop app. A conversation that was a background session before is woken in place by `jobs.wake_background` (`claude --resume <id> --bg`, nothing else, since any other flag makes Claude Code start a copy), a command of its own in the fork's `jobs.py` rather than one more switch on upstream's `start_background`.
 - Why upstream should want it: upstream's own commit `248f405` (2026-11-02) opens a terminal window for the same reason, sessions the phone couldn't reach. The background way needs no desktop, no terminal program and no tmux, and works the same on Windows, macOS and Linux.
 - Expect pushback: upstream just built the window, with settings and a companion-app page for it. Offer it as one more launch mode (`launch = "remote_control"` or similar) next to theirs, not as a replacement. Build it on upstream's launch settings.
 - Test first: the fork's start tests (`tests/test_start.py`), rewritten against upstream's launch settings.

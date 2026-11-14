@@ -989,7 +989,7 @@ async def wake_interrupted(
     store: Store,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]],
     was_live: set[str],
-    start_background: Callable[..., Awaitable[str | None]],
+    wake_background: Callable[[str, str], Awaitable[str | None]],
     ready: Callable[[], Awaitable[bool]] | None = None,
     retry: float = 5.0,
     patience: float = 300.0,
@@ -1031,7 +1031,7 @@ async def wake_interrupted(
     woken = []
     for sid, cwd, name in todo:
         try:
-            await start_background(cwd, "", resume=sid, wake=True)
+            await wake_background(cwd, sid)
         except Exception as exc:
             log.info("could not wake %s (%s) after the restart: %s", name, sid, exc)
             continue
@@ -1197,6 +1197,7 @@ def build_server(
     watch_interval: float | None = None,
     restart: dict[str, Any] | None = None,
     start_background: Callable[..., Awaitable[str | None]] = transcripts.start_background,
+    wake_background: Callable[[str, str], Awaitable[str | None]] | None = None,
     background_sessions: Callable[[], Awaitable[set[str]]] | None = None,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
     claude_config: Path = access.CLAUDE_CONFIG,
@@ -1293,6 +1294,7 @@ def build_server(
     # module loads, so a stand-in put in their place before then is the one used.
     background_sessions = background_sessions or jobs.background_sessions
     background_jobs = background_jobs or jobs.background_jobs
+    wake_background = wake_background or jobs.wake_background
     summarize = summarize or transcripts.summarize
     host: doctor.Host = doctor_host or doctor.RealHost()
     repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
@@ -1441,7 +1443,7 @@ def build_server(
             warming.add_done_callback(log_failure("warming the side-question reader"))
             # The served bridge starts at logon: bring back what the last shutdown stopped.
             waking = asyncio.create_task(
-                wake_interrupted(manager.store, background_jobs, was_live, start_background, connectors_reachable)
+                wake_interrupted(manager.store, background_jobs, was_live, wake_background, connectors_reachable)
             )
             waking.add_done_callback(log_failure("the wake-up of interrupted sessions"))
         if channels is not None:
@@ -2294,33 +2296,43 @@ def build_server(
         path: Path, name: str | None, start_in: str | None = None, remote_control: bool | None = None, **options: Any
     ) -> dict[str, Any]:
         """Start a session in `path` under a free name, where the settings say unless this start
-        asks otherwise, and wait until it is listed.
-
-        A woken session runs in the background with its own saved options and name, so it is
-        found by its id instead.
-        """
-        wake = options.get("wake")
-        taken = renames.taken(live_sessions())
-        wanted = "" if wake else (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}"
-        if not wake:
-            wanted = renames.unique(wanted, taken)
+        asks otherwise, and wait until it is listed."""
+        wanted = renames.unique(
+            (name or "").strip()[:60] or f"{path.name}-{secrets.token_hex(2)}", renames.taken(live_sessions())
+        )
         if start_in is not None and start_in not in config.LAUNCHES:
             raise ToolError(f"start_in is one of: {', '.join(config.LAUNCHES)}")
-        how: dict[str, Any] = {}
-        started_in, where_note = "background", None
-        if not wake:
-            how, started_in, where_note = how_to_start(str(path), wanted, start_in, remote_control)
+        how, started_in, where_note = how_to_start(str(path), wanted, start_in, remote_control)
         try:
             given = {k: v for k, v in options.items() if v is not None}
             printed = await start_background(str(path), wanted, **given, **how) or ""
         except Exception as exc:
             raise ToolError(f"Claude Code could not start a session: {exc}") from None
+        return await once_listed(path, lambda d: d.get("name") == wanted, wanted, printed, started_in, where_note)
+
+    async def wake_listed(path: Path, session_id: str) -> dict[str, Any]:
+        """Continue a former background session in place and wait until it is listed. It runs with
+        the options and name Claude Code saved for it, so it is found by its id."""
+        try:
+            printed = await wake_background(str(path), session_id) or ""
+        except Exception as exc:
+            raise ToolError(f"Claude Code could not start a session: {exc}") from None
+        return await once_listed(path, lambda d: d.get("sessionId") == session_id, session_id, printed)
+
+    async def once_listed(
+        path: Path,
+        match: Callable[[dict[str, Any]], bool],
+        wanted: str,
+        printed: str,
+        started_in: str = "background",
+        where_note: str | None = None,
+    ) -> dict[str, Any]:
+        """The session just started in `path` once Claude Code lists it, recorded so the bridge may
+        stop it, with what Claude Code printed as notes."""
         notes = [line.strip() for line in printed.splitlines() if line.strip().startswith("note:")]
 
         def listed(d: dict[str, Any]) -> bool:
-            if d.get("cwd") != str(path):
-                return False
-            return d.get("sessionId") == options.get("resume") if wake else d.get("name") == wanted
+            return d.get("cwd") == str(path) and match(d)
 
         deadline = time.monotonic() + start_seconds
         while time.monotonic() < deadline:
@@ -2338,7 +2350,7 @@ def build_server(
                     **({"claude_code_note": " ".join(notes)} if notes else {}),
                 }
             await asyncio.sleep(0.2)
-        raise ToolError(f"{wanted or name} was started but did not appear among the running sessions")
+        raise ToolError(f"{wanted} was started but did not appear among the running sessions")
 
     def unused_name(wanted: str) -> str:
         taken = renames.taken(live_sessions())
@@ -2828,13 +2840,13 @@ def build_server(
             if time.monotonic() > deadline:
                 raise RuntimeError("it was asked to stop but is still running")
             await asyncio.sleep(0.2)
-        await start_background(str(d.get("cwd") or ""), "", resume=sid, wake=True)
+        await wake_background(str(d.get("cwd") or ""), sid)
 
     async def resume_in(path: Path, label: str | None, claude_session_id: str) -> dict[str, Any]:
         """Continue a conversation that isn't running, in place where Claude Code can."""
         if claude_session_id in await background_sessions():
             # It keeps its own saved name, Remote Control, settings and mode; any flag would copy it.
-            return await start_listed(path, label, resume=claude_session_id, wake=True)
+            return await wake_listed(path, claude_session_id)
         grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
         return await start_listed(
             path, label, resume=claude_session_id, permission_mode=grant.mode, add_dirs=grant.dirs
@@ -3165,7 +3177,7 @@ def build_server(
                     state,
                     stop,
                     lambda: compact_stopped(cwd, sid, instructions),
-                    lambda: start_background(cwd, "", resume=sid, wake=True),
+                    lambda: wake_background(cwd, sid),
                 )
                 if outcome == "gave_up":
                     await gave_up()
