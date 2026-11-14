@@ -49,6 +49,7 @@ class Handles:
         self.store = store
         self.clock = clock
         self.all: dict[str, dict[str, Any]] = dict(store.get_setting(SETTING) or {})
+        self.saved = self.snapshot()
 
     def marks(self, handle: str) -> dict[str, dict[str, Any]]:
         """A handle's marks, by session id; a handle not kept yet starts empty."""
@@ -85,11 +86,19 @@ class Handles:
                 del self.all[h]
 
     def snapshot(self) -> str:
-        """The handles as kept, to tell afterwards whether a call changed them."""
+        """The handles as kept, to tell whether they changed since the last save."""
         return json.dumps(self.all, sort_keys=True)
 
     def save(self) -> None:
         self.store.set_setting(SETTING, self.all)
+        self.saved = self.snapshot()
+
+    def save_if_changed(self) -> None:
+        """Save the handles if anything changed since the last save, whatever changed them: a
+        relay's last use and a dropped handle are kept over a restart too."""
+        # RULE: a change to the handles is kept whatever made it
+        if self.snapshot() != self.saved:
+            self.save()
 
     def hand_out(self) -> str:
         """A new handle, kept from now on, that no relay has passed back yet."""

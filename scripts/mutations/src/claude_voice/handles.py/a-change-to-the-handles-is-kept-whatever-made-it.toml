@@ -1,0 +1,5 @@
+[[rule]]
+name = "a change to the handles is kept whatever made it"
+file = "src/claude_voice/handles.py"
+find = 'if self.snapshot\(\) != self.saved:'
+replace = 'if False:'

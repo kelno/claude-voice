@@ -19,6 +19,7 @@ import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import uvicorn
@@ -124,6 +125,11 @@ async def served(tmp_path, world):
     desk = Desk(live, str(root / "billing"))
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db")) as url:
         yield url, desk
+
+
+def kept(tmp_path) -> dict[str, dict[str, Any]]:
+    """The handles the bridge keeps, as its database holds them."""
+    return Store(tmp_path / "bridge.db").get_setting("relay_handles") or {}
 
 
 def conversation(url):
@@ -843,19 +849,19 @@ async def test_a_call_that_follows_without_a_handle_gets_a_new_one(served):
     assert out["news"] == f"[{handed[0]}] billing-ab (busy): nothing new"
 
 
-async def test_a_read_without_a_handle_works_and_hands_out_none(served):
+async def test_a_read_without_a_handle_works_and_hands_out_none(served, tmp_path):
     url, desk = served
     http, client = conversation(url)
     async with http, client as c:
         out = await call(c, "read_session_output", session="billing-ab", handle=None)
         waited = await call(c, "wait_for_session", handle=None, wait_seconds=60)
         later = await call(c, "list_folders")
-        listed = await call(c, "list_active_sessions")
+        await call(c, "list_active_sessions")
     assert out["turns"][-1]["text"] == "earlier answer"
     assert out["next_step"].startswith("No handle passed") and "handle" not in out
     assert waited["status"] == "nothing_to_wait_for" and "handle" not in waited
     assert "next_step" not in later  # only the tools that take a handle say it
-    assert [h["handle"] for h in listed["handles"]] == ["Juniper", "Rowan", "@kQzw"]  # none added
+    assert list(kept(tmp_path)) == ["Juniper", "Rowan", "@kQzw"]  # none added
 
 
 async def test_each_handle_follows_its_own_sessions(served):
@@ -893,16 +899,29 @@ async def test_a_permission_prompt_shows_for_every_handle_and_without_one(served
     assert nameless["news"] == "billing-ab: waiting on a permission prompt"
 
 
-async def test_list_active_sessions_lists_the_handles_in_use(served):
+async def test_the_handles_in_use_are_named_only_to_a_call_without_one(served):
+    # Only a relay that lost its handle, after a compaction, needs them: the list of sessions, which
+    # every relay reads, doesn't carry them.
     url, desk = served
     desk.set("busy")
     http, client = conversation(url)
     async with http, client as c:
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
-        await call(c, "read_session_output", session="billing-ab", handle="Juniper")
-        out = await call(c, "list_active_sessions", handle="Juniper")
-    assert {"handle": "Rowan", "follows": ["billing-ab"]} in out["handles"]
-    assert {"handle": "Juniper", "follows": []} in out["handles"]
+        listed = await call(c, "list_active_sessions", handle="Juniper")
+        lost = await call(c, "list_active_sessions", handle=None)
+    assert "handles" not in listed and "Rowan" not in listed.get("next_step", "")
+    assert "Rowan (follows billing-ab)" in lost["next_step"]
+
+
+async def test_a_change_to_the_handles_is_kept_whatever_made_it(served, tmp_path):
+    # A call that only lists still marks its handle as used: kept, a restart doesn't make a handle
+    # in use look idle for a day and drop it.
+    url, desk = served
+    before = kept(tmp_path)["Rowan"]["used"]
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "list_active_sessions", handle="Rowan")
+    assert kept(tmp_path)["Rowan"]["used"] > before
 
 
 async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, world):
@@ -920,8 +939,8 @@ async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, 
     async with bridge(tmp_path, desk, store) as url:
         http, client = conversation(url)
         async with http, client as c:
-            out = await call(c, "list_active_sessions", handle="Ash")
-    assert [h["handle"] for h in out["handles"]] == ["Ash"]  # Ash still follows a session
+            await call(c, "list_active_sessions", handle="Ash")
+    assert list(kept(tmp_path)) == ["Ash"]  # Ash still follows a session
 
 
 async def test_a_claude_code_session_s_handle_is_its_own_name(tmp_path, world):
@@ -995,7 +1014,7 @@ async def test_the_news_line_starts_with_the_handle(served):
     assert out["news"] == "[@kQzw] billing-ab (idle): nothing new"
 
 
-async def test_a_handle_not_in_use_counts_as_none(served):
+async def test_a_handle_not_in_use_counts_as_none(served, tmp_path):
     # The bridge hands handles out, so one it doesn't know is a typo or one long dropped: taking it
     # quietly would start an empty list, and the relay would hear "nothing new" while its replies
     # waited under the right one (owner, 2026-11-12).
@@ -1005,13 +1024,13 @@ async def test_a_handle_not_in_use_counts_as_none(served):
         await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle="Rowan")
         sent = await call(c, "message_active_session", session="billing-ab", message="Go.", handle="Rowen")
         read = await call(c, "read_session_output", session="billing-ab", handle="Rowen")
-        out = await call(c, "list_active_sessions", handle="Rowan")
+        await call(c, "list_active_sessions", handle="Rowan")
     step = sent["next_step"]
     assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing)')
     assert f'Your handle is "{sent["handle"]}"' in step and "this call's follow moves into it" in step
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
-    assert "Rowen" not in [h["handle"] for h in out["handles"]]
+    assert "Rowen" not in list(kept(tmp_path))
 
 
 async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path, world):
@@ -1035,7 +1054,7 @@ async def test_handles_handed_out_at_the_same_moment_merge_on_first_use(tmp_path
         == f"[{first['handle']}] billing-ab (idle): nothing new | ledger (idle): reply to you, read with after=1"
     )
     assert out["next_step"].startswith("Also following ledger, from your calls a moment ago without your handle")
-    assert second["handle"] not in [h["handle"] for h in out["handles"]]
+    assert second["handle"] not in list(kept(tmp_path))
 
 
 # A read came back cut: the relay's own long message took most of the page, and the reply was left
@@ -1105,7 +1124,7 @@ async def test_a_reply_not_yet_whole_says_to_read_the_rest(served):
     ), out["next_step"]
 
 
-async def test_a_stray_handle_folds_into_the_next_handle_passed_that_already_had_its_sessions(served):
+async def test_a_stray_handle_folds_into_the_next_handle_passed_that_already_had_its_sessions(served, tmp_path):
     # Seen as a risk (owner, 2026-11-13): a relay that forgets its handle on a send gets a new one,
     # goes back to its own, and the reply under the new one would go unheard.
     url, desk = served
@@ -1119,10 +1138,10 @@ async def test_a_stray_handle_folds_into_the_next_handle_passed_that_already_had
         out = await call(c, "list_active_sessions", handle="Rowan")
     assert out["news"].startswith("[Rowan] billing-ab (idle): reply to you")
     assert out["next_step"].startswith("Also following billing-ab, from your calls a moment ago without your handle")
-    assert stray["handle"] not in [h["handle"] for h in out["handles"]]
+    assert stray["handle"] not in list(kept(tmp_path))
 
 
-async def test_a_new_relay_s_handle_is_not_folded_into_another_relay_s(served):
+async def test_a_new_relay_s_handle_is_not_folded_into_another_relay_s(served, tmp_path):
     # Another relay's waits call every half minute: a new relay's first handle, on a session that
     # relay never touched, stays the new relay's.
     url, desk = served
@@ -1130,7 +1149,7 @@ async def test_a_new_relay_s_handle_is_not_folded_into_another_relay_s(served):
     async with http, client as c:
         new = await call(c, "message_active_session", session="billing-ab", message="Go.", handle=None)
         out = await call(c, "list_active_sessions", handle="Rowan")
-    assert new["handle"] in [h["handle"] for h in out["handles"]]
+    assert new["handle"] in list(kept(tmp_path))
     assert "Also following" not in out.get("next_step", "")
 
 

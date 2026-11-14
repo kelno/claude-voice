@@ -482,8 +482,8 @@ News
   say it to the owner (name the sessions instead). Keep yours for the whole
   conversation. Pass an earlier relay's handle only to carry on its work when
   the owner asks, or to take yours back after a compaction (the one following
-  the sessions you were working with): list_active_sessions lists the handles
-  in use, with the sessions each follows. (Claude Code sessions get none:
+  the sessions you were working with): a call without a handle lists the
+  handles in use, with the sessions each follows. (Claude Code sessions get none:
   theirs is their own session name.)
 - A result of a call with your handle may start with news, after your handle
   in brackets: an entry for each session you follow, with its state and what's
@@ -1611,7 +1611,6 @@ def build_server(
         """
         handle = call_handle()
         marks = mine()
-        before = relays.snapshot()
         active_before = any(following.stance(m) == "followed" and m.get("state") in ACTIVE for m in marks.values())
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
@@ -1647,8 +1646,7 @@ def build_server(
             step = in_use_said(NO_HANDLE)
         nameless.clear()
         relays.drop_idle(keep=handle)
-        if relays.snapshot() != before:
-            relays.save()
+        relays.save_if_changed()
         # RULE: the news line starts with the handle
         news = (f"[{handle}] " if handle else "") + " | ".join(items)
         minted = {"handle": state["minted"]} if state.get("minted") else {}
@@ -2627,13 +2625,12 @@ def build_server(
         the folders open to the bridge (the root and what's under it, and those opened with
         request_access; open in an app doesn't count) shows only its name, folder and status, with
         access "folder_not_open" (request_access opens it once the owner confirms) or
-        "folder_closed" (inside or holding a secret or system folder; never opened). handles: the
-        relay handles in use, with the sessions each follows."""
+        "folder_closed" (inside or holding a secret or system folder; never opened)."""
         rows = running()
         numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
         # RULE: every list of sessions shows the number the page shows
         sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
-        return {"sessions": sessions, "handles": relays.in_use()}
+        return {"sessions": sessions}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
         """Where a running session's conversation went, if Claude Code continued it elsewhere."""
