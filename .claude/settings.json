@@ -12,5 +12,13 @@
         ]
       }
     ]
+  },
+  "skillOverrides": {
+    "code-quality": "off",
+    "manage": "off",
+    "org-chart": "off",
+    "review-contribution": "off",
+    "write-commit": "off",
+    "write-plugin": "off"
   }
 }

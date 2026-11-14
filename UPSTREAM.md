@@ -121,6 +121,14 @@ All of upstream's code is in; what is on or off here (owner):
 | Updating the bridge (`update_bridge`) | Through `systemd-run` and `systemctl`, so Linux only | Also on Windows: a detached updater, and a restart by exit code 75 that the start script answers | The bridge runs on Windows here | "Update the bridge on Windows, where there is no systemd" |
 | Tests before an update restarts (`update_bridge`) | Always run | Run only when asked (`run_tests`, `--tests`); the rollback when the new version doesn't come back healthy stays | Only the owner's own sessions commit to the fork, and they test before pushing, so the run only delayed the restart (owner, 2026-11-06). Ask for it after a resync or changes made elsewhere | "Run an update's tests only when asked" |
 
+### What steers agents
+
+The fork's agents follow their owner's rules, not upstream's rules for agents; `CONTRIBUTING.md` stays as upstream has it, since it is how a change is made (owner, 2026-11-15). Upstream's files are kept as they are wherever a setting can switch them off, so a resync rarely conflicts on them.
+
+| What | Upstream | Fork | Why | Fork commits |
+| --- | --- | --- | --- | --- |
+| Upstream's skills in `.claude/skills/` (`code-quality`, `manage`, `org-chart`, `review-contribution`, `write-commit`, `write-plugin`) | Listed to every session in the repository | Kept unchanged, each switched off by name in `.claude/settings.json` (`skillOverrides`, which takes no wildcard); `tests/test_upstream_skills_off.py` fails when a skill isn't switched off, so a resync bringing a new one stops by itself, and when the list names one that no longer exists. A session preparing a pull request to upstream can still read them as files | They are upstream's rules for agents, and they clashed with the owner's: `write-commit` held back a commit the owner had approved (owner, 2026-11-15) | "Switch off upstream's skills for the fork's agents" |
+
 ### The suite and the checks
 
 | What | Upstream | Fork | Why | Fork commits |
