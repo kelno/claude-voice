@@ -857,8 +857,9 @@ def mcp_session(ctx: Any) -> str | None:
 
 
 # What stands for the conversation of a call that comes over HTTP without an MCP session. The
-# Claude app's typed chats speak the MCP version that has no sessions (seen 2026-11-15), so none of
-# their calls can be told from another's: only the handle the chat passes says whose call it is.
+# Claude app's typed chats send none (seen 2026-11-15; likely because they speak the MCP version
+# that has no sessions, unconfirmed), so none of their calls can be told from another's: only the
+# handle the chat passes says whose call it is.
 SESSIONLESS = "no MCP session"
 
 

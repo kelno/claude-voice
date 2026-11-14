@@ -3,7 +3,8 @@
 The owner often has two or more voice conversations open at once, and each must hear only of its
 own sessions. Nothing a call carries identifies its conversation for long: a voice call carries an
 MCP session id, but that id changes at every bridge restart, and a typed chat in the Claude app
-carries none: it speaks the MCP version without sessions (seen 2026-11-15). So the conversation names itself, with a handle the bridge hands out (checked with the
+carries none (seen 2026-11-15; likely because it speaks the MCP version without sessions,
+unconfirmed). So the conversation names itself, with a handle the bridge hands out (checked with the
 owner, 2026-11-14).
 
 A relay's handle is a code the bridge hands out; a Claude Code session's is its session id, and the
