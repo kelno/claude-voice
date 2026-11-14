@@ -707,6 +707,8 @@ async def test_a_background_task_s_completion_note_is_not_a_later_message(served
         done = await call(c, "wait_for_session")
     assert running["status"] == "still_working"
     assert noted["status"] == "still_working"
+    assert "has finished its turn" not in noted.get("next_step", "")
+    assert noted["next_step"].startswith("billing-ab has been on your message")
     assert done["status"] == "idle"
     assert done["reply"] == "Done."
 
