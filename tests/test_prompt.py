@@ -79,3 +79,25 @@ async def test_a_background_session_waiting_on_a_prompt_shows_what_it_asks(tmp_p
     assert row["waiting_for"] == "permission prompt" and "Fetch(https://example.org)" in row["prompt"]
     assert asked["status"] == "needs_input" and "Do you want to allow" in asked["prompt"]
     assert set(seen) == {"job-1"}
+
+
+def test_a_waiting_prompt_is_read_with_the_claude_code_the_bridge_finds(monkeypatch):
+    # The bridge finds Claude Code where the service's PATH may not reach (procs.find); reading a
+    # prompt must use the same program as starting or compacting a session does.
+    import subprocess
+
+    from claude_voice import jobs, procs
+
+    ran = []
+
+    class Done:
+        stdout = SCREEN.encode()
+
+    def run(command, **kwargs):
+        ran.append(command)
+        return Done()
+
+    monkeypatch.setattr(procs, "find", lambda name: "C:/Users/owner/.local/bin/claude.exe" if name == "claude" else None)
+    monkeypatch.setattr(subprocess, "run", run)
+    assert "Fetch(https://example.org)" in (jobs.pending_prompt("job-1") or "")
+    assert ran == [["C:/Users/owner/.local/bin/claude.exe", "logs", "job-1"]]
