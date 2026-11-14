@@ -8,6 +8,10 @@ from claude_voice.server import INSTRUCTIONS, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
+# The manual as one line of words: where it wraps doesn't matter, so a phrase checked here may fall
+# across a line break, and the text can be wrapped evenly.
+MANUAL = " ".join(INSTRUCTIONS.lower().split())
+
 
 async def test_the_guide_tool_returns_the_same_manual_as_the_server_instructions(tmp_path):
     (tmp_path / "src").mkdir()
@@ -18,7 +22,6 @@ async def test_the_guide_tool_returns_the_same_manual_as_the_server_instructions
 
 
 def test_the_manual_states_its_central_rules():
-    manual = INSTRUCTIONS.lower()
     for words in (
         "read this first",
         "voice relay",
@@ -55,9 +58,8 @@ def test_the_manual_states_its_central_rules():
         "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
     ):
-        assert words in manual, words
+        assert words in MANUAL, words
 
 
 def test_the_manual_says_what_the_name_marker_means():
-    manual = INSTRUCTIONS.lower()
-    assert "in curly braces, such as {billing export}, was chosen by an" in manual and "owner_chose true" in manual
+    assert "in curly braces, such as {billing export}, was chosen by an" in MANUAL and "owner_chose true" in MANUAL
