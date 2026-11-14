@@ -256,15 +256,11 @@ STARTING_TOOLS = ("start_active_session", "attach_conversation")
 # all reach it over one connection, with nothing identifying the conversation. If that ever becomes
 # possible, all of the handle machinery below can be replaced by it (owner, 2026-11-12).
 # Where each relay's read marks and the sessions it follows are kept, by its handle, so a bridge
-# restart doesn't drop them: {handle: {"used": when, "sessions": {session id: mark}}}. The one list
-# all relays shared before handles (kept under the older names) becomes UNCLAIMED_HANDLE.
+# restart doesn't drop them: {handle: {"used": when, "sessions": {session id: mark}}}.
 HANDLES_SETTING = "relay_handles"
 # A handle the bridge hands out: "@" and four letters of mixed case, such as "@kQzw", so no one takes
 # it for a name, nor for the owner's codes (P62, F70); l, I, o and O left out, as easily misread.
 HANDLE_LETTERS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
-MARKS_SETTING = "read_marks"
-OLD_MARKS_SETTING = "watched_sessions"
-UNCLAIMED_HANDLE = "voice relay"
 # A handle that follows nothing and wasn't used for this long is dropped.
 HANDLE_IDLE_SECONDS = 24 * 3600
 # A pending rename written into a job record is not written again for this long, while Claude Code
@@ -954,14 +950,9 @@ def result_notes(
     return note
 
 
-def load_handles(store: Store, now: float) -> dict[str, dict[str, Any]]:
+def load_handles(store: Store) -> dict[str, dict[str, Any]]:
     """Each relay's read marks and what it follows, by handle, as the database kept them."""
-    kept = store.get_setting(HANDLES_SETTING)
-    if kept is not None:
-        return dict(kept)
-    shared = store.get_setting(MARKS_SETTING) or store.get_setting(OLD_MARKS_SETTING) or {}
-    # RULE: the shared list becomes the unclaimed handle voice relay
-    return {UNCLAIMED_HANDLE: {"used": now, "sessions": shared}} if shared else {}
+    return dict(store.get_setting(HANDLES_SETTING) or {})
 
 
 @contextlib.contextmanager
@@ -1468,14 +1459,13 @@ def build_server(
             if stop_software:
                 stop_software()
 
-    # The relay's marks on each session it has touched, by Claude session id: the last turn it has
-    # read (`seen`), its read mark, and, while it follows the session, the turn after which it
-    # expects a finished turn (`sent`: its message, its question, or a hand-off) and whether that
-    # turn was seen to end (`replied`). Following ends once that turn is read, or the session
-    # ends. One set for the relay, whichever conversation it calls from, kept in the database: a
-    # bridge restart doesn't end the voice call, which runs in the Claude app's cloud, and the
-    # relay, in that call or a new one, still needs the reply to the message it sent.
-    relays = load_handles(manager.store, manager.clock())
+    # Each relay's marks, by its handle, then by Claude session id: the last turn it has read
+    # (`seen`), and, while it follows the session, the turn after which it expects a finished turn
+    # (`sent`: its message, its question, or a hand-off) and whether that turn was seen to end
+    # (`replied`). Once that turn is read, `sent` is cleared and `quiet` set: a quiet follow,
+    # until it ends. Kept in the database: a bridge restart doesn't end the voice call, which runs
+    # in the Claude app's cloud, and the relay, in that call or a new one, still needs its replies.
+    relays = load_handles(manager.store)
     # What a call without a handle marks: thrown away once the call is done.
     nameless: dict[str, dict[str, Any]] = {}
     # A Claude Code session's handle, by the MCP connection it calls over (one per session).

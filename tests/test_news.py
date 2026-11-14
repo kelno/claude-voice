@@ -83,7 +83,7 @@ async def bridge(tmp_path, desk, store, *others, lands=True, **options):
             next(d for d in desks.values() if d.name == name).transcript.append(turn("user", text, "peer"))
         return {"delivered": True, "detail": "DELIVERED"}
 
-    if not any(store.get_setting(k) for k in ("relay_handles", "read_marks", "watched_sessions")):
+    if store.get_setting("relay_handles") is None:
         # The handles the tests pass, as if the bridge had handed them out.
         store.set_setting("relay_handles", {h: {"used": time.time(), "sessions": {}} for h in KNOWN})
     port = free_port()
@@ -468,20 +468,6 @@ async def test_a_new_conversation_and_a_restarted_bridge_follow_the_same_session
         async with http, client as c:
             out = await call(c, "list_active_sessions")
     assert out["news"] == "[Juniper] billing-ab (idle): reply to you, read with after=1"
-
-
-async def test_what_the_bridge_kept_under_the_old_name_is_still_followed(tmp_path, world):
-    # The marks were kept as "watched_sessions" before following replaced watching.
-    root, live = world
-    desk = Desk(live, str(root / "billing"))
-    store = Store(tmp_path / "bridge.db")
-    store.set_setting("watched_sessions", {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}})
-    desk.transcript.append(turn("assistant", "Export done."))
-    async with bridge(tmp_path, desk, store) as url:
-        http, client = conversation(url)
-        async with http, client as c:
-            out = await call(c, "list_active_sessions", handle="voice relay")
-    assert out["news"] == "[voice relay] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_nothing_followed_and_no_prompt_means_no_news_field(served):
@@ -912,22 +898,6 @@ async def test_list_active_sessions_lists_the_handles_in_use(served):
         out = await call(c, "list_active_sessions", handle="Juniper")
     assert {"handle": "Rowan", "follows": ["billing-ab"]} in out["handles"]
     assert {"handle": "Juniper", "follows": []} in out["handles"]
-
-
-async def test_the_shared_list_becomes_the_unclaimed_handle_voice_relay(tmp_path, world):
-    # What the relays shared before handles is kept for whoever carries on that work.
-    root, live = world
-    desk = Desk(live, str(root / "billing"))
-    store = Store(tmp_path / "bridge.db")
-    store.set_setting("read_marks", {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}})
-    desk.transcript.append(turn("assistant", "Export done."))
-    async with bridge(tmp_path, desk, store) as url:
-        http, client = conversation(url)
-        async with http, client as c:
-            read = await call(c, "read_session_output", session="billing-ab", handle=None, after=1)
-            out = await call(c, "list_active_sessions", handle="voice relay")
-    assert "voice relay (follows billing-ab)" in read["next_step"]
-    assert out["news"] == "[voice relay] billing-ab (idle): reply to you, read with after=1"
 
 
 async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, world):
