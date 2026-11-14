@@ -29,19 +29,26 @@ from claude_voice.cli import COMMANDS
 ROOT = pathlib.Path(__file__).parent.parent
 # Every page, found rather than listed: a hand-kept list is a page's way out.
 # evidence/ and references/ hold material quoted from elsewhere, not this
-# project's own claims, so their examples are nobody here's to run.
-SKIP = ("evidence", "references", ".venv", "node_modules")
+# project's own claims, so their examples are nobody here's to run. A folder
+# holding its own .git is another checkout (a worktree, a clone), whose pages
+# its own run checks.
+SKIP = ("evidence", "references", ".venv", "node_modules", ".git")
 LOOKS_LIKE_A_COMMAND = re.compile(
     r"^\s*\$?\s*(claude-voice|uv |git |pytest|python|committed|ruff|mypy)\b", re.MULTILINE
 )
 NOT_RUN = re.compile(r"<!--\s*not run:\s*(.+?)\s*-->\s*$")
 
 
-def pages() -> list[pathlib.Path]:
+def pages(root: pathlib.Path = ROOT) -> list[pathlib.Path]:
     """Every Markdown page that could carry a command, found by walking."""
-    return sorted(
-        p for p in ROOT.rglob("*.md") if not any(part in SKIP or part.startswith(".venv") for part in p.parts)
-    )
+    found = []
+    for folder, subfolders, files in os.walk(root):
+        here = pathlib.Path(folder)
+        subfolders[:] = [
+            d for d in subfolders if d not in SKIP and not d.startswith(".venv") and not (here / d / ".git").exists()
+        ]
+        found += [here / f for f in files if f.endswith(".md")]
+    return sorted(found)
 
 
 def examples() -> list[tuple[str, str, str]]:
@@ -100,6 +107,17 @@ def argv_and_env(command: str) -> tuple[list[str], dict[str, str]]:
                 break
     found = shutil.which(argv[0], path=env.get("PATH")) if argv else None
     return ([found, *argv[1:]] if found else argv), env
+
+
+def test_a_checkout_nested_in_this_one_keeps_its_own_pages(tmp_path: pathlib.Path):
+    """A worktree under .claude/worktrees, or a clone inside this one, is another checkout: its
+    pages are its own, checked by its own run, and walking into them runs the same commands again."""
+    for page in ("README.md", "docs/guide.md", ".claude/worktrees/other/README.md", "vendored/README.md"):
+        (tmp_path / page).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / page).write_text("# a page\n", encoding="utf-8")
+    (tmp_path / ".claude/worktrees/other/.git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+    (tmp_path / "vendored/.git").mkdir()
+    assert pages(tmp_path) == sorted([tmp_path / "README.md", tmp_path / "docs/guide.md"])
 
 
 def test_the_documentation_shows_at_least_one_command():
