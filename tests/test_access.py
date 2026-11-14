@@ -129,7 +129,7 @@ async def test_granting_opens_a_sessions_folder_and_everything_under_it_for_good
 async def test_a_folder_holding_or_inside_a_denied_folder_is_never_granted(world):
     running(world, 4, "Home", world["home"])
     running(world, 5, "Keys", world["home"] / ".ssh" / "keys")
-    _, srv = server(world)
+    m, srv = server(world)
     async with Client(srv) as c:
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Home"]["access"] == "folder_closed" and listed["Keys"]["access"] == "folder_closed"
@@ -141,6 +141,12 @@ async def test_a_folder_holding_or_inside_a_denied_folder_is_never_granted(world
     assert "holds" in holds and ssh in holds
     assert "inside" in inside and ssh in inside
     assert "inside" in unreadable and ssh in unreadable
+    # request_access refuses first; the grant made once the owner confirms refuses too, should a
+    # closed folder reach it another way.
+    for folder, how in ((world["home"], "holds"), (world["home"] / ".ssh" / "keys", "inside")):
+        with pytest.raises(ValueError, match=how):
+            m.access.grant(folder)
+    assert m.access.granted() == []
 
 
 async def test_a_denied_folder_stays_closed_inside_the_root(world):
