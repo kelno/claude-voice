@@ -715,9 +715,19 @@ async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
         desk.transcript.append(turn("assistant", "Both done."))
         desk.set("idle")
         out = await call(c, "list_active_sessions")
+        await call(c, "read_session_output", session="billing-ab")
+        # Every reply read, and the session hasn't written since the next message: the one after
+        # that is the one followed, so the reply is read from there.
+        await call(c, "message_active_session", session="billing-ab", message="Run it again.")
+        desk.set("busy")
+        again = await call(c, "message_active_session", session="billing-ab", message="And send the report.")
+        desk.transcript.append(turn("assistant", "Ran it and sent the report."))
+        desk.set("idle")
+        last = await call(c, "list_active_sessions")
     assert read["turns"][-1]["text"] == "Exporting the archive."
     assert mid["news"] == "[Juniper] billing-ab (busy): nothing new"
     assert out["news"].startswith("[Juniper] billing-ab (idle): reply to you")
+    assert last["news"].startswith(f"[Juniper] billing-ab (idle): reply to you, read with after={again['next_after']}")
 
 
 # Relay handles: the owner often has two or more voice conversations open at once, each a small
