@@ -101,3 +101,5 @@ async def test_a_question_from_a_claude_code_session_is_answered_in_the_reply_te
     )
     assert asked.startswith("Done?\n\n[From the claude-voice bridge: this message comes from planner,")
     assert "planner is waiting for your reply text" in asked and "SendMessage" not in asked
+    # The asker reads nothing else meanwhile: a question back would wait out both limits.
+    assert "don't ask it anything first" in asked

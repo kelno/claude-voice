@@ -112,8 +112,14 @@ ANSWER_BY_MESSAGE = (
     'Answer {name} by direct message, with SendMessage to "{name}": that wakes it, while your reply '
     "text is only for whoever reads this chat."
 )
-# A question (ask_active_session) waits for the reply in the session's text.
-ANSWER_IN_TEXT = "{name} is waiting for your reply text: answer there, not by direct message."
+# A question (ask_active_session) waits for the reply in the session's text, and the asker reads
+# nothing else until then: two sessions asking each other back would each wait out the caller's
+# limit, up to 180 s (the branch's review, 2026-11-14).
+ANSWER_IN_TEXT = (
+    "{name} is waiting for your reply text: answer there, not by direct message. It reads nothing "
+    "else until your turn ends, so don't ask it anything first: if something is missing, say so in "
+    "your answer."
+)
 # Added after the note above at most once in this long per session, so names keep up with the work
 # (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
 NAME_CHECK_SECONDS = 3600.0
