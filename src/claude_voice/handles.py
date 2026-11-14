@@ -19,6 +19,8 @@ import secrets
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from . import following
+
 if TYPE_CHECKING:  # only for its type
     from .store import Store
 
@@ -54,7 +56,9 @@ class Handles:
     def follows(self, handle: str) -> list[str]:
         """The sessions a handle follows, by name."""
         return [
-            str(m.get("name") or sid) for sid, m in self.all[handle]["sessions"].items() if m.get("sent") is not None
+            str(m.get("name") or sid)
+            for sid, m in self.all[handle]["sessions"].items()
+            if following.stance(m) == "followed"
         ]
 
     def in_use(self) -> list[dict[str, Any]]:
@@ -113,14 +117,14 @@ class Handles:
             # A relay that forgot or mistyped its handle wrote to a session it already had: a new
             # relay's first handle, on sessions this one never touched, is left alone, even while
             # another relay's waits call every half minute.
-            followed = [sid for sid, m in theirs["sessions"].items() if m.get("sent") is not None]
+            followed = [sid for sid, m in theirs["sessions"].items() if following.stance(m) == "followed"]
             # RULE: a stray handle folds into the next handle passed that already had its sessions
             stray = now - theirs["handed_out"] <= STRAY_SECONDS and bool(followed)
             stray = stray and all(sid in own["sessions"] for sid in followed)
             if batch or stray:
                 merged += self.follows(other)
                 for sid, mark in theirs["sessions"].items():
-                    if own["sessions"].get(sid, {}).get("sent") is None:
+                    if following.stance(own["sessions"].get(sid, {})) != "followed":
                         own["sessions"][sid] = mark
                 del self.all[other]
         return merged

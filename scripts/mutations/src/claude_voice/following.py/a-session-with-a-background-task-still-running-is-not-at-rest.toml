@@ -1,5 +1,5 @@
 [[rule]]
 name = "a session with a background task still running is not at rest"
-file = "src/claude_voice/server.py"
+file = "src/claude_voice/following.py"
 find = 'return BACKGROUND$'
 replace = 'pass'

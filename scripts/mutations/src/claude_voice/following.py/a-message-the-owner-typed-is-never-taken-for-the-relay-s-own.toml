@@ -1,5 +1,5 @@
 [[rule]]
 name = "a message the owner typed is never taken for the relay's own"
-file = "src/claude_voice/server.py"
+file = "src/claude_voice/following.py"
 find = 'relayed = \[i for i, t in enumerate\(turns\) if t.get\("origin"\) in \("peer", "channel"\)\]'
 replace = 'relayed = [i for i, t in enumerate(turns) if t["role"] == "user"]'

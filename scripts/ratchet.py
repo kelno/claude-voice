@@ -95,6 +95,7 @@ LAYERS = {
             "permissions",
             "hints",
             "prompts",
+            "following",
         ),
         1,
     ),  # parts, each about one thing

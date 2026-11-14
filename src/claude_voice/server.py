@@ -51,6 +51,7 @@ from . import (
     envfile,
     events,
     fleet,
+    following,
     fork,
     gitstatus,
     handles,
@@ -1087,9 +1088,6 @@ async def compact_when_idle(
 
 
 BUSY = ("busy", "shell")  # a session's statuses while it works
-# A session whose turn has ended while a task it started runs on in the background: the task's
-# completion note will start another turn, so it is not at rest (owner, 2026-11-12, ledger F58).
-BACKGROUND = "turn ended, background task still running"
 
 
 def wait_time(value: Any) -> float:
@@ -1565,7 +1563,7 @@ def build_server(
             seen = len(all_turns(sid, str(d.get("cwd")))) - 1
         mark = marks.setdefault(sid, {"seen": seen, "sent": None, "replied": False})
         mark.update(name=d.get("name") or mark.get("name") or sid, cwd=str(d.get("cwd")))
-        if seen > mark["seen"] and mark.get("quiet") is not None:
+        if seen > mark["seen"] and following.stance(mark) == "quiet":
             mark["quiet"] = manager.clock()  # something new was read: the quiet follow runs on
         mark["seen"] = max(mark["seen"], seen)
         if sent is not None:  # -1 too: a message to a session with no turns yet
@@ -1578,7 +1576,7 @@ def build_server(
         rows = [
             {"sessionId": k, "name": m.get("name")}
             for k, m in mine().items()
-            if m.get("sent") is not None or (quiet and m.get("quiet") is not None)
+            if following.stance(m) == "followed" or (quiet and following.stance(m) == "quiet")
         ]
         try:
             found = renames.find(rows, session)
@@ -1617,22 +1615,22 @@ def build_server(
         handle = call_handle()
         marks = mine()
         before = relays.snapshot()
-        active_before = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
+        active_before = any(following.stance(m) == "followed" and m.get("state") in ACTIVE for m in marks.values())
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
         handle, marks = call_handle(), mine()  # this call may have handed one out
         state = relay_call.get() or {}
         items = []
         for sid, mark in list(marks.items()):
-            if mark.get("sent") is not None:
+            if following.stance(mark) == "followed":
                 items.extend(followed_entry(sid, mark, live.get(sid)))
-            elif mark.get("quiet") is not None:
+            elif following.stance(mark) == "quiet":
                 items.extend(quiet_entry(sid, mark, live.get(sid)))
             elif sid not in live:
                 del marks[sid]  # a read mark on a session that can't be read any more
         for sid, d in live.items():
-            unfollowed = marks.get(sid, {}).get("sent") is None
-            if unfollowed and session_state(d) == "waiting on a permission prompt":
+            unfollowed = following.stance(marks.get(sid, {})) != "followed"
+            if unfollowed and session_state(d) == following.PERMISSION_PROMPT:
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
         if handle:
             items.extend(proposals_news(handle, live))
@@ -1680,7 +1678,7 @@ def build_server(
         sentences, paused = [], []
         marks = mine()
         for sid, mark in marks.items():
-            if mark.get("sent") is None:
+            if following.stance(mark) != "followed":
                 continue
             name, state = mark.get("name"), mark.get("state")
             if state == "waiting":
@@ -1698,7 +1696,7 @@ def build_server(
                     sentences.append(NEXT_BACKGROUND.format(name=name, last=last))
                 else:
                     sentences.append(NEXT_WORKING.format(name=name, since=lasted(mark.get("since")), last=last))
-        active = any(m.get("sent") is not None and m.get("state") in ACTIVE for m in marks.values())
+        active = any(following.stance(m) == "followed" and m.get("state") in ACTIVE for m in marks.values())
         if active_before and not active:
             # RULE: the result where following ends says there is nothing left to follow
             left = f"; {', '.join(paused)} waits on the owner's answer" if paused else ""
@@ -1746,7 +1744,7 @@ def build_server(
         mark = mine().get(str(target.get("sessionId")))
         if mark is None:
             mark_read(target, seen=reached, sent=reached, probe=probe)  # its history so far isn't news
-        elif mark.get("sent") is None or not unread_reply(target, mark):
+        elif following.stance(mark) != "followed" or not unread_reply(target, mark):
             # RULE: a send after every reply is read waits for its own reply
             mark_read(target, seen=mark["seen"], sent=reached, probe=probe)
         else:
@@ -1763,8 +1761,7 @@ def build_server(
 
     def unread_reply(d: dict[str, Any], mark: dict[str, Any]) -> bool:
         """Whether the session wrote anything after the relay's message that the relay hasn't read."""
-        turns = all_turns(str(d.get("sessionId")), str(d.get("cwd")))
-        return any(t["role"] == "assistant" and i > max(mark["sent"], mark["seen"]) for i, t in enumerate(turns))
+        return following.unread_reply(all_turns(str(d.get("sessionId")), str(d.get("cwd"))), mark)
 
     def why_gone(sid: str) -> str:
         """Why a session is no longer running, when Claude Code says: empty otherwise."""
@@ -1810,8 +1807,8 @@ def build_server(
         elif where == "waiting":
             mark["state"] = "waiting"
         else:
-            mark.update(state="background" if state == BACKGROUND else "working", told=False, last=last)
-        if state == "waiting on a permission prompt":
+            mark.update(state="background" if state == following.BACKGROUND else "working", told=False, last=last)
+        if state == following.PERMISSION_PROMPT:
             return [f"{name}: {', '.join([state, *news])}"]
         return [f"{name} ({state}): {', '.join(news) or 'nothing new'}"]
 
@@ -1819,11 +1816,8 @@ def build_server(
         """Who started a quietly followed session's new finished turn the relay hasn't read, or
         None: nothing new, or a turn still running."""
         turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
-        unread = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > mark["seen"]]
-        if not unread or session_state(d) not in ("idle", "waiting for an answer"):
-            return None
-        starter = next((t for t in reversed(turns[: unread[0]]) if t["role"] == "user"), None)
-        return started_by(starter or {})
+        starter = following.quiet_new_turn(turns, mark, session_state(d))
+        return None if starter is None else started_by(starter)
 
     def quiet_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A quietly followed session's entry in the news line: only a new finished turn the
@@ -1840,55 +1834,13 @@ def build_server(
             mark.pop("quiet")
         return []
 
-    def own_message(turns: list[dict[str, Any]], mark: dict[str, Any]) -> int | None:
-        """Where the relay's own message landed after the turn it was sent at, or None: not yet, or
-        not as a turn (a message to a busy session can come in a form that isn't one)."""
-        probe = mark.get("probe")
-        if not probe:
-            return None
-        # RULE: a message the owner typed is never taken for the relay's own
-        relayed = [i for i, t in enumerate(turns) if t.get("origin") in ("peer", "channel")]
-        return next((i for i in relayed if i > mark["sent"] and probe in turns[i]["text"]), None)
-
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
-        """Where a followed, running session stands: "unread" (its turn ended, not read yet),
-        "read" (read: following it is over), "waiting" (paused on a permission prompt, mid-turn)
-        or "working"; and its latest message since the relay's, if any."""
+        """Where a followed, running session stands, and its latest message: following.follow_state."""
         turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
-        # Claude Code queues a message to a busy session until its turn ends: what comes before
-        # the relay's own message is the end of that turn, not a reply to it.
-        # RULE: a follow waits for its own message to land
-        landed = own_message(turns, mark)
-        start = mark["sent"] if landed is None else landed
-        answer = [i for i, t in enumerate(turns) if t["role"] == "assistant" and i > start]
-        # Its turn has ended once it rests, or asks its user something (not mid-turn on a
-        # prompt), or once a later message came in after its reply.
-        # RULE: a background task's completion note is not a later message
-        ended = session_state(d) in ("idle", "waiting for an answer") or any(
-            t["role"] == "user" and t.get("origin") != "task-notification" and answer and i > answer[0]
-            for i, t in enumerate(turns)
-        )
-        mark["replied"] = mark["replied"] or (bool(answer) and ended)
-        last = turns[answer[-1]]["text"] if answer else None
-        if mark["replied"]:
-            return ("unread" if any(i > mark["seen"] for i in answer) else "read"), last
-        if session_state(d) == "waiting on a permission prompt":
-            return "waiting", last
-        return "working", last
+        return following.follow_state(turns, mark, session_state(d))
 
     def session_state(d: dict[str, Any] | None) -> str:
-        if d is None:
-            return "ended"
-        if d.get("status") == "waiting":
-            return (
-                "waiting on a permission prompt"
-                if d.get("waitingFor") == "permission prompt"
-                else "waiting for an answer"
-            )
-        if d.get("status") in ("idle", "shell") and background_running(d):
-            # RULE: a session with a background task still running is not at rest
-            return BACKGROUND
-        return "idle" if d.get("status") == "idle" else "busy"
+        return following.session_state(d, background_running)
 
     def background_running(d: dict[str, Any]) -> bool:
         """Whether a session's turn ended with a task it started still running in the background.
@@ -3713,9 +3665,9 @@ def build_server(
         deadline = clock() + within_budget(wait_seconds)
         while True:
             live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
-            following = {sid: m for sid, m in mine().items() if m.get("sent") is not None}
+            followed_now = {sid: m for sid, m in mine().items() if following.stance(m) == "followed"}
             ready, waited = [], []
-            for sid, mark in following.items():
+            for sid, mark in followed_now.items():
                 d = live.get(sid)
                 where = "ended" if d is None else follow_state(sid, mark, d)[0]
                 # RULE: a wait on all followed sessions returns at the first with news
@@ -3724,13 +3676,13 @@ def build_server(
                 elif where == "working":
                     waited.append(str(mark.get("name") or sid))
             if ready:
-                sid = min(ready, key=lambda k: following[k].get("since") or 0)
-                mark = following[sid]
+                sid = min(ready, key=lambda k: followed_now[k].get("since") or 0)
+                mark = followed_now[sid]
                 if sid not in live:
                     return {"status": "session_ended", "session": mark.get("name") or sid, "session_ended": True}
                 return await wait_on(sid, 0, max(mark["sent"], mark["seen"]), max_chars)
             for sid, mark in mine().items():
-                quiet = mark.get("sent") is None and mark.get("quiet") is not None and sid in live
+                quiet = following.stance(mark) == "quiet" and sid in live
                 # RULE: a new turn in a quiet follow wakes a wait
                 if quiet and quiet_new_turn(sid, mark, live[sid]) is not None:
                     return await wait_on(sid, 0, mark["seen"], max_chars)

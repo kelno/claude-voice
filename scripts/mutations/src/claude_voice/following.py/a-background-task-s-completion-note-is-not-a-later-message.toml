@@ -1,5 +1,5 @@
 [[rule]]
 name = "a background task's completion note is not a later message"
-file = "src/claude_voice/server.py"
+file = "src/claude_voice/following.py"
 find = 't\["role"\] == "user" and t.get\("origin"\) != "task-notification" and answer and i > answer\[0\]'
 replace = 't["role"] == "user" and answer and i > answer[0]'
