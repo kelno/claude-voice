@@ -1469,3 +1469,9 @@ name = "a relayed message carries only the forks own note on who reads the reply
 file = "src/claude_voice/transcripts.py"
 find = 'return await _courier\.deliver\(name, text\)$'
 replace = 'return await deliver(name, text)'
+
+[[rule]]
+name = "a message from a claude code session says to answer it by direct message"
+file = "src/claude_voice/server.py"
+find = 'if sender is None:$'
+replace = 'if True:'

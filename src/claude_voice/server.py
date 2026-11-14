@@ -96,6 +96,22 @@ RELAYED_MESSAGE_NOTE = (
     "pointing back to text it may not have. For the owner's own OK, which a relayed message "
     "can't give, ask with the bridge's confirm_ask tool.]"
 )
+# The note when the relay is a Claude Code session on this PC: it has an inbox, and a direct message
+# wakes it, while a reply in the text is seen only when it next reads the session (owner, 2026-11-14;
+# ledger F38). It starts as RELAYED_MESSAGE_NOTE does, where a read cuts a relayed message short.
+SESSION_MESSAGE_NOTE = (
+    "[From the claude-voice bridge: this message comes from {name}, a Claude Code session working "
+    "with this session through the bridge for the owner. The owner sees neither this message nor "
+    "your reply unless {name} passes them on. {answer} Make your answer self-contained: name things "
+    "instead of pointing back to text it may not have. For the owner's own OK, which a relayed "
+    "message can't give, ask with the bridge's confirm_ask tool.]"
+)
+ANSWER_BY_MESSAGE = (
+    'Answer {name} by direct message, with SendMessage to "{name}": that wakes it, while your reply '
+    "text is only for whoever reads this chat."
+)
+# A question (ask_active_session) waits for the reply in the session's text.
+ANSWER_IN_TEXT = "{name} is waiting for your reply text: answer there, not by direct message."
 # Added after the note above at most once in this long per session, so names keep up with the work
 # (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
 NAME_CHECK_SECONDS = 3600.0
@@ -422,6 +438,10 @@ Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
   whether to. Call wait_for_session again while it says "still_working",
   until the reply comes: the owner interrupts if they have something to say.
+- A Claude Code session relaying gets the answer to a message by direct
+  message (SendMessage), which wakes it, so it needn't wait: the bridge's note
+  on the message tells the session to answer that way. A question
+  (ask_active_session) is still answered in the reply text.
 - Wait in silence: nothing between waits, no heads-up, no progress, even when
   the app asks you to say it is taking a while. Speak once, with the reply.
 - A result may end with next_step: what follows for the sessions you follow,
@@ -1492,16 +1512,22 @@ def build_server(
 
     async def claude_code_name() -> str:
         """The calling Claude Code session's name, from the transcript that records the call."""
+        return await calling_session_name() or "Claude Code"
+
+    async def calling_session_name() -> str | None:
+        """The name of the Claude Code session on this PC that made this call; None if none did."""
         tool_use = confirm.current_caller.get().tool_use_id
+        if not tool_use:
+            return None
         for _ in range(10):  # the session may still be writing the call
             running_now = live_sessions()
-            sid = tool_use and transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
+            sid = transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
             if sid:
                 # RULE: a claude code session's handle is its own name
                 d = next(d for d in running_now if str(d.get("sessionId")) == sid)
                 return str(d.get("name") or sid)
             await asyncio.sleep(0.1)
-        return "Claude Code"
+        return None
 
     # Turns per session, kept while its conversation file is unchanged.
     turns_seen: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
@@ -3344,7 +3370,7 @@ def build_server(
         budget = repos.budgets.seconds(transcripts.current_client.get())
         # Upstream says what box holds the session up; here only once answering by voice is on.
         behind = answers.queued_behind(target, prompt_book, projects_dir) if answering_on else {}
-        delivery = asyncio.ensure_future(send_into(target, relayed(target, message)))
+        delivery = asyncio.ensure_future(send_into(target, relayed(target, message, await relay_note(waits=False))))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -3365,10 +3391,20 @@ def build_server(
 
     name_checked: dict[str, float] = {}  # session id: when its name was last checked, or first seen
 
-    def relayed(target: dict[str, Any], message: str) -> str:
+    async def relay_note(waits: bool) -> str:
+        """The note under a relayed message, by who sends it: the claude.ai relay, which has no inbox,
+        or a Claude Code session on this PC, answered by direct message unless it waits for the reply."""
+        sender = await calling_session_name()
+        # RULE: a message from a claude code session says to answer it by direct message
+        if sender is None:
+            return RELAYED_MESSAGE_NOTE
+        answer = (ANSWER_IN_TEXT if waits else ANSWER_BY_MESSAGE).format(name=sender)
+        return SESSION_MESSAGE_NOTE.format(name=sender, answer=answer)
+
+    def relayed(target: dict[str, Any], message: str, note: str = RELAYED_MESSAGE_NOTE) -> str:
         """A relayed message as the session gets it: the bridge's note after it, and about once an hour
         a check that its name still fits. A session first seen gets none, its name being new."""
-        text = f"{message}\n\n{RELAYED_MESSAGE_NOTE}"
+        text = f"{message}\n\n{note}"
         sid, now = str(target.get("sessionId")), manager.clock()
         last = name_checked.setdefault(sid, now)
         # RULE: the name check comes once an hour on the next relayed message
@@ -3664,7 +3700,7 @@ def build_server(
         before = len(numbered_turns(target))
         typed = owner_typed(target)
         was_busy = target.get("status") in BUSY
-        out = await send_into(target, relayed(target, message))
+        out = await send_into(target, relayed(target, message, await relay_note(waits=True)))
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
 

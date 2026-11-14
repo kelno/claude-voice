@@ -37,9 +37,9 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect discussion: listing names of sessions outside the root shares more with the assistant than today (a side chat's name is the owner's own words); the deny list's contents; upstream's "few tools" principle (two new tools). `SessionManager` takes the deny list as a parameter (empty by default) so tests elsewhere don't hit it; the served bridge passes `default_denied()`.
 - Known gap: a side chat outside the open folders isn't marked `side_chat` (the mark is only added to full rows). Grouping side chats under their parent session is deferred.
 
-### 6a. Telling a session who reads it — fork "Tell a session who reads its reply when the relay writes to it"
+### 6a. Telling a session who reads it — fork "Tell a session who reads its reply when the relay writes to it", "Tell a session to answer a Claude Code sender by direct message"
 
-- What: every message sent with `message_active_session` / `ask_active_session` ends with a short bridge note (`RELAYED_MESSAGE_NOTE`): it comes from the voice assistant, the owner sees neither it nor the reply unless the assistant passes them on, answer in the reply text rather than SendMessage, self-contained. Sessions the bridge starts get the same rules once, appended to their system prompt (`RELAYED_TASK_NOTE`).
+- What: every message sent with `message_active_session` / `ask_active_session` ends with a short bridge note: who it comes from, that the owner sees neither it nor the reply unless the sender passes them on, how to answer, self-contained. From the voice assistant (`RELAYED_MESSAGE_NOTE`), which has no inbox: answer in the reply text rather than SendMessage. From a Claude Code session on the same computer (`SESSION_MESSAGE_NOTE`, found by the call's tool-call id): answer it by SendMessage to its name, which wakes it, except for a question, which waits for the reply text.
 - Why: receiving sessions answered with SendMessage into nothing and wrote to the owner about text only the assistant had seen.
 - Expect discussion: the notes use this fork's role names ("the relay"); upstream would need its own wording, and maybe a setting. Changing bridge sessions' system prompt is a visible behaviour change.
 - Tests: `tests/test_relayed.py`.
