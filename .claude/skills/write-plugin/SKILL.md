@@ -69,6 +69,22 @@ The owner approved this list. Each item is a lesson a plugin had to learn late.
    variable the bridge would hold.
 5. Starts without a terminal: no questions, only MCP on stdout.
 6. A simulated mode, for tests and the first try.
+
+   A fake for a device or service copies its documented limits: rate limits,
+   timeouts, attempt caps, expiry, and the error each one returns. Each limit has
+   one test that breaks it and checks what the plugin does: waits, retries, or
+   says why. The limit is one constant that both the client and the fake use, so
+   they cannot drift. A limit that isn't documented is measured once against the
+   real device, with the date written next to it.
+
+   To show the old code fails, run it from its own checkout: `git worktree add <dir> main`,
+   then run the tests with `PYTHONPATH=<dir>/src`. Print the module's `__file__` in that
+   run, so the output shows which copy was tested. An editable install in a shared
+   environment loads the branch, and the old code then 'passes'.
+
+   A fake knows only the limits someone wrote down. The backstop is checklist
+   rule 7 (every change is read back), plus one live try on the real device
+   before a tool counts as done.
 7. Its instructions say when to ask the owner and which tool takes which token.
 
 ## Wiring it in
@@ -111,7 +127,10 @@ these, in order, so a new plugin starts at the level the others reached:
 5. **Wired in** as in "Wiring it in" above. The owner's approval is one command
    the manager gives them.
 6. **Checked by voice**: after the restart, one of its tools is called through
-   the bridge and its first lines are what the voice sees.
+   the bridge and its first lines are what the voice sees. Then the voice is
+   asked what it needs, as
+   [docs/voice-feedback.md](../../../docs/voice-feedback.md) describes, and each
+   point becomes an issue or a pull request.
 
 Never approve a plugin for the owner, and never put a tool on the allow-list
 that the plugin's own session has not called safe for voice.

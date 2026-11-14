@@ -137,6 +137,19 @@ cannot be tidied at the end by squashing it, which is why `committed.toml`
 refuses a fixup and a work-in-progress commit rather than trusting you to clean
 up later.
 
+A fixup is still the way to correct an earlier commit on your own branch, as
+long as it is folded in before you push:
+
+<!-- not run: it needs a branch with a commit to correct, and it rewrites that branch -->
+```
+git commit --fixup <the commit it corrects>
+git rebase --autosquash origin/main
+git push --force-with-lease origin <your branch>
+```
+
+The commit-msg hook lets a `fixup!`, `amend!` or `squash!` commit through for
+this, and continuous integration still refuses one that reaches a pull request.
+
 ## More rules for every change
 
 - **A tool's first line says what it is for.** The Claude app shows an
@@ -152,7 +165,9 @@ up later.
 - **Never break what Hermes or the voice app uses.** Other programs call the
   bridge's tools by name and read their fields. Add a tool or a field rather
   than renaming or removing one, and say in the pull request which callers it
-  touches. A change that must break one is agreed with that caller first.
+  touches. A change that must break one is agreed with that caller first. The
+  voice is the main caller, so once a tool changes, ask it what it needs, as
+  [docs/voice-feedback.md](docs/voice-feedback.md) describes.
 - **No links to a Claude session in a commit message.** A `Claude-Session:`
   line, or any `claude.ai/code/session_` address, points into one person's
   account and is a dead link to everyone else. `scripts/no_session_links.py`

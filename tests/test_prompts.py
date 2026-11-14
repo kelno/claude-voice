@@ -1,8 +1,10 @@
 """Questions and approvals from any session, answered from the phone while the companion app is open."""
 
 import asyncio
+import http.server
 import json
 import logging
+import threading
 
 import httpx
 import pytest
@@ -220,6 +222,121 @@ def test_a_refusal_from_the_phone_tells_claude_why():
     bare = phone_hook.handle(hook_input, Bridge(answer={"decision": "maybe"}), timeout=5)
     assert given["hookSpecificOutput"]["decision"] == {"behavior": "deny", "message": "not now"}
     assert bare["hookSpecificOutput"]["decision"] == {"behavior": "deny", "message": "Refused from the phone."}
+
+
+def test_a_question_never_opens_a_second_prompt_as_an_approval():
+    # Claude Code also asks permission for the question itself once the question hook steps aside,
+    # measured: PermissionRequest fires for AskUserQuestion 0.1 s after PreToolUse.
+    bridge = Bridge(answer={"decision": "allow"})
+    hook_input = {**question_input(), "hook_event_name": "PermissionRequest"}
+    assert phone_hook.handle(hook_input, bridge, timeout=5) == {}
+    assert bridge.posted == []
+
+
+def test_a_call_with_several_questions_goes_to_the_screen():
+    # Claude Code drops a question left out of the answers without a word, measured; the phone shows only one.
+    two = question_input()
+    second = {**two["tool_input"]["questions"][0], "question": "Which size?"}
+    two["tool_input"] = {"questions": [two["tool_input"]["questions"][0], second]}
+    bridge = Bridge(answer={"answer": "blue"})
+    assert phone_hook.handle(two, bridge, timeout=5) == {}
+    assert bridge.posted == []
+
+
+def test_the_hook_leaves_alone_the_session_the_voice_is_talking_to():
+    # Claude Code holds every hook's answer until the slowest is done, measured, so a waiting
+    # phone hook would delay the voice's own refusal of the box for minutes.
+    bridge = Bridge(answer={"answer": "blue"})
+    assert phone_hook.handle(question_input(), bridge, timeout=5, spoken_to="s1") == {}
+    assert bridge.posted == []
+    assert phone_hook.handle(question_input(), Bridge(answer={"answer": "blue"}), timeout=5, spoken_to="s2")
+
+
+def test_the_session_the_voice_talks_to_is_read_from_its_target_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert phone_hook.spoken_to() == ""
+    (tmp_path / "voice-bridge").mkdir()
+    target = tmp_path / "voice-bridge" / "target.json"
+    target.write_text("not json")
+    assert phone_hook.spoken_to() == ""
+    target.write_text(json.dumps({"kind": "project", "claude_session_id": "s1"}))
+    assert phone_hook.spoken_to() == ""
+    target.write_text(json.dumps({"kind": "session", "claude_session_id": "s1"}))
+    assert phone_hook.spoken_to() == "s1"
+
+
+class LostPrompts(http.server.BaseHTTPRequestHandler):
+    """A bridge that has restarted: it knows no prompt any more."""
+
+    waits = 0
+
+    def do_GET(self):  # noqa: N802 - the name http.server calls
+        LostPrompts.waits += 1
+        self.send_response(404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(b'{"error": "this prompt is gone"}')
+
+    def log_message(self, *args):
+        pass
+
+
+def test_a_prompt_the_bridge_has_lost_goes_back_to_the_screen_at_once():
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), LostPrompts)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        LostPrompts.waits = 0
+        bridge = phone_hook.HttpBridge(f"http://127.0.0.1:{server.server_address[1]}", "t")
+        with pytest.raises(LookupError):
+            bridge.wait_for("p1", 300)
+        assert LostPrompts.waits == 1
+    finally:
+        server.shutdown()
+
+
+class RefusingBridge(http.server.BaseHTTPRequestHandler):
+    """A bridge that opens a prompt, then refuses every wait with one status."""
+
+    status = 500
+    waits = 0
+    closed: list[str] = []
+
+    def _reply(self, status, body):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(body).encode())
+
+    def do_POST(self):  # noqa: N802 - the name http.server calls
+        sent = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path.endswith("/close"):
+            RefusingBridge.closed.append(sent["how"])
+            self._reply(200, {})
+        else:
+            self._reply(200, {"id": "p1", "wait": True})
+
+    def do_GET(self):  # noqa: N802 - the name http.server calls
+        RefusingBridge.waits += 1
+        self._reply(RefusingBridge.status, {"error": "refused"})
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.mark.parametrize("status", [401, 500])
+def test_a_wait_the_bridge_refuses_goes_back_to_the_screen_at_once(status):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RefusingBridge)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        RefusingBridge.status, RefusingBridge.waits, RefusingBridge.closed = status, 0, []
+        bridge = phone_hook.HttpBridge(f"http://127.0.0.1:{server.server_address[1]}", "t")
+        question = {"questions": [{"question": "Which?", "options": [{"label": "A"}]}]}
+        hook_input = {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": question}
+        assert phone_hook.handle(hook_input, bridge) == {}
+        assert RefusingBridge.waits == 1
+        assert RefusingBridge.closed == ["screen"]
+    finally:
+        server.shutdown()
 
 
 def test_the_hook_is_given_to_claude_code_only_for_questions_and_permission_prompts():

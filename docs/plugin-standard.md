@@ -12,7 +12,9 @@ says how to build one; this page says what it must do once built.
 
 ## A. How a plugin behaves towards the voice
 
-These hold for every plugin, wherever it lives, a fork included.
+These hold for every plugin, wherever it lives, a fork included. Whether they
+are met is decided by the voice that uses the tools, so it is asked after every
+new or changed tool, as [voice-feedback.md](voice-feedback.md) describes.
 
 1. **Names the voice can tell apart.** A tool's name says what it does, and no
    two names sound alike. The pairs that must not be confused (`vacuum_start`
@@ -42,7 +44,9 @@ These hold for every plugin, wherever it lives, a fork included.
    asks: "The garage TV is on. Do you want me to switch it off?" Nothing risky happens on the
    request alone. Nothing is retried on the plugin's own initiative. The token
    is spent only once the action has been sent, so a confirm that never arrived
-   can be tried again with the same token while it is fresh. A spoken phrase the
+   can be tried again with the same token while it is fresh. A plugin may be
+   stricter and spend the token on arrival, so a wrong answer cancels the
+   question, if a rule and its test in that plugin say so. A spoken phrase the
    owner sets in their own file may stand in for the yes, if a decision record
    in that plugin says so.
 8. **Hands off.** A device the owner has marked to be left alone is left alone
@@ -100,12 +104,12 @@ owner's fork, with checks of its own there.
 | The first-line rule as a test over every feature | tv-mcp, `tests/test_tool_openings.py` |
 | A budget for how many tools and characters the voice gets by default | tv-mcp, `tests/test_context_budget.py` |
 | A scan that refuses private addresses in the repository | tv-mcp, `scripts/private_data_scan.py` |
-| A slow cloud still answers inside the budget, saying what it knows | dreame-mcp, `Vacuum._guarded`, `test_slow_cloud_answers_within_the_budget` |
+| A slow cloud still answers inside the budget, saying what it knows | dreame-mcp, `Vacuum._guarded`, `test_a_slow_cloud_still_answers_within_the_budget` |
 | Reading the state back after an action | dreame-mcp, `Vacuum._after` |
-| A simulator on the clock, marked in every answer | dreame-mcp, `simulator.py`, `test_simulated_says_so` |
+| A simulator on the clock, marked in every answer | dreame-mcp, `simulator.py`, `test_a_simulated_answer_says_so` |
 | Rules that must fail when switched off, in Python and C++ | garage-door, `scripts/mutate.py` and `scripts/mutations.toml` |
 | Documented commands that run in a test | garage-door, `tests/test_documented_commands.py` |
-| A one-time token that a wrong answer cancels | garage-door, ADR-GD-008 and its tests |
+| A one-time token that a wrong answer cancels | garage-door, `GarageService.confirm`, `test_a_token_works_once` |
 
 When a plugin does something better than this page asks, it goes in the table,
 and the others take it up.

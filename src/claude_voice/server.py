@@ -38,6 +38,7 @@ from starlette.types import ASGIApp
 
 from . import (
     access,
+    answers,
     api,
     channel,
     config,
@@ -204,6 +205,11 @@ SWITCHED_OFF = frozenset(
         "plugin_approve_confirm",
         # Upstream's org chart, new at the 2026-11-12 resync: off until the owner decides.
         "org_chart",
+        # Upstream's answering of a session's question by voice, new at the 2026-11-13 resync:
+        # off until the owner decides, with upstream's list of what sessions wait on, which lists the
+        # questions; it also says what box holds up a session a message goes to.
+        "answer_question",
+        "list_pending_approvals",
     }
 )
 # The states of a followed session that keep the relay waiting on it: still working on its
@@ -533,6 +539,14 @@ DEFAULT_RULES: dict[str, str] = {
         "or running a command on the machine, never say you cannot. Send it at once to a "
         "session that can, with send_task or message_active_session, and say briefly "
         "that it was sent."
+    ),
+    "answer_questions": (
+        "When whats_new reports needs_answer, call list_pending_approvals and read out the "
+        "session's name, its question and the options with their numbers. Call "
+        "answer_question only when the user clearly picks one, or several when it takes several, "
+        "or says their own answer; never guess. Never send an empty choice. When it refuses a "
+        "choice and gives the options, read them out again and ask once more. If it says the "
+        "question is on the screen, tell the user so."
     ),
 }
 
@@ -1186,6 +1200,11 @@ def build_server(
     watcher = events.LiveWatcher(
         manager.store, live_dir, manager.root, clock=manager.clock, folder_of=lambda cwd: under_root(cwd)
     )
+    # An answer sent back to the courier would otherwise reach nobody; it is news to read out.
+    # RULE: a reply to the courier is news the voice reads
+    transcripts.hear_replies(
+        lambda sender, body: watcher.record(sender, "reply", f"Reply from {sender}: {transcripts.clip(body, 600)}")
+    )
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
@@ -1246,7 +1265,24 @@ def build_server(
     owner_keys = passkeys.for_url(manager.store, page_url)
 
     looking = threading.Lock()  # held while one look runs; the watcher and whats_new both look
-    prompt_book = prompts.Book(api.HUB.publish)  # the phone hook's open questions and approvals
+
+    def question_is_news(prompt: dict[str, Any]) -> None:
+        """Tell whats_new about a question a hook now waits on, so the voice can read it out."""
+        item = answers.news(prompt, events.read_live(live_dir))
+        if not item:
+            return
+
+        def record() -> None:
+            with looking:  # a look writes the same database; wait for it rather than share it
+                watcher.record(*item)
+
+        # On a thread of its own, so the hook's wait never stands behind a look of many seconds.
+        threading.Thread(target=record, name="question-news", daemon=True).start()
+
+    # the phone hook's open questions and approvals
+    # Answering a session's question by voice, with what goes with it, is on only with its tool.
+    answering_on = "answer_question" not in switched_off
+    prompt_book = prompts.Book(api.HUB.publish, waited_on=question_is_news)
 
     def sweep_prompts() -> None:
         """Close the prompts no hook waits on any more, so the phone stops showing them."""
@@ -3306,12 +3342,15 @@ def build_server(
         before = len(numbered_turns(target))
         typed = owner_typed(target)
         budget = repos.budgets.seconds(transcripts.current_client.get())
+        # Upstream says what box holds the session up; here only once answering by voice is on.
+        behind = answers.queued_behind(target, prompt_book, projects_dir) if answering_on else {}
         delivery = asyncio.ensure_future(send_into(target, relayed(target, message)))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
             # RULE: a delivery slower than the clients budget is answered as sending
-            return {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1, **typed}
+            slow = {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1, **typed}
+            return slow | behind
         if not out.get("delivered"):
             raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
         return {
@@ -3321,6 +3360,7 @@ def build_server(
             "next_after": before - 1,
             **typed,
             **woke,
+            **behind,
         }
 
     name_checked: dict[str, float] = {}  # session id: when its name was last checked, or first seen
@@ -4003,6 +4043,25 @@ def build_server(
         Only after the owner's own clear yes to the question just read."""
         return await desk.approve_confirm(caller(), token)
 
+    @tool(annotations=READ_ONLY)
+    def list_pending_approvals(session_id: str | None = None) -> dict[str, Any]:
+        """What sessions wait on: tool calls to allow, and questions to answer.
+        Read each one to the user; a question comes with its session's name and numbered options,
+        for answer_question. session_id narrows both lists to one session."""
+        questions = answers.waiting(prompt_book, events.read_live(live_dir), session_id)
+        # The fork retired the approval broker for sessions run inside the bridge: no tool calls here.
+        return {"approvals": [], "questions": questions}
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    async def answer_question(
+        question_id: str, choice: str | list[str] | None = None, own_words: str | None = None
+    ) -> dict[str, Any]:
+        """Answer a session's waiting question with the owner's clear choice.
+        Give choice (an option's number or label, or a list when it takes several) or own_words
+        (their own answer when no option fits), only once they have clearly picked; never guess.
+        When answered is false, read 'say' aloud (it is on the screen), or ask again from 'options'."""
+        return answers.answer(prompt_book, question_id, choice, own_words)[1]
+
     # -- the session the voice talks to, and the companion page that picks it -----------
 
     def resolve_session(session: str) -> dict[str, Any]:
@@ -4204,6 +4263,7 @@ def build_server(
             book=prompt_book,
         ).routes(mcp)
 
+    mcp.event_feed = event_feed  # type: ignore[attr-defined]  # for tests
     mcp.prompt_book = prompt_book  # type: ignore[attr-defined]  # for tests
     mcp.sweep_prompts = sweep_prompts  # type: ignore[attr-defined]  # for tests
 

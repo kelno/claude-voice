@@ -154,6 +154,60 @@ find = 'reason = self\._fits\(prompt, body\)'
 replace = 'reason = None'
 
 [[rule]]
+name = "an option is chosen by its number or its label"
+file = "src/claude_voice/answers.py"
+find = 'if text.isdigit\(\) and 1 <= int\(text\) <= len\(options\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a question no hook waits on is refused as on the screen"
+file = "src/claude_voice/answers.py"
+find = 'if prompt is None or prompt\["answer"\] is not None:'
+replace = 'if prompt is None:'
+
+[[rule]]
+name = "a spoken choice that is not an option is refused with the options"
+file = "src/claude_voice/answers.py"
+find = 'reason = body.get\("error"\) or fits\(prompt, body\)'
+replace = 'reason = body.get("error")'
+
+[[rule]]
+name = "a question is news once a hook waits on it"
+file = "src/claude_voice/prompts.py"
+find = 'if not hook\["told"\]:'
+replace = 'if True:'
+
+[[rule]]
+name = "a prompt counts as waited on only while a hook waits or did a moment ago"
+file = "src/claude_voice/prompts.py"
+find = 'return bool\(hook\["waiting"\]\) or \(ended is not None'
+replace = 'return True'
+
+[[rule]]
+name = "a wait goes on and is counted off when its news fails"
+file = "src/claude_voice/prompts.py"
+find = 'except Exception:'
+replace = 'except KeyError:'
+
+[[rule]]
+name = "a message to a session waiting on a box says what it waits on"
+file = "src/claude_voice/answers.py"
+find = 'if row.get\("status"\) != "waiting" or waiting_for not in BOXES:'
+replace = 'if True:'
+
+[[rule]]
+name = "an empty pick is refused"
+file = "src/claude_voice/answers.py"
+find = 'if not said:'
+replace = 'if False:'
+
+[[rule]]
+name = "a choice named twice counts once"
+file = "src/claude_voice/answers.py"
+find = 'picked = list\(dict.fromkeys\(_label\(question, c\) for c in said\)\)'
+replace = 'picked = [_label(question, c) for c in said]'
+
+[[rule]]
 name = "a way of starting a session that does not exist is refused"
 file = "src/claude_voice/config.py"
 find = 'if launch not in LAUNCHES:'
@@ -1195,6 +1249,36 @@ find = 'bridge.close\(prompt_id, "screen"\)$'
 replace = 'pass'
 
 [[rule]]
+name = "a question never opens a second prompt as an approval"
+file = "src/claude_voice/phone_hook.py"
+find = 'if event == "PermissionRequest" and tool != "AskUserQuestion":'
+replace = 'if event == "PermissionRequest":'
+
+[[rule]]
+name = "a call with several questions goes to the screen"
+file = "src/claude_voice/phone_hook.py"
+find = 'if len\(tool_input.get\("questions"\) or \[\]\) > 1:'
+replace = 'if False:'
+
+[[rule]]
+name = "the hook leaves alone the session the voice is talking to"
+file = "src/claude_voice/phone_hook.py"
+find = 'if spoken_to and session == spoken_to:'
+replace = 'if False:'
+
+[[rule]]
+name = "a prompt the bridge has lost goes back to the screen at once"
+file = "src/claude_voice/phone_hook.py"
+find = 'if status in \(404, 410\):'
+replace = 'if False:'
+
+[[rule]]
+name = "a wait the bridge refuses goes back to the screen at once"
+file = "src/claude_voice/phone_hook.py"
+find = 'if status not in \(200, 204\):'
+replace = 'if False:'
+
+[[rule]]
 name = "a prompt with no hook waiting on it closes"
 file = "src/claude_voice/prompts.py"
 find = 'if how:'
@@ -1259,6 +1343,36 @@ name = "a session at rest when the PC shut down is woken too"
 file = "src/claude_voice/server.py"
 find = 'if job.get\("state"\) not in INTERRUPTED or not cwd'
 replace = 'if job.get("state") != "failed" or not cwd or sid not in was_live or not store.was_started(sid):'
+
+[[rule]]
+name = "a write from one thread never lands inside another"
+file = "src/claude_voice/store.py"
+find = 'self\.db = sqlite3\.connect\(path, check_same_thread=False, factory=OneWriterAtATime\)'
+replace = 'self.db = sqlite3.connect(path, check_same_thread=False)'
+
+[[rule]]
+name = "a turn a reply started never ends a delivery"
+file = "src/claude_voice/transcripts.py"
+find = 'if isinstance\(m, ResultMessage\) and isinstance\(origin, dict\) and origin\.get\("kind"\) == "peer":'
+replace = 'if False:'
+
+[[rule]]
+name = "a reply to the courier is passed on as news"
+file = "src/claude_voice/transcripts.py"
+find = 'if self\.on_reply is not None:'
+replace = 'if False:'
+
+[[rule]]
+name = "a carried message says the voice reads the reply"
+file = "src/claude_voice/transcripts.py"
+find = 'return await _courier\.deliver\(name, f"\{text\}\\n\\n\{READ_BY_VOICE\}"\)'
+replace = 'return await _courier.deliver(name, text)'
+
+[[rule]]
+name = "a reply to the courier is news the voice reads"
+file = "src/claude_voice/server.py"
+find = 'transcripts\.hear_replies\('
+replace = '(lambda listen: None)('
 
 [[rule]]
 name = "a session still running is never woken"
