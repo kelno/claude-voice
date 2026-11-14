@@ -156,6 +156,18 @@ async def test_the_name_check_comes_once_an_hour_on_the_next_relayed_message(tmp
     assert '"{billing}"' in third and "rename_session" in third
 
 
+async def test_the_name_check_clock_survives_a_bridge_restart(tmp_path, root, live):
+    # The bridge restarts often; a session messaged in short bursts after each restart was never checked.
+    session(live, root, "{billing}")
+    deliver, clock = Recorder(), Clock()
+    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
+        await call(c, "message_active_session", session="{billing}", message="before the restart")
+    clock.now += HOUR
+    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
+        await call(c, "message_active_session", session="{billing}", message="after the restart")
+    assert checks(deliver)[1] is not None
+
+
 async def test_the_name_check_asks_for_a_proposal_when_the_owner_chose_the_name(tmp_path, root, live):
     session(live, root, "Billing", source="user")
     deliver, clock = Recorder(), Clock()

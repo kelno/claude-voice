@@ -153,9 +153,9 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why: the assistant names a session at start and could never change its mind.
 - Expect pushback: it writes Claude Code's internal state, an undocumented format found by reading Claude Code's code (`jobStateNameSync`), which may change with any release. Tests: `tests/test_rename.py`.
 
-### 6g. Session names that keep up with the work — fork "Keep session names current and mark the ones an agent chose"
+### 6g. Session names that keep up with the work — fork "Keep session names current and mark the ones an agent chose", "Keep the name check's hour across bridge restarts"
 
-- What: a name an agent gives (`rename_session` or `start_active_session` without `owner_chose`) is put in curly braces; a name without them is the owner's, unless Claude Code made it itself (`nameSource` "auto"), and only `owner_chose` renames it; others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. About once an hour the note after a relayed message asks the session whether its name still fits. Name lookup ignores the braces.
+- What: a name an agent gives (`rename_session` or `start_active_session` without `owner_chose`) is put in curly braces; a name without them is the owner's, unless Claude Code made it itself (`nameSource` "auto"), and only `owner_chose` renames it; others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. About once an hour the note after a relayed message asks the session whether its name still fits; the hour is kept in the store, so a restart doesn't start it over. Name lookup ignores the braces.
 - Why: names drift from what sessions do, and someone who remembers a name finds it gone.
 - Expect pushback: braces inside the name are a convention, and a new tool; upstream may prefer a field on the session. Builds on 6t. Tests: `tests/test_name_upkeep.py`, the news one in `tests/test_news.py`.
 

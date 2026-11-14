@@ -116,6 +116,8 @@ ANSWER_IN_TEXT = "{name} is waiting for your reply text: answer there, not by di
 # Added after the note above at most once in this long per session, so names keep up with the work
 # (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
 NAME_CHECK_SECONDS = 3600.0
+# A session's name check clock is forgotten once it is this old, so the store doesn't keep every id.
+NAME_CHECKED_KEEP_SECONDS = 30 * 86400.0
 NAME_CHECK_FREE = (
     '[From the claude-voice bridge, about once an hour: this session is named "{name}". If that no longer '
     'says what it is working on, rename it with the bridge\'s rename_session tool (session "{name}"); the '
@@ -3459,7 +3461,11 @@ def build_server(
             **behind,
         }
 
-    name_checked: dict[str, float] = {}  # session id: when its name was last checked, or first seen
+    def name_checked() -> dict[str, float]:
+        """Session id: when its name was last checked, or first seen; kept in the store, since the
+        bridge restarts often and a clock in memory started over each time."""
+        # RULE: the name check clock survives a bridge restart
+        return dict(manager.store.get_setting("name_checked") or {})
 
     async def relay_note(waits: bool) -> str:
         """The note under a relayed message, by who sends it: the claude.ai relay, which has no inbox,
@@ -3475,17 +3481,25 @@ def build_server(
         """A relayed message as the session gets it: the bridge's note after it, and about once an hour
         a check that its name still fits. A session first seen gets none, its name being new."""
         text = f"{message}\n\n{note}"
-        sid, now = str(target.get("sessionId")), manager.clock()
-        last = name_checked.setdefault(sid, now)
+        sid, now, checked = str(target.get("sessionId")), manager.clock(), name_checked()
+        last = checked.setdefault(sid, now)
+        if last == now:
+            keep_name_checked(checked, now)
         # RULE: the name check comes once an hour on the next relayed message
         if now - last < NAME_CHECK_SECONDS:
             return text
         # RULE: no name check while a proposal waits for the owner
         if name_proposal(target):
             return text
-        name_checked[sid] = now
+        checked[sid] = now
+        keep_name_checked(checked, now)
         check = NAME_CHECK_OWNERS if renames.owners(target) else NAME_CHECK_FREE
         return f"{text}\n\n{check.format(name=str(target.get('name')))}"
+
+    def keep_name_checked(checked: dict[str, float], now: float) -> None:
+        """Save the name check clocks, leaving out those not reset for a month."""
+        recent = {sid: at for sid, at in checked.items() if now - at < NAME_CHECKED_KEEP_SECONDS}
+        manager.store.set_setting("name_checked", recent)
 
     def owner_typed(target: dict[str, Any]) -> dict[str, str]:
         """The note for a send to a session the owner typed in since the relay last read it."""

@@ -1,0 +1,5 @@
+[[rule]]
+name = "the name check clock survives a bridge restart"
+file = "src/claude_voice/server.py"
+find = 'return dict\(manager\.store\.get_setting\("name_checked"\)'
+replace = 'return {}'
