@@ -41,7 +41,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - What: every message sent with `message_active_session` / `ask_active_session` ends with a short bridge note: who it comes from, that the owner sees neither it nor the reply unless the sender passes them on, how to answer, self-contained. From the voice assistant (`RELAYED_MESSAGE_NOTE`), which has no inbox: answer in the reply text rather than SendMessage. From a Claude Code session on the same computer (`SESSION_MESSAGE_NOTE`, found by the call's tool-call id): answer it by SendMessage to its name, which wakes it, except for a question, which waits for the reply text.
 - Why: receiving sessions answered with SendMessage into nothing and wrote to the owner about text only the assistant had seen.
-- Expect discussion: the notes use this fork's role names ("the relay"); upstream would need its own wording, and maybe a setting. Changing bridge sessions' system prompt is a visible behaviour change.
+- Expect discussion: the notes use this fork's role names ("the relay"); upstream would need its own wording, and maybe a setting. Every relayed message gets longer by the note, which a session sees in its transcript.
 - Tests: `tests/test_relayed.py`.
 
 ### 6b. Project list from Claude Code's history — fork "List the folders Claude Code was used in, wherever they are"
