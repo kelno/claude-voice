@@ -272,6 +272,8 @@ RENAME_RETRY_SECONDS = 60.0
 QUIET_SECONDS = 24 * 3600
 # Who started a turn, by the origin Claude Code records on the message that started it.
 STARTED_BY = {"human": "the owner typing", "peer": "another session", "task-notification": "a background task"}
+# Who wrote a message in a session, as a digest names them: the owner unless Claude Code says otherwise.
+SPEAKERS = {"peer": "Another session", "channel": "A channel", "task-notification": "Background task"}
 
 
 def started_by(turn: dict[str, Any]) -> str:
@@ -4059,8 +4061,12 @@ def build_server(
     def conversation_end(target: dict[str, Any], limit: int) -> tuple[list[str], list[str]]:
         """A session's conversation as lines, the end kept up to `limit` characters, and the rest."""
         lines = []
-        for t in numbered_turns(target):
-            who = "Owner" if t["role"] == "user" else "Claude"
+        for t in numbered_turns(target, origins=True):
+            who = "Claude"
+            if t["role"] == "user":
+                t = stubbed(t)  # a relayed message as one line, without the bridge's note
+                # RULE: a digest names who wrote each message
+                who = "Relay" if t.get("relayed") else SPEAKERS.get(str(t.get("origin")), "Owner")
             tools = f" [used: {', '.join(t['tools'])}]" if t.get("tools") else ""
             lines.append(f"{who}: {t['text']}{tools}")
         kept: list[str] = []

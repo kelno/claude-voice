@@ -1,0 +1,5 @@
+[[rule]]
+name = "a digest names who wrote each message"
+file = "src/claude_voice/server.py"
+find = 'who = "Relay" if t.get\("relayed"\) else SPEAKERS.get\(str\(t.get\("origin"\)\), "Owner"\)'
+replace = 'who = "Owner"'

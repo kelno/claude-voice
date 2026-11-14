@@ -124,3 +124,33 @@ async def test_the_caller_can_choose_the_language_of_the_digest(setup):
         await c.call_tool("digest_session", {"session": "billing-ab", "language": "norsk"})
         await c.call_tool("digest_session", {"session": "billing-ab"})
     assert summarize.languages == ["norsk", None]
+
+
+async def test_a_digest_names_who_wrote_each_message(setup):
+    # Every message in a session used to read "Owner:", so a digest could tell the owner they had
+    # asked what a relay asked, and the bridge's note under each relayed message filled its room.
+    from claude_voice.server import RELAYED_MESSAGE_NOTE
+
+    tag = '<channel source="plugin:relay-channel:claude-voice" via="claude-voice bridge">'
+    lines = [
+        {"type": "user", "message": {"role": "user", "content": "Fix the export"}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Fixed."}]}},
+        {
+            "type": "user",
+            "isMeta": True,
+            "origin": {"kind": "channel", "server": "plugin:relay-channel:claude-voice"},
+            "message": {"role": "user", "content": f"{tag}\nWhich folder?\n\n{RELAYED_MESSAGE_NOTE}\n</channel>"},
+        },
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Billing."}]}},
+    ]
+    turns = [transcripts._lean(json.dumps(line).encode()) for line in lines]
+    summarize = Summarizer()
+    async with Client(bridge(setup, turns, summarize)) as c:
+        await c.call_tool("digest_session", {"session": "billing-ab"})
+    text, _ = summarize.calls[0]
+    assert text.splitlines() == [
+        "Owner: Fix the export",
+        "Claude: Fixed.",
+        "Relay: [relayed message] Which folder?",
+        "Claude: Billing.",
+    ]
