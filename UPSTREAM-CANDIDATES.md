@@ -174,7 +174,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 - What: once a turn has ended, `wait_for_session`, `ask_active_session` and `read_session_output` return its last message whole up to `FINAL_CHARS` (12,000), with `reply_cut`/`reply_length` (or `cut`/`length`) past that; other turns keep `max_chars`.
 - Why: final reports of 5,000 to 6,000 characters needed two or three more reads. Small and independent; offer early. Test first: `tests/test_final_reply.py`.
-- Later fix ("Give a read the whole reply, past its page"): a read's page could fill before the reply (a long relayed message took it), leaving the reply cut for another read the relay skipped. A read now returns `reply`, `reply_final` and `reply_index` the way a wait does, from one shared function, whole even past the page; a relayed message shows in a read as one line; and while part of a reply is unread, the result's next step says to read the rest.
+- Later fix ("Give a read the whole reply, past its page"): a read's page could fill before the reply (a long relayed message took it), leaving the reply cut for another read the relay skipped. A read now returns `reply`, `reply_final` and `reply_index` the way a wait does, from one shared function, whole even past the page; a relayed message shows in a read as one line, starting with its own words rather than the courier's or the channel's wrapper ("Start a relayed message's one line with its own words"); and while part of a reply is unread, the result's next step says to read the rest.
 
 ### 6w. Briefs written by the session that holds the context — fork "Have the session that holds the context write a new brief"
 

@@ -369,6 +369,11 @@ FINAL_CHARS = 12_000
 # reply (seen live, 2026-11-12).
 RELAYED_STUB = "[relayed message] "
 RELAYED_STUB_CHARS = 80
+# What comes before a relayed message's own words: the line and tag of a message from another
+# session (the courier's), or the tag of the bridge's channel.
+RELAY_WRAPPER = re.compile(
+    r"^\s*(?:Another Claude session sent a message:\s*)?<(?:cross-session-message|channel)\b[^>]*>"
+)
 # Said when a result leaves part of the reply unread: the relay told the owner a reply it had only
 # part of (seen live, 2026-11-12).
 NEXT_PARTIAL = (
@@ -3670,7 +3675,8 @@ def build_server(
         # RULE: a relayed message shows in a read as one line
         if t.get("role") != "user" or cut < 0:
             return t
-        words = text[:cut].strip()
+        # RULE: the one line of a relayed message starts with its own words
+        words = RELAY_WRAPPER.sub("", text[:cut]).strip()
         return {**t, "text": RELAYED_STUB + transcripts.clip(words, RELAYED_STUB_CHARS), "relayed": True}
 
     async def await_reply(

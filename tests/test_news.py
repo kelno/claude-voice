@@ -1156,6 +1156,24 @@ async def test_a_session_stays_in_a_quiet_follow_after_its_reply_is_read(served)
     assert peer["news"] == "[Juniper] billing-ab (idle): new turn, started by another session, read with after=5"
 
 
+async def test_the_one_line_of_a_relayed_message_starts_with_its_own_words(served):
+    # A message relayed through the courier or the channel comes wrapped in a line and a tag that
+    # took most of its one line, leaving the relay little of its words to tell it apart.
+    url, desk = served
+    note = "[From the claude-voice bridge: this message comes from the relay, ...]"
+    channel = '<channel source="plugin:relay-channel:claude-voice" via="claude-voice bridge">'
+    peer = 'Another Claude session sent a message:\n<cross-session-message from="uds:x" from-name="Relay">'
+    desk.transcript.append(turn("user", f"{channel}\nWhich folder?\n\n{note}\n</channel>", "channel"))
+    desk.transcript.append(turn("assistant", "In billing."))
+    desk.transcript.append(turn("user", f"{peer}\nAnd the invoices?\n\n{note}\n</cross-session-message>", "peer"))
+    desk.transcript.append(turn("assistant", "Done too."))
+    http, client = conversation(url)
+    async with http, client as c:
+        out = await call(c, "read_session_output", session="billing-ab", after=1)
+    said = [t["text"] for t in out["turns"] if t["role"] == "user"]
+    assert said == ["[relayed message] Which folder?", "[relayed message] And the invoices?"]
+
+
 async def test_a_turn_the_relay_channel_started_is_named_as_another_relay_s(served):
     # Sessions the bridge starts get relayed messages through its channel: a new turn in a quiet
     # follow started that way came from another relay, not from the owner typing.

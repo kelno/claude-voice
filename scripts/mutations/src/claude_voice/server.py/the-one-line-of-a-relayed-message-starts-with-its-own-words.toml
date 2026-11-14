@@ -1,0 +1,5 @@
+[[rule]]
+name = "the one line of a relayed message starts with its own words"
+file = "src/claude_voice/server.py"
+find = 'words = RELAY_WRAPPER.sub\("", text\[:cut\]\).strip\(\)'
+replace = 'words = text[:cut].strip()'
