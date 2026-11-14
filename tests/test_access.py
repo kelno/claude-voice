@@ -302,7 +302,10 @@ def test_a_new_folder_is_trusted_by_itself_even_inside_a_repository(tmp_path):
     new.mkdir()
     assert access.trust_new_folder(new, config) == new.resolve().as_posix()
     projects = json.loads(config.read_text(encoding="utf-8"))["projects"]
-    assert projects == {"C:/elsewhere": {"hasTrustDialogAccepted": True}, new.resolve().as_posix(): {"hasTrustDialogAccepted": True}}
+    assert projects == {
+        "C:/elsewhere": {"hasTrustDialogAccepted": True},
+        new.resolve().as_posix(): {"hasTrustDialogAccepted": True},
+    }
 
 
 def test_a_new_folder_s_trust_that_cannot_be_written_says_why(tmp_path):

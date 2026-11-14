@@ -178,7 +178,18 @@ def trust_in_claude_code(folder: str | Path, config: Path = CLAUDE_CONFIG) -> st
     in the file is kept, and the file is replaced in one step, so a reader never sees half of it.
     Raises OSError or ValueError when the file can't be read or written.
     """
-    key = trust_root(Path(folder).resolve()).as_posix()
+    return _mark_trusted(trust_root(Path(folder).resolve()).as_posix(), config)
+
+
+def trust_new_folder(folder: str | Path, config: Path = CLAUDE_CONFIG) -> str:
+    """Mark a folder the bridge has just made trusted in Claude Code: that folder alone, even inside
+    a repository, since the owner approved trust only for it. Returns the key set; raises OSError or
+    ValueError when Claude Code's config file can't be read or written."""
+    return _mark_trusted(Path(folder).resolve().as_posix(), config)
+
+
+def _mark_trusted(key: str, config: Path) -> str:
+    """Set `hasTrustDialogAccepted` under `projects[key]` in Claude Code's config file."""
     data = json.loads(config.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{config} is not a JSON object")

@@ -1181,7 +1181,7 @@ def build_server(
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = transcripts.compact_stopped,
     stop_window: Callable[[int], None] = transcripts.stop_window,
-    trust_folder: Callable[[Path], None] = transcripts.trust_folder,
+    trust_folder: Callable[[Path], Any] | None = None,
     plugin_approvals: Path | None = None,
     plugin_client: Callable[[Any], Any] | None = None,
     machine_folder: Path = machines.FOLDER,
@@ -1251,6 +1251,9 @@ def build_server(
     transcripts.hear_replies(
         lambda sender, body: watcher.record(sender, "reply", f"Reply from {sender}: {transcripts.clip(body, 600)}")
     )
+
+    # A folder the bridge just made is trusted on its own, written where the passkey path writes too.
+    trust_new: Callable[[Path], Any] = trust_folder or (lambda folder: access.trust_new_folder(folder, claude_config))
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
@@ -2275,7 +2278,12 @@ def build_server(
                 new.mkdir()  # never over something that exists
                 folder_created = True
                 # RULE: only a folder the bridge just made is trusted for claude code
-                trust_folder(new)
+                try:
+                    trust_new(new)
+                except (OSError, ValueError) as exc:
+                    log.warning(
+                        "could not trust the new folder %s for Claude Code (%s); it asks in its window", new, exc
+                    )
         try:
             path = manager.resolve_folder(folder)
         except ValueError as exc:
