@@ -522,7 +522,12 @@ def _lean(raw: bytes) -> Any:
 def _completion_note(entry: dict[str, Any]) -> list[str]:
     """The tasks whose completion note this transcript line holds. Claude Code queues the note
     (a queue-operation line), then hands it over: as a user turn marked task-notification in the
-    desktop app, as an attachment from the command line. Any of them counts."""
+    desktop app, as an attachment from the command line. Any of them counts. A task stopped with
+    TaskStop gets no note: the stop's own result is its end."""
+    result = entry.get("toolUseResult")
+    if isinstance(result, dict) and result.get("task_id") and result.get("task_type"):
+        # RULE: a task stopped with TaskStop ends there
+        return [str(result["task_id"])]
     if entry.get("type") == "queue-operation":
         text = entry.get("content")
     elif (entry.get("attachment") or {}).get("type") == "queued_command":

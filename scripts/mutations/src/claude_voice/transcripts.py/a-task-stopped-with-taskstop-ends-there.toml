@@ -1,0 +1,5 @@
+[[rule]]
+name = "a task stopped with TaskStop ends there"
+file = "src/claude_voice/transcripts.py"
+find = 'return \[str\(result\["task_id"\]\)\]'
+replace = 'pass'

@@ -255,6 +255,22 @@ def test_a_helper_agent_resumed_runs_again_until_its_next_note(tmp_path):
     assert transcripts.background_tasks(_read(tmp_path / "again", [*lines, done])) == ["bcwyg4e4s"]
 
 
+def test_a_task_stopped_with_taskstop_ends_there(tmp_path):
+    # TaskStop ends a background task without a completion note: its own result is the end
+    # (seen 2026-11-14: a grep moved to the background and stopped at once held the Coordinator
+    # "background task still running" for hours, so compact_after_turn gave up).
+    stopped = {
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t5", "content": "s"}]},
+        "toolUseResult": {
+            "message": "Successfully stopped task: a694b47 (review)",
+            "task_id": "a694b47",
+            "task_type": "local_agent",
+        },
+    }
+    assert transcripts.background_tasks(_read(tmp_path, [*_task_lines(), stopped])) == []
+
+
 def uses(id_, name="Bash"):
     tool = {"type": "tool_use", "id": id_, "name": name, "input": {}}
     return json.dumps({"type": "assistant", "message": {"content": [tool]}})
