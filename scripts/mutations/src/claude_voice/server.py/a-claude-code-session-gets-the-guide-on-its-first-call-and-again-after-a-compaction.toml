@@ -1,0 +1,5 @@
+[[rule]]
+name = "a Claude Code session gets the guide on its first call, and again after a compaction"
+file = "src/claude_voice/server.py"
+find = 'fresh = key not in guided or compacted'
+replace = 'fresh = key not in guided'

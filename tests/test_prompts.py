@@ -10,7 +10,7 @@ import httpx
 import pytest
 from fakes import FakeClaude
 
-from claude_voice import api, phone_hook, prompts
+from claude_voice import api, phone_hook, presence, prompts
 from claude_voice.oauth import OAuthProvider
 from claude_voice.server import build_app, build_server
 from claude_voice.sessions import SessionManager
@@ -44,11 +44,21 @@ APPROVAL = {
 
 @pytest.fixture
 def app(tmp_path):
-    (tmp_path / "home").mkdir()
+    return bridge(tmp_path)[0]
+
+
+AT_THE_DESK = presence.Desktop(locked=False, idle_seconds=0.0)
+
+
+def bridge(tmp_path, desk=AT_THE_DESK):
+    (tmp_path / "home").mkdir(exist_ok=True)
     store = Store(tmp_path / "b.db")
     oauth = OAuthProvider(store, SECRET, HOST, static_token=SECRET)
     m = SessionManager(store, project_root=tmp_path / "home", client_factory=FakeClaude())
-    return build_app(build_server(m, oauth=oauth, conversations=lambda **k: [], live_dir=tmp_path / "live"))
+    seen = presence.Presence(desktop=desk if callable(desk) else lambda: desk)
+    seen.cache = 0  # every check reads the desktop afresh
+    server = build_server(m, oauth=oauth, conversations=lambda **k: [], live_dir=tmp_path / "live", presence=seen)
+    return build_app(server), seen
 
 
 def client(app):
@@ -61,6 +71,56 @@ async def test_a_prompt_waits_for_the_phone_only_while_the_app_is_open(app):
         with api.HUB.subscribe():
             open_ = (await c.post("/api/v1/prompts", json=QUESTION, headers=BEARER)).json()
     assert closed["wait"] is False and open_["wait"] is True
+
+
+async def test_a_question_waits_for_the_phone_only_while_the_owner_is_away_from_the_laptop(tmp_path):
+    locked, _ = bridge(tmp_path, presence.Desktop(locked=True, idle_seconds=0.0))
+    async with client(locked) as c:
+        opened = (await c.post("/api/v1/prompts", json=QUESTION, headers=BEARER)).json()
+    assert opened["wait"] is True
+
+
+async def test_a_prompt_waits_for_the_phone_after_the_voice_called(tmp_path):
+    app, seen = bridge(tmp_path, presence.Desktop(locked=None, idle_seconds=None))
+    seen.heard_voice()
+    async with client(app) as c:
+        opened = (await c.post("/api/v1/prompts", json=QUESTION, headers=BEARER)).json()
+    assert opened["wait"] is True
+
+
+async def test_reading_the_desktop_never_holds_up_the_bridge(tmp_path):
+    threads = []
+
+    def desk():
+        threads.append(threading.get_ident())
+        return AT_THE_DESK
+
+    app, _ = bridge(tmp_path, desk)
+    async with client(app) as c:
+        await c.post("/api/v1/prompts", json=QUESTION, headers=BEARER)
+    assert threads and threading.get_ident() not in threads
+
+
+class Lock:
+    """A screen that is locked until the test unlocks it."""
+
+    def __init__(self):
+        self.locked = True
+
+    def __call__(self):
+        return presence.Desktop(locked=self.locked, idle_seconds=0.0)
+
+
+async def test_a_waiting_prompt_goes_back_to_the_screen_once_the_owner_is_back(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "RECHECK", 0.05)
+    screen = Lock()
+    app, _ = bridge(tmp_path, screen)
+    async with client(app) as c:
+        opened = (await c.post("/api/v1/prompts", json=QUESTION, headers=BEARER)).json()
+        assert opened["wait"] is True
+        screen.locked = False
+        waited = await asyncio.wait_for(c.get(f"/api/v1/prompts/{opened['id']}/wait?seconds=30", headers=BEARER), 5)
+    assert waited.status_code == 409
 
 
 async def test_an_answer_from_the_phone_reaches_the_waiting_session_and_is_logged(app, caplog):

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a send after every reply is read waits for its own reply"
+file = "src/claude_voice/server.py"
+find = 'elif mark.get\("sent"\) is None or not unread_reply\(target, mark\):'
+replace = 'elif mark.get("sent") is None:'

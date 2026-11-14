@@ -1,0 +1,5 @@
+[[rule]]
+name = "a wait with no length given runs to the caller's limit"
+file = "src/claude_voice/server.py"
+find = 'seconds = MAX_WAIT_SECONDS if wait_seconds is None else wait_seconds'
+replace = 'seconds = WAIT_SECONDS if wait_seconds is None else wait_seconds'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "the result where following ends says there is nothing left to follow"
+file = "src/claude_voice/server.py"
+find = 'if active_before and not active:'
+replace = 'if False:'

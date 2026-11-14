@@ -1,0 +1,5 @@
+[[rule]]
+name = "a read counts a background task still running as working"
+file = "src/claude_voice/server.py"
+find = 'at_rest = session_state\(target\) == "idle"$'
+replace = 'at_rest = target.get("status") == "idle"'

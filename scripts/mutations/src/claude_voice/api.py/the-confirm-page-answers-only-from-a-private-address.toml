@@ -1,0 +1,5 @@
+[[rule]]
+name = "the confirm page answers only from a private address"
+file = "src/claude_voice/api.py"
+find = 'return ip.is_private or ip.is_loopback or any\(ip in net for net in TAILNET\)'
+replace = 'return True'

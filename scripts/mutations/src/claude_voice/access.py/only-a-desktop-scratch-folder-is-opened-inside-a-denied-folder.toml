@@ -1,0 +1,5 @@
+[[rule]]
+name = "only a Desktop scratch folder is opened inside a denied folder"
+file = "src/claude_voice/access.py"
+find = 'if inside is not None and not self._exempted\(p\):'
+replace = 'if inside is not None:'

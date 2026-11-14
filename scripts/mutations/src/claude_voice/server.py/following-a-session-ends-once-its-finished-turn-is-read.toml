@@ -1,0 +1,5 @@
+[[rule]]
+name = "following a session ends once its finished turn is read"
+file = "src/claude_voice/server.py"
+find = 'elif where == "read":'
+replace = 'elif False:'

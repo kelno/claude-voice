@@ -1,0 +1,5 @@
+[[rule]]
+name = "a resumed session keeps the permissions it has where the owner runs it"
+file = "src/claude_voice/session_modes.py"
+find = 'if session_id and SESSION_ID\.fullmatch\(session_id\):'
+replace = 'if False:'

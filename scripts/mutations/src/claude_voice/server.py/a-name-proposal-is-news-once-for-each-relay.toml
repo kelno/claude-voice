@@ -1,0 +1,5 @@
+[[rule]]
+name = "a name proposal is news once for each relay"
+file = "src/claude_voice/server.py"
+find = 'if not p or handle in p\["told"\] or handle in renames.answers_to\(d\):'
+replace = 'if not p:'

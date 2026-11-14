@@ -1,0 +1,5 @@
+[[rule]]
+name = "a wait on a named session counts a background task still running as working"
+file = "src/claude_voice/server.py"
+find = 'idle = session_state\(now\) == "idle"$'
+replace = 'idle = now.get("status") == "idle"'

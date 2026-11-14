@@ -1,0 +1,5 @@
+[[rule]]
+name = "an assertion counts only for the request its challenge was made for"
+file = "src/claude_voice/passkeys.py"
+find = 'if row is None or row\[0\] != purpose or self.clock\(\) > row\[1\]:'
+replace = 'if row is None:'

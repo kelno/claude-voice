@@ -1,0 +1,5 @@
+[[rule]]
+name = "an update runs the tests only when asked"
+file = "src/claude_voice/updater.py"
+find = 'if tests else \(\("install", install\),\)'
+replace = 'steps = (("install", install), ("test", tests))'

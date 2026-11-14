@@ -1,0 +1,5 @@
+[[rule]]
+name = "a name that differs only by the marker is in use"
+file = "src/claude_voice/renames.py"
+find = 'return bare\(name\) in \{bare\(n\) for n in taken\(rows, but\)\}'
+replace = 'return name in taken(rows, but)'

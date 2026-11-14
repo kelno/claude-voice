@@ -1,0 +1,5 @@
+[[rule]]
+name = "a request belongs to the session whose transcript holds the call"
+file = "src/claude_voice/transcripts.py"
+find = 'if needle in tail:'
+replace = 'if tail:'

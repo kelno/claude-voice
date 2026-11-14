@@ -1,0 +1,5 @@
+[[rule]]
+name = "a message from a claude code session says to answer it by direct message"
+file = "src/claude_voice/server.py"
+find = 'if sender is None:$'
+replace = 'if True:'

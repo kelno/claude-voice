@@ -1,0 +1,5 @@
+[[rule]]
+name = "a name given mid-turn reaches Claude Code once the session is idle"
+file = "src/claude_voice/server.py"
+find = 'if not claude_name or d.get\("status"\) != "idle" or store.started_session\(sid\) is None:'
+replace = 'if True:'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a background task runs until its completion note"
+file = "src/claude_voice/transcripts.py"
+find = 'running.pop\(ended, None\)'
+replace = 'pass'

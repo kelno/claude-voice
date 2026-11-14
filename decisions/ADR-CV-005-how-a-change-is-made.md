@@ -38,4 +38,6 @@ the session that held it.
 
 ## Related
 
-CONTRIBUTING.md, `scripts/mutations.toml`, `tests/test_rules.py`.
+CONTRIBUTING.md, `scripts/mutations/` (one row per rule, in a file of its own
+since 2026-11-14, so pull requests adding rows no longer collide; the older
+shared `scripts/mutations.toml` was emptied into it and removed), `tests/test_rules.py`.

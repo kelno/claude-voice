@@ -1,0 +1,5 @@
+[[rule]]
+name = "a new name already in use is refused"
+file = "src/claude_voice/server.py"
+find = 'if renames.in_use\(new_name, rows, but=sid\):'
+replace = 'if False:'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a started session gets the marker unless the owner named it"
+file = "src/claude_voice/server.py"
+find = 'name = renames.marked\(renames.clean\(name or ""\) or f"\{path.name\}-\{secrets.token_hex\(2\)\}"\)'
+replace = 'pass'

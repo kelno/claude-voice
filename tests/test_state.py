@@ -85,9 +85,34 @@ async def test_the_time_in_a_state_counts_from_its_last_change_and_each_change_i
     assert status[-1]["state"] == "idle" and status[-1]["previous"] == "working" and status[-1]["name"] == "billing-ab"
 
 
-async def test_a_change_is_announced_while_someone_listens_even_if_nobody_asks(world):  # noqa: F811
+def slow_looks(monkeypatch, seconds=0.5):
+    """Make each of the watcher's looks take `seconds`, as the first one can on a busy runner,
+    so a test cannot pass by luck. Returns an event set once the second look begins, which
+    means the first has finished: each look builds the session tree once."""
+    import threading
+    import time
+
+    from claude_voice.tree import SessionTree
+
+    build = SessionTree.build
+    looks: list[float] = []
+    second_look = threading.Event()
+
+    def slow(self):
+        looks.append(time.monotonic())
+        if len(looks) >= 2:
+            second_look.set()
+        time.sleep(seconds)
+        return build(self)
+
+    monkeypatch.setattr(SessionTree, "build", slow)
+    return second_look
+
+
+async def test_a_change_is_announced_while_someone_listens_even_if_nobody_asks(world, monkeypatch):  # noqa: F811
     import asyncio
 
+    second_look = slow_looks(monkeypatch)
     running(world, "billing-ab", "billing", "s1", status="busy")
     transcript(world, "billing", "s1", [says("on it")])
     store = Store(world / "b.db")
@@ -97,7 +122,8 @@ async def test_a_change_is_announced_while_someone_listens_even_if_nobody_asks(w
     )
     with api.HUB.subscribe() as events:
         async with Client(server):  # the watcher runs while the server does
-            await asyncio.sleep(0.3)
+            # A change is only news once a look has noted the state before it.
+            assert await asyncio.to_thread(second_look.wait, 30), "the watcher never looked twice"
             running(world, "billing-ab", "billing", "s1", status="idle")
             name, data = await asyncio.wait_for(events.get(), 5)
             while name != "status":
@@ -105,11 +131,13 @@ async def test_a_change_is_announced_while_someone_listens_even_if_nobody_asks(w
     assert data["state"] == "idle" and data["previous"] == "working"
 
 
-async def test_a_new_turn_is_announced_so_a_detail_view_need_not_poll(world):  # noqa: F811
+async def test_a_new_turn_is_announced_so_a_detail_view_need_not_poll(world, monkeypatch):  # noqa: F811
     import asyncio
     import json as _json
 
     from claude_agent_sdk import project_key_for_directory
+
+    second_look = slow_looks(monkeypatch)
 
     running(world, "billing-ab", "billing", "s1", status="busy")
     transcript(world, "billing", "s1", [says("on it")])
@@ -120,13 +148,98 @@ async def test_a_new_turn_is_announced_so_a_detail_view_need_not_poll(world):  #
     path = world / "projects" / project_key_for_directory(world / "home" / "billing") / "s1.jsonl"
     with api.HUB.subscribe() as events:
         async with Client(server):
-            await asyncio.sleep(0.3)
+            # A turn is only news once a look has seen the conversation's size before it.
+            # Each look builds the tree once, so a second build means the first look is done.
+            assert await asyncio.to_thread(second_look.wait, 30), "the watcher never looked twice"
             with path.open("a") as f:
                 f.write(
                     _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}})
                     + "\n"
                 )
             name, data = await asyncio.wait_for(events.get(), 5)
-            while name != "output":
+            # The first look announces the turn already there; the one written now is the news.
+            while name != "output" or data["index"] != 1:
                 name, data = await asyncio.wait_for(events.get(), 5)
     assert data["session"] == "s1" and data["role"] == "assistant" and data["index"] == 1
+
+
+async def test_a_turn_written_during_the_first_look_is_still_announced(world, monkeypatch):  # noqa: F811
+    """After a restart the page reads the open session again as soon as the stream is back,
+    but the bridge's first look takes seconds on a busy machine. A turn written in between
+    must still reach the page, not wait for the session's next turn."""
+    import asyncio
+    import json as _json
+    import threading
+    import time
+
+    from claude_agent_sdk import project_key_for_directory
+
+    from claude_voice.tree import SessionTree
+
+    build = SessionTree.build
+    first_look = threading.Event()
+
+    def slow(self):
+        first_look.set()
+        time.sleep(0.5)
+        return build(self)
+
+    monkeypatch.setattr(SessionTree, "build", slow)
+    running(world, "billing-ab", "billing", "s1", status="busy")
+    transcript(world, "billing", "s1", [says("on it")])
+    m = SessionManager(Store(world / "b.db"), project_root=world / "home", client_factory=FakeClaude())
+    server = build_server(
+        m, conversations=lambda **k: [], live_dir=world / "live", projects_dir=world / "projects", watch_interval=0.05
+    )
+    path = world / "projects" / project_key_for_directory(world / "home" / "billing") / "s1.jsonl"
+    with api.HUB.subscribe() as events:
+        async with Client(server):
+            assert await asyncio.to_thread(first_look.wait, 30), "the watcher never looked"
+            with path.open("a") as f:  # while the first look is still under way
+                f.write(
+                    _json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}})
+                    + "\n"
+                )
+            name, data = await asyncio.wait_for(events.get(), 10)
+            while name != "output":
+                name, data = await asyncio.wait_for(events.get(), 10)
+    assert data["session"] == "s1" and data["index"] == 1
+
+
+async def test_a_quiet_session_costs_one_look_at_its_size_even_on_the_first_look(world, monkeypatch):  # noqa: F811
+    """A transcript last written before the bridge started holds nothing the page has not read,
+    so the first look after a restart does not read it, nor announce it."""
+    import asyncio
+    import os
+    import threading
+
+    from claude_agent_sdk import project_key_for_directory
+
+    from claude_voice.tree import SessionTree
+
+    build = SessionTree.build
+    looks: list[int] = []
+    second_look = threading.Event()
+
+    def counted(self):
+        looks.append(1)
+        if len(looks) >= 2:
+            second_look.set()
+        return build(self)
+
+    monkeypatch.setattr(SessionTree, "build", counted)
+    running(world, "billing-ab", "billing", "s1", status="busy")
+    transcript(world, "billing", "s1", [says("on it")])
+    path = world / "projects" / project_key_for_directory(world / "home" / "billing") / "s1.jsonl"
+    os.utime(path, (path.stat().st_atime, path.stat().st_mtime - 3600))  # an hour before the bridge
+    m = SessionManager(Store(world / "b.db"), project_root=world / "home", client_factory=FakeClaude())
+    server = build_server(
+        m, conversations=lambda **k: [], live_dir=world / "live", projects_dir=world / "projects", watch_interval=0.05
+    )
+    with api.HUB.subscribe() as events:
+        async with Client(server):
+            assert await asyncio.to_thread(second_look.wait, 30), "the watcher never looked twice"
+    heard = []
+    while not events.empty():
+        heard.append(events.get_nowait()[0])
+    assert "output" not in heard

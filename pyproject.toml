@@ -38,6 +38,10 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A passing test's temporary files are deleted at once, and only the latest run's
+# failures are kept to read: a day of runs otherwise filled the machine's /tmp.
+tmp_path_retention_count = 1
+tmp_path_retention_policy = "failed"
 
 [tool.ruff]
 line-length = 120

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session with a connected channel gets the message through it, not the courier"
+file = "src/claude_voice/server.py"
+find = 'out = await channels\.deliver\(str\(target\.get\("sessionId"\)\), text\)'
+replace = 'out = None'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "the name check comes once an hour on the next relayed message"
+file = "src/claude_voice/server.py"
+find = 'if now - last < NAME_CHECK_SECONDS:'
+replace = 'if False:'

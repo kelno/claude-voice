@@ -1,0 +1,5 @@
+[[rule]]
+name = "a reply not yet whole says to read the rest"
+file = "src/claude_voice/server.py"
+find = 'if structured.get\("turns_left"\) and not structured.get\("reply_final"\):'
+replace = 'if False:'

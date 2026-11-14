@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session stopped to be compacted is always woken again, compacted or not"
+file = "src/claude_voice/server.py"
+find = 'outcome = "compact_failed"'
+replace = 'return "compact_failed"'

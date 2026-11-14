@@ -1,0 +1,5 @@
+[[rule]]
+name = "a send while a reply is unread is followed once that reply is read"
+file = "src/claude_voice/server.py"
+find = 'elif where == "read" and mark.get\("then"\) is not None:'
+replace = 'elif False:'

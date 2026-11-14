@@ -1,0 +1,5 @@
+[[rule]]
+name = "a relayed message shows in a read as one line"
+file = "src/claude_voice/server.py"
+find = 'if t.get\("role"\) != "user" or cut < 0:'
+replace = 'if True:'

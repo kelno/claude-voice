@@ -1,0 +1,5 @@
+[[rule]]
+name = "names that differ only by capitals are all refused unless one is exact"
+file = "src/claude_voice/renames.py"
+find = 'if len\(found\) > 1:'
+replace = 'if False:'

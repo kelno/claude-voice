@@ -1,0 +1,5 @@
+[[rule]]
+name = "the side session never runs a tool that can change anything"
+file = "src/claude_voice/fork.py"
+find = 'if tool in READ_TOOLS:'
+replace = 'if True:'

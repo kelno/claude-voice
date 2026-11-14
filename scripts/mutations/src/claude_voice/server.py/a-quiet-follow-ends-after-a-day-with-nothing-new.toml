@@ -1,0 +1,5 @@
+[[rule]]
+name = "a quiet follow ends after a day with nothing new"
+file = "src/claude_voice/server.py"
+find = 'mark.pop\("quiet"\)$'
+replace = 'pass'

@@ -36,6 +36,7 @@ MAX_FAILURES = 5
 FAILURE_WINDOW = 600.0
 KEEP_ALIVE_SECONDS = 15.0
 NEWS_SECONDS = 2.0
+RECHECK = 5.0  # seconds a waiting prompt waits before it asks again whether the owner is away
 
 # Tools that talk to a session, by its `session`, `session_id` or `name` argument: they
 # put it in focus, the session the voice is talking to now.
@@ -268,6 +269,7 @@ class EventApi:
         org: Callable[[str | None], dict[str, Any] | None] | None = None,
         clock: Callable[[], float] = time.monotonic,
         book: prompts.Book | None = None,
+        away: Callable[[bool], bool] | None = None,
     ) -> None:
         self.store = store
         self.login_secret = login_secret
@@ -290,6 +292,7 @@ class EventApi:
         # Open questions and approvals; the bridge sweeps out the ones no hook waits on.
         self.book = book or prompts.Book(HUB.publish)
         self.prompts = self.book.items  # by id
+        self.away = away or (lambda app_open: app_open)  # whether a question waits for the phone
         # Questions on other machines, and how to answer one (fleet.Fleet); none without machines.
         self.remote_prompts = remote_prompts or (lambda: [])
         self.answer_remote = answer_remote
@@ -643,8 +646,13 @@ class EventApi:
             return JSONResponse({"error": "kind is question or approval"}, 400)
         self.book.add(prompt)
         HUB.publish("prompt", self._public(prompt))
-        # Wait for the phone only while someone has the app open; else the box shows at once.
-        return JSONResponse({"id": prompt["id"], "wait": HUB.listening()})
+        # RULE: a question waits for the phone only while the owner is away from the laptop
+        return JSONResponse({"id": prompt["id"], "wait": await self._away()})
+
+    async def _away(self) -> bool:
+        """Whether the owner is away; the desktop may take seconds to say, so it is asked aside."""
+        # RULE: reading the desktop never holds up the bridge
+        return await asyncio.to_thread(self.away, HUB.listening())
 
     _fits = staticmethod(answers.fits)  # the same check a spoken answer gets
 
@@ -673,12 +681,28 @@ class EventApi:
         if prompt is None:
             return JSONResponse({"error": "this prompt is gone"}, 404)
         seconds = min(float(request.query_params.get("seconds", "30") or 30), 60.0)
-        with self.book.waiting(prompt), contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(prompt["done"].wait(), seconds)
+        with self.book.waiting(prompt):
+            back = await self._wait_while_away(prompt, seconds)
+        if back:
+            return JSONResponse({"error": "the owner is back at the laptop"}, 409)
         if prompt["answer"] is None:
             return Response(status_code=204)
         self.prompts.pop(prompt["id"], None)
         return JSONResponse(prompt["answer"])
+
+    async def _wait_while_away(self, prompt: dict[str, Any], seconds: float) -> bool:
+        """Wait for the phone's answer; True once the owner is back at the laptop first."""
+        end = time.monotonic() + seconds
+        while (left := end - time.monotonic()) > 0:
+            step = min(left, RECHECK)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(prompt["done"].wait(), step)
+            if prompt["answer"] is not None:
+                return False
+            # RULE: a waiting prompt goes back to the screen once the owner is back
+            if step == RECHECK and not await self._away():
+                return True
+        return False
 
     async def close_prompt(self, request: Request) -> Response:
         if not await self._bearer(request):

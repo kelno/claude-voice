@@ -1,0 +1,5 @@
+[[rule]]
+name = "a folder outside the root is refused"
+file = "src/claude_voice/sessions.py"
+find = 'if self.access.state\(path\) != "open":'
+replace = 'if False:'

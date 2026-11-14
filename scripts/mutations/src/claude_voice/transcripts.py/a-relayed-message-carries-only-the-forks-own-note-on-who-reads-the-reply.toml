@@ -1,0 +1,5 @@
+[[rule]]
+name = "a relayed message carries only the forks own note on who reads the reply"
+file = "src/claude_voice/transcripts.py"
+find = 'return await _courier\.deliver\(name, text\)$'
+replace = 'return await deliver(name, text)'

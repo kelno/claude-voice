@@ -1,0 +1,5 @@
+[[rule]]
+name = "the sessions to wake wait until claude.ai answers"
+file = "src/claude_voice/server.py"
+find = 'while not await ready\(\):'
+replace = 'while False:'

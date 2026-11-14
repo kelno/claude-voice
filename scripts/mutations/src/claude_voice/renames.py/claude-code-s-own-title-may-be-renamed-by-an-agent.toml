@@ -1,0 +1,5 @@
+[[rule]]
+name = "claude code's own title may be renamed by an agent"
+file = "src/claude_voice/renames.py"
+find = 'return d.get\("deliver_to"\) is not None or d.get\("nameSource"\) not in AUTOMATIC'
+replace = 'return True'

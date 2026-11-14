@@ -1,0 +1,5 @@
+[[rule]]
+name = "a wait never runs past the callers time budget"
+file = "src/claude_voice/server.py"
+find = 'return max\(min\(seconds, MAX_WAIT_SECONDS, budget\), 0\)'
+replace = 'return max(min(seconds, MAX_WAIT_SECONDS), 0)'

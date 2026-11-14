@@ -1,0 +1,5 @@
+[[rule]]
+name = "a call that follows without a handle gets a new one"
+file = "src/claude_voice/server.py"
+find = 'if state is None or state.get\("handle"\) is not None or not state.get\("wanted"\):'
+replace = 'if True:'

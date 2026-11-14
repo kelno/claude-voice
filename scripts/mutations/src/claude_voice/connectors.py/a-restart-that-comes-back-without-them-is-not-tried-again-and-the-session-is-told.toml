@@ -1,0 +1,5 @@
+[[rule]]
+name = "a restart that comes back without them is not tried again and the session is told"
+file = "src/claude_voice/connectors.py"
+find = 'if \(case.tried != start or case.broke\) and not case.told:'
+replace = 'if False:'

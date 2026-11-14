@@ -77,6 +77,7 @@ from . import (
 from .channel_hub import ChannelHub, ancestor_session, started_with_channel
 from .metrics import METRICS
 from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
+from .presence import Presence
 from .sessions import SessionManager
 from .store import Store
 from .terminals import NOT_LOCAL, Terminals
@@ -731,6 +732,7 @@ def app_url(bridge_session_id: Any) -> str | None:
 
 
 VOICE_STORE: list[Store] = []  # the store voice calls are counted in, set by build_server
+PRESENCE: list[Presence] = []  # what tells whether the owner is away, set by build_server
 # Clients connected the older way (an initialize handshake), told when the tool list
 # changes; one is known once it has made a call. Newer clients listen on the server's
 # subscription stream instead.
@@ -761,6 +763,9 @@ def note_voice_call(ctx: Any, tool: str, trace: str | None, result: Any) -> None
     client = usage.client_of(api.caller_address(scope), trace)
     if client is None:
         return
+    # RULE: a call from the Claude app or the voice app starts the voice window
+    if client in ("voice_app", "claude_app") and PRESENCE:
+        PRESENCE[0].heard_voice()  # a session's question now waits for the phone for a while
     connection = trace if client == "voice_app" else request.headers.get("mcp-session-id") or api.caller_address(scope)
     with contextlib.suppress(Exception):
         usage.record(VOICE_STORE[0], client, str(connection), tool, _result_chars(result))
@@ -1181,6 +1186,7 @@ def build_server(
     bridge_host: str = "127.0.0.1",
     switched_off: frozenset[str] = SWITCHED_OFF,
     statusline_dir: Path = usage.STATUSLINE_DIR,
+    presence: Presence | None = None,
     update_log: Path = updater.LOG,
     daemon_log: Path = transcripts.DAEMON_LOG,
     launch_update: Callable[..., None] | None = None,
@@ -1279,6 +1285,7 @@ def build_server(
         )
 
     VOICE_STORE[:] = [manager.store]
+    PRESENCE[:] = [presence or Presence()]
     tree_version: list[str] = []  # the last shape seen, so a change can be reported
     last_check: list[str] = []
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
@@ -2355,20 +2362,30 @@ def build_server(
             raise ToolError(str(exc)) from None
 
     transcript_sizes: dict[str, int] = {}
+    built_at = time.time()
 
     def announce_new_turns() -> None:
         """Tell open streams which running session wrote something new. A transcript is only
-        read once it has grown, so a quiet session costs one look at its size."""
+        read once it has grown, or on first sight when it was written since the bridge started,
+        so a quiet session costs one look at its size."""
         for d in live_sessions():
             sid, cwd = str(d.get("sessionId")), str(d.get("cwd"))
             path = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
             try:
-                size = path.stat().st_size
+                stat = path.stat()
             except OSError:
                 continue
+            size = stat.st_size
             seen = transcript_sizes.get(sid)
             transcript_sizes[sid] = size
-            if seen is None or size <= seen:
+            # RULE: a quiet session costs one look at its size even on the first look
+            if seen is None and stat.st_mtime < built_at:
+                continue  # last written before the bridge started; the page has read it all
+            # A session seen for the first time is announced too: after a restart the page reads
+            # the open session as soon as the stream is back, while this first look takes seconds,
+            # and a turn written in between would otherwise wait for the session's next one.
+            # RULE: a turn written during the first look is still announced
+            if seen is not None and size <= seen:
                 continue
             turns = numbered_turns(d)
             if turns:
@@ -4310,6 +4327,7 @@ def build_server(
             focus=focus_session,
             org=org_page,
             book=prompt_book,
+            away=lambda app_open: PRESENCE[0].away(app_open=app_open),
         ).routes(mcp)
 
     mcp.event_feed = event_feed  # type: ignore[attr-defined]  # for tests

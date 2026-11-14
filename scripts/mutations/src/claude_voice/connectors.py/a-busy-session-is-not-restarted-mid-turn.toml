@@ -1,0 +1,5 @@
+[[rule]]
+name = "a busy session is not restarted mid turn"
+file = "src/claude_voice/connectors.py"
+find = 'if not self.at_rest\(d\):'
+replace = 'if False:'

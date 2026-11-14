@@ -1,0 +1,5 @@
+[[rule]]
+name = "a helper agent resumed runs again until its next note"
+file = "src/claude_voice/transcripts.py"
+find = 'task = task or result.get\("resumedAgentId"\)'
+replace = 'pass'

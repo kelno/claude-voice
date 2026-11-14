@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session the bridge did not start is told to warn the owner"
+file = "src/claude_voice/connectors.py"
+find = 'if not self.started_here\(d\):'
+replace = 'if False:'

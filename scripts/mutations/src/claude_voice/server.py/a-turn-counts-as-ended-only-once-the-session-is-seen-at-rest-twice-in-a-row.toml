@@ -1,0 +1,5 @@
+[[rule]]
+name = "a turn counts as ended only once the session is seen at rest twice in a row"
+file = "src/claude_voice/server.py"
+find = 'while at_rest < 2:'
+replace = 'while at_rest < 1:'

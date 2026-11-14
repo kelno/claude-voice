@@ -1,0 +1,5 @@
+[[rule]]
+name = "a channel whose session was started without channels is passed over"
+file = "src/claude_voice/channel_hub.py"
+find = 'return by_pid\[found\] if found is not None and accepts\(found\) else None'
+replace = 'return by_pid[found] if found is not None else None'

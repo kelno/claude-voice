@@ -1,0 +1,5 @@
+[[rule]]
+name = "the owner is away while the screen is locked"
+file = "src/claude_voice/presence.py"
+find = 'if desk.locked:'
+replace = 'if False:'

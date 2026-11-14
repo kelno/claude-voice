@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session stays in a quiet follow after its reply is read"
+file = "src/claude_voice/server.py"
+find = 'mark\["quiet"\] = manager.clock\(\)$'
+replace = 'pass'

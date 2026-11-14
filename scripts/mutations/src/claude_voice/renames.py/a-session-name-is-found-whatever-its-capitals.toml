@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session name is found whatever its capitals"
+file = "src/claude_voice/renames.py"
+find = 'return name.casefold\(\) == wanted.casefold\(\) if any_case else name == wanted'
+replace = 'return name == wanted'

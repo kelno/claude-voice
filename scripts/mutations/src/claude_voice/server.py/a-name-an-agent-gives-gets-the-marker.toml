@@ -1,0 +1,5 @@
+[[rule]]
+name = "a name an agent gives gets the marker"
+file = "src/claude_voice/server.py"
+find = 'new_name = renames.marked\(new_name\)'
+replace = 'pass'

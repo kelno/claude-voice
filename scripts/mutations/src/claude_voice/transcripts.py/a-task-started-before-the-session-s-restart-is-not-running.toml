@@ -1,0 +1,5 @@
+[[rule]]
+name = "a task started before the session's restart is not running"
+file = "src/claude_voice/transcripts.py"
+find = 'if task and not \(since_ms and at and'
+replace = 'if task:'

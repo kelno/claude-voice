@@ -3,8 +3,10 @@
 
 Green on a first run proves nothing: a test that has never been red tests
 nothing. Where a rule is written before its test, the test is run red first.
-Where a rule already exists, this is the substitute. Every rule lives in
-scripts/mutations.toml, one row each. Run it from the repository root:
+Where a rule already exists, this is the substitute. Every rule has one row,
+in a file of its own under scripts/mutations/. A repository still moving its
+rows out of one shared scripts/mutations.toml is read too. Run it from the
+repository root:
 
     uv run python scripts/mutate.py [--write evidence/tests/rule-mutations.md]
 
@@ -19,21 +21,37 @@ what requires that test to exist in the first place.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import hashlib
 import json
 import os
 import pathlib
 import re
+import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
+from collections.abc import Callable
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TABLE = ROOT / "scripts/mutations.toml"
+#: One row per file: scripts/mutations/<the row's file, whole>/<the rule's words>.toml. Every pull
+#: request that added a row at the end of the one shared table collided with every
+#: other; a file per row only meets another pull request adding the same rule.
+ROWS = ROOT / "scripts/mutations"
 #: Where the one mutated file is recorded while it is mutated. A `finally` does
 #: not run when the process is killed, so without this a hard stop leaves a
 #: source file switched off and the next person wondering why the suite is red.
 RECOVERY = ROOT / "scripts/.mutate-recovery.json"
+#: Where each suite run keeps its temporary files, one folder per run, removed when it
+#: ends. Outside the checkout, where a test making a git repository of its own would
+#: find this one instead; named after the checkout, so two never sweep each other's.
+MUTATE_TMP = pathlib.Path(tempfile.gettempdir()) / (
+    "claude-voice-mutate-" + hashlib.sha256(str(ROOT).encode()).hexdigest()[:8]
+)
 
 
 def test_name_for(rule: str) -> str:
@@ -45,6 +63,56 @@ def test_name_for(rule: str) -> str:
     """
     words = re.sub(r"[^a-z0-9]+", "_", rule.lower())
     return "test_" + re.sub(r"_+", "_", words).strip("_")
+
+
+def row_path(rule: dict) -> pathlib.PurePosixPath:
+    """Where a rule's row belongs, under ``ROWS``: the whole path of the file it
+    switches off, then the rule's own words.
+
+    A rule named "a write is kept" in ``src/claude_voice/store.py`` goes in
+    ``src/claude_voice/store.py/a-write-is-kept.toml``. The whole path, extension
+    included, is the same layout in every repository and every language, and no
+    two source files can share a folder.
+    """
+    words = re.sub(r"[^a-z0-9]+", "-", str(rule["name"]).lower()).strip("-")
+    if not words:
+        msg = f"the rule {rule['name']!r} has no letter or digit to file its row under; reword it"
+        raise SystemExit(msg)
+    return pathlib.PurePosixPath(rule["file"]) / f"{words}.toml"
+
+
+def _rows_in(path: pathlib.Path) -> list[dict]:
+    return tomllib.loads(path.read_text(encoding="utf-8")).get("rule", [])
+
+
+def all_rows(table: pathlib.Path = TABLE, folder: pathlib.Path = ROWS) -> list[dict]:
+    """Every row: the shared table first, then one file per row, in path order."""
+    found = [(table.name, rule) for rule in (_rows_in(table) if table.exists() else [])]
+    for path in sorted(folder.rglob("*.toml")) if folder.is_dir() else []:
+        found += [(f"{folder.name}/{path.relative_to(folder).as_posix()}", rule) for rule in _rows_in(path)]
+    where: dict[str, str] = {}
+    for place, rule in found:
+        if rule["name"] in where:
+            msg = (
+                f"the rule {rule['name']!r} has two rows, in {where[rule['name']]} and in {place};"
+                f" delete one and keep {folder.name}/{row_path(rule)}"
+            )
+            raise SystemExit(msg)
+        where[rule["name"]] = place
+    return [rule for _, rule in found]
+
+
+def misfiled(folder: pathlib.Path = ROWS) -> list[str]:
+    """Row files that hold other than one row, or sit where their rule does not put them."""
+    found = []
+    for path in sorted(folder.rglob("*.toml")) if folder.is_dir() else []:
+        here = pathlib.PurePosixPath(path.relative_to(folder).as_posix())
+        rows = _rows_in(path)
+        if len(rows) != 1:
+            found.append(f"{here} holds {len(rows)} rows; give each rule a file of its own")
+        elif here != (belongs := row_path(rows[0])):
+            found.append(f"{here} should be {belongs}; move it there")
+    return found
 
 
 def line_of(text: str, pattern: str, occurrence: int) -> int:
@@ -84,6 +152,44 @@ def broken(file: str, mutated: str) -> str | None:
     except SyntaxError as e:
         return f"line {e.lineno}: {e.msg}"
     return None
+
+
+def _open_up(place: pathlib.Path) -> None:
+    """Give the owner back every right on one folder or file, adding to the rights it has.
+
+    A link is left alone: changing its rights would change whatever it points to,
+    which may be outside the run's folder.
+    """
+    if place.is_symlink():
+        return
+    with contextlib.suppress(OSError):
+        place.chmod(place.stat().st_mode | stat.S_IRWXU)
+
+
+def _writable_again(func: Callable[[str], object], path: str, _exc: object) -> None:
+    """Let a refused delete through: open up the path and its folder, then try again."""
+    for place in (pathlib.Path(path).parent, pathlib.Path(path)):
+        _open_up(place)
+    func(path)
+
+
+def _remove(folder: pathlib.Path) -> None:
+    """Delete a run's folder, even where a test took away the rights to read or delete it."""
+    if not folder.exists():
+        return
+    # A folder a test shut (mode 0) cannot even be listed, so open every folder first;
+    # the handler then covers anything that still refuses.
+    for place, folders, _ in os.walk(folder):
+        for name in folders:
+            _open_up(pathlib.Path(place) / name)
+    shutil.rmtree(folder, onexc=_writable_again)
+
+
+def sweep() -> None:
+    """Remove what an earlier run, killed before it could clean up, left behind."""
+    # RULE: a killed run's temporary files are swept at the next start
+    for left in MUTATE_TMP.iterdir() if MUTATE_TMP.is_dir() else []:
+        _remove(left)
 
 
 def repair() -> None:
@@ -136,14 +242,31 @@ def run_suite(targets: list[str] | None = None) -> tuple[int, list[str]]:
     # the wrong rule, so no bytecode is written at all.
     # RULE: two mutations never share a bytecode cache
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
-    r = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--tb=no", "--color=no", "-p", "no:cacheprovider", *(targets or [])],
-        capture_output=True,
-        text=True,
-        cwd=ROOT,
-        check=False,
-        env=env,
-    )
+    MUTATE_TMP.mkdir(parents=True, exist_ok=True)
+    temporary = pathlib.Path(tempfile.mkdtemp(prefix="run-", dir=MUTATE_TMP))
+    try:
+        r = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "--tb=no",
+                "--color=no",
+                "-p",
+                "no:cacheprovider",
+                f"--basetemp={temporary}",
+                *(targets or []),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            check=False,
+            env=env,
+        )
+    finally:
+        # RULE: a suite run leaves no temporary files behind
+        _remove(temporary)
     # --color=no covers the usual run; stripping covers a configuration that
     # turns colour back on, which would otherwise make every kill unattributable.
     # RULE: a coloured failure line is still attributed
@@ -160,11 +283,12 @@ def main() -> int:
     args = parser.parse_args()
 
     repair()
+    sweep()
     # RULE: an empty rule table is not a crash
     # A scaffolded repository starts with a table of comments and no rows.
-    rules = tomllib.loads(TABLE.read_text(encoding="utf-8")).get("rule", [])
+    rules = all_rows()
     if not rules:
-        print(f"no rules in {TABLE.relative_to(ROOT)} yet; add one per rule the code enforces")  # noqa: T201
+        print(f"no rules in {ROWS.relative_to(ROOT)} yet; add one file per rule the code enforces")  # noqa: T201
         return 0
     results = []
     lost: list[str] = []
@@ -261,8 +385,8 @@ it names. It proves each rule is load-bearing: switch it off and a named test
 says so. The last column is why that is worth more than a count: a mutation can
 break a test for an incidental reason, and a `NO` there fails this script even
 though something went red. A new rule follows the order in `CONTRIBUTING.md`
-instead, a failing test first, and is added to `scripts/mutations.toml`, which
-`tests/test_rules_have_evidence.py` requires.
+instead, a failing test first, and gets a row of its own under `scripts/mutations/`,
+which `tests/test_rules_have_evidence.py` requires.
 """
 
 

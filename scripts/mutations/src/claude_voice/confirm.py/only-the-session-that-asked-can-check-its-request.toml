@@ -1,0 +1,5 @@
+[[rule]]
+name = "only the session that asked can check its request"
+file = "src/claude_voice/confirm.py"
+find = 'return req if req\["session_id"\] == session_id else None'
+replace = 'return req'

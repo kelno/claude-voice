@@ -1,0 +1,5 @@
+[[rule]]
+name = "a start is not judged before its connectors had time to load"
+file = "src/claude_voice/connectors.py"
+find = 'if now - \(_start_time\(stem\) or now\) < LOAD_SECONDS:'
+replace = 'if False:'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session name needs at least one visible character"
+file = "src/claude_voice/renames.py"
+find = 'return bool\(name.strip\(\)\)'
+replace = 'return True'

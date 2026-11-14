@@ -285,7 +285,9 @@ run of the checks on main; kept for ten minutes. The measures, by `id`:
 (lint and type errors), `cycles`, `layers` (imports that break the layer order),
 `duplication` (the share of lines in repeated blocks), `complexity` (the most tangled function),
 `test_time` (against its budget) and `ci` (the checks on main, with the run as
-`url`). The trend is each measured version, oldest first, so it moves change by
+`url`). The same ids, in the order sent and with their units, are in
+[`event-api/measures.json`](event-api/measures.json), for a program that has to
+know every one; a test keeps that file the same as what the bridge sends. The trend is each measured version, oldest first, so it moves change by
 change. A repository with nothing measured has every measure `unknown` rather
 than a guess.
 
@@ -410,6 +412,9 @@ box shows at once rather than after five minutes.
 | `GET /api/v1/prompts` | the open ones: `{"prompts": [{"id", "session", "kind": "question"|"approval", "question": {"text", "header", "options": [{"label", "description"}], "multi"}, "tool", "input", "cut", "asked_at"}]}`. `input` is what an approval would run: the command, the file, or short JSON, at most 300 characters |
 | `POST /api/v1/prompts/{id}` | for a question `{"answer": "<label>"}`, `{"answer": ["<label>", …]}` when `multi`, or `{"answer": {"text": "…"}}`; for an approval `{"decision": "allow"|"deny", "reason"?}`. `200`, `409` when it does not fit the prompt, `404` when it is gone. A change: with the cookie it needs an allowed `Origin` |
 
+While the hook waits, the bridge asks every five seconds whether the owner is still away.
+Once he is back at the laptop, the hook's wait gets `409`, and the box shows in the terminal.
+
 Read `GET /api/v1/prompts` on every connect; the stream only carries changes:
 `prompt` (one opened) and `prompt_closed` (`{"id", "how"}`).
 Every answer is logged with its session, the answer and who gave it.
@@ -422,7 +427,7 @@ the session through that wait and no other way. It closes, with `how` saying why
 | `phone` | it was answered here |
 | `voice` | it was answered by voice, through the `answer_question` tool |
 | `timeout` | no answer came in time, and the box showed in the terminal |
-| `screen` | nobody had the app open, so the hook stepped aside at once and the box showed in the terminal |
+| `screen` | the owner was at the laptop, or came back to it, so the hook stepped aside and the box showed in the terminal |
 | `ended` | the hook stopped waiting and the session is no longer running |
 | `moved_on` | the hook stopped waiting and the session is no longer waiting on anyone |
 | `hook_gone` | the hook stopped waiting without saying so, for example when it was killed |

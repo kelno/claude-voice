@@ -1,0 +1,5 @@
+[[rule]]
+name = "a confirmation needs a passkey the bridge verified"
+file = "src/claude_voice/passkeys.py"
+find = 'if key is None:'
+replace = 'if False:'

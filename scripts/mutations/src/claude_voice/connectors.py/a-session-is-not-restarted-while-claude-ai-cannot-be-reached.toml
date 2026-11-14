@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session is not restarted while claude.ai cannot be reached"
+file = "src/claude_voice/connectors.py"
+find = 'if not await self.reachable\(\):'
+replace = 'if False:'

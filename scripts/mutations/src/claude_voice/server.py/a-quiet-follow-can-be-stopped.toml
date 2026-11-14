@@ -1,0 +1,5 @@
+[[rule]]
+name = "a quiet follow can be stopped"
+file = "src/claude_voice/server.py"
+find = 'marks\[sid\].pop\("quiet", None\)'
+replace = 'pass'

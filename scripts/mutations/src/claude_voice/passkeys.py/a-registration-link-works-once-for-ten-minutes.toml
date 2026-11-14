@@ -1,0 +1,5 @@
+[[rule]]
+name = "a registration link works once for ten minutes"
+file = "src/claude_voice/passkeys.py"
+find = 'if row is None or row\[2\] or self.clock\(\) > row\[1\]:'
+replace = 'if row is None:'

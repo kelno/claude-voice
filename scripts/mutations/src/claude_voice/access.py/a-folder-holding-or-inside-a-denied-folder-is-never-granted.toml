@@ -1,0 +1,5 @@
+[[rule]]
+name = "a folder holding or inside a denied folder is never granted"
+file = "src/claude_voice/access.py"
+find = 'if self.state\(p\) == "closed":'
+replace = 'if False:'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a handle following nothing unused for a day is dropped"
+file = "src/claude_voice/server.py"
+find = 'del relays\[h\]$'
+replace = 'pass'

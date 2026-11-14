@@ -1,0 +1,5 @@
+[[rule]]
+name = "a send to a session the owner typed in since the last read says so"
+file = "src/claude_voice/server.py"
+find = '\{"owner_typed": OWNER_TYPED_NOTE'
+replace = 'return {}'

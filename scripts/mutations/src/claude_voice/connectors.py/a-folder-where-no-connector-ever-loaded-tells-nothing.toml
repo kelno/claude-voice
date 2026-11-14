@@ -1,0 +1,5 @@
+[[rule]]
+name = "a folder where no connector ever loaded tells nothing"
+file = "src/claude_voice/connectors.py"
+find = 'if not any\(p.name.startswith\(CONNECTOR\) for p in servers\):'
+replace = 'if False:'

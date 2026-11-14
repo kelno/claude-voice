@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session still running is never woken"
+file = "src/claude_voice/server.py"
+find = 'if job.get\("pid"\) and procs.alive\(int\(job\["pid"\]\)\):'
+replace = 'if False:'

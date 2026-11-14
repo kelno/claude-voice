@@ -1,0 +1,5 @@
+[[rule]]
+name = "a finished turn's reply comes back whole in a read past the page"
+file = "src/claude_voice/server.py"
+find = 'final = reply_is_final\(status, written\)$'
+replace = 'final = False'

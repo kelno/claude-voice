@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session is found by its name without the marker"
+file = "src/claude_voice/renames.py"
+find = 'name, wanted = bare\(name\), bare\(wanted\)'
+replace = 'pass'
