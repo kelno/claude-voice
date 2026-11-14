@@ -479,7 +479,8 @@ News
   (the result's handle and next_step): pass it as handle on every call that
   takes one from then on. In voice, a call of yours without it, even one made
   while your first still waits, gets the same one until the bridge restarts;
-  so pass yours anyway. A handle the bridge doesn't know (a typo, or one
+  in a typed chat, it gets a new one, following nothing. So pass yours always.
+  A handle the bridge doesn't know (a typo, or one
   dropped after a day following nothing) counts as none, with the handles in
   use listed. It is machinery between you and the bridge, not your name: never
   say it to the owner (name the sessions instead). Keep yours for the whole
@@ -848,10 +849,24 @@ async def log_requests(ctx, call_next):
 
 
 def mcp_session(ctx: Any) -> str | None:
-    """The MCP session a call belongs to: one per conversation in the Claude app, which opens
-    each with an initialize handshake. None for a client without one, such as a stateless exchange."""
+    """The MCP session a call belongs to: one per conversation for a client that opens it with an
+    initialize handshake (the Claude app's voice calls). None for a client without one, such as a
+    stateless exchange."""
     headers = getattr(getattr(ctx, "request", None), "headers", None)
     return headers.get(MCP_SESSION_HEADER) if headers is not None else None
+
+
+# What stands for the conversation of a call that comes over HTTP without an MCP session. The
+# Claude app's typed chats speak the MCP version that has no sessions (seen 2026-11-15), so none of
+# their calls can be told from another's: only the handle the chat passes says whose call it is.
+SESSIONLESS = "no MCP session"
+
+
+def sessionless(ctx: Any) -> bool:
+    """Whether a tool call came over HTTP without an MCP session. A call made in the same process
+    (the suite's own client) carries no request at all, and is left out."""
+    headers = getattr(getattr(ctx, "request", None), "headers", None)
+    return ctx.method == "tools/call" and headers is not None and headers.get(MCP_SESSION_HEADER) is None
 
 
 def result_notes(
@@ -893,16 +908,18 @@ def result_notes(
         waiting = params.get("name") in WAITING_TOOLS and bool(session)
         if waiting:
             waits[session] = waits.get(session, 0) + 1
-        state: dict[str, Any] = {"wanted": bool(connection) and news is not None, "connection": connection}
+        # RULE: a call without an MCP session is a relay too
+        relay = connection or (SESSIONLESS if sessionless(ctx) else None)
+        state: dict[str, Any] = {"wanted": bool(relay) and news is not None, "connection": connection}
         token = relay_call.set(state)
         try:
             if who is not None and ctx.method == "tools/call":
                 state["handle"] = await who(connection, args)
-            return await noted(ctx, call_next, params, args, connection, pending, waiting, session)
+            return await noted(ctx, call_next, params, args, connection, relay, pending, waiting, session)
         finally:
             relay_call.reset(token)
 
-    async def noted(ctx, call_next, params, args, connection, pending, waiting, session):
+    async def noted(ctx, call_next, params, args, connection, relay, pending, waiting, session):
         started = time.monotonic()
         try:
             result = await call_next(ctx)
@@ -928,8 +945,8 @@ def result_notes(
             guided.setdefault(unguided, 0)
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
-        if news is not None and connection:
-            told = await news(str(connection), str(params.get("name") or ""), args, structured)
+        if news is not None and relay:
+            told = await news(str(relay), str(params.get("name") or ""), args, structured)
             if "news" in told:
                 manual["news"] = told["news"]
             if "handle" in told:
@@ -1475,7 +1492,7 @@ def build_server(
     # it goes on in the background, and a second call made meanwhile, without the handle, would get
     # another one, and the replies under it would go unheard (owner, 2026-11-14). Every call of one
     # voice conversation carries the same id, so the second gets the same handle. The id is no handle
-    # itself: it changes at every bridge restart, and a chat continued by typing carries none, so it is
+    # itself: it changes at every bridge restart, and a typed chat carries none (SESSIONLESS), so it is
     # kept here only, and the relay's own handle carries it past those. In memory: after a restart the
     # ids are new anyway.
     conversation_handles: dict[str, str] = {}

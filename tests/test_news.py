@@ -1412,3 +1412,17 @@ async def test_a_sign_in_running_out_is_told_to_each_relay_once_a_day(tmp_path, 
     assert first["news"] == f"[Juniper] {said}"
     assert "news" not in again
     assert other["news"] == f"[Rowan] {said}"
+
+
+async def test_a_call_without_an_mcp_session_is_a_relay_too(served):
+    # The Claude app's typed chats speak the MCP version without sessions (seen 2026-11-15): no
+    # call carries a connection id, so the bridge can't tell its calls apart by itself. Its first
+    # send still gets a handle to pass on; passed, it brings the news like a voice call's.
+    url, desk = served
+    http = create_mcp_http_client(headers={"Authorization": f"Bearer {TOKEN}"})
+    async with http, Client(streamable_http_client(f"{url}/mcp", http_client=http), mode="auto") as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.", handle=None)
+        assert sent.get("handle") and "pass it as handle" in sent.get("next_step", "")
+        desk.transcript.append(turn("assistant", "Export done."))
+        later = await call(c, "list_active_sessions", handle=sent["handle"])
+    assert "billing-ab" in later.get("news", "") and "reply to you" in later["news"]
