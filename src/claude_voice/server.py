@@ -4113,9 +4113,8 @@ def build_server(
     def session_tree() -> dict[str, Any]:
         """The sessions to choose from, as a tree, with which ones message each other.
         The bridge, the Claude Code sessions running on this machine, helper agents, and for each
-        which others it has sent messages to in the last day (talks_to).
-        `version` changes when the shape changes; whats_new reports that as kind "tree_changed".
-        `number` is each session's short number, as on the page."""
+        which others it has sent messages to in the last day (talks_to); `version` changes when
+        the shape changes; `number` is the short number any tool taking a session also takes."""
         built = tree.build()
         numbers = local_numbers()
         return {**built, "nodes": [{**n, "number": numbers.get(str(n["id"]))} for n in built["nodes"]]}
