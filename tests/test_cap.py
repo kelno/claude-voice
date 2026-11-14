@@ -157,6 +157,25 @@ async def test_a_call_the_client_drops_is_logged_with_how_long_it_ran(caplog):
     assert any("ask_active_session" in r.message and "cancelled" in r.message for r in caplog.records)
 
 
+async def test_a_question_s_wait_counts_from_the_call_delivery_included(tmp_path, root, live):
+    # A question left without a length waits to the caller's limit; counted from the delivery, a
+    # slow courier (33 s seen on 2026-11-13) or a resume would push the whole call past it, and
+    # past the 240 s claude.ai gives a call (the branch's review, 2026-11-14).
+    target = Target(live, str(root / "billing"), status="busy")  # never answers
+
+    async def slow(name, text):
+        await asyncio.sleep(CAP)
+        return {"delivered": True, "detail": "DELIVERED"}
+
+    _, srv = bridge(tmp_path, root, live, FakeClaude(), target=target, deliver=slow)
+    async with Client(srv) as c:
+        started = time.monotonic()
+        out = await call(c, "ask_active_session", session="billing-ab", message="Is the export done?")
+        took = time.monotonic() - started
+    assert out["status"] == "still_working"
+    assert took < CAP * 1.6  # the delivery took the whole limit: no wait after it
+
+
 async def test_no_tool_that_waits_sets_a_length_of_its_own(tmp_path, root, live):
     # Left out, every wait runs to the caller's limit, tested in test_news.py. A short default,
     # meant to come back before the Claude app sends a call to the background at about 10 s,
