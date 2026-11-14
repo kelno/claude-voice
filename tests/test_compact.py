@@ -12,6 +12,7 @@ import json
 
 import pytest
 from fakes import FakeClaude
+from mcp.client import Client
 from test_confirm import call, outcome, reached, transcript
 
 from claude_voice import confirm, jobs, procs, server
@@ -98,6 +99,8 @@ def bridge(tmp_path, monkeypatch):
     store = Store(tmp_path / "b.db")
     done: list[tuple] = []
     woken: dict = {}  # the registry entry a wake writes back, when a test gives one
+    held = asyncio.Event()  # the compaction runs once this is set; a test may clear it
+    held.set()
 
     async def stop(sid):
         done.append(("stop", sid))
@@ -105,6 +108,7 @@ def bridge(tmp_path, monkeypatch):
 
     async def compact(cwd, sid, instructions):
         done.append(("compact", cwd, sid, instructions))
+        await held.wait()
 
     async def wake(cwd, session_id):
         done.append(("wake", cwd, session_id))
@@ -133,6 +137,7 @@ def bridge(tmp_path, monkeypatch):
         "entry": entry,
         "done": done,
         "woken": woken,
+        "held": held,
         "cwd": str(home / "app"),
     }
 
@@ -156,6 +161,27 @@ async def test_a_session_the_bridge_started_is_compacted_after_the_turn_that_ask
         ("compact", bridge["cwd"], "sid-7", "Keep the plan."),
         ("wake", bridge["cwd"], "sid-7"),
     ]
+
+
+async def test_a_message_to_a_session_stopped_for_its_compaction_says_it_is_coming_back(bridge):
+    # Seen 2026-11-14: a message during the minute a session was stopped to be compacted was told
+    # "not running ... attach_conversation resumes it", and the relay went resuming a session the
+    # bridge was already bringing back.
+    bridge["store"].record_started("sid-7", "desk", bridge["cwd"])
+    bridge["held"].clear()
+    (bridge["live"] / "7.json").write_text(json.dumps({**bridge["entry"], "status": "idle"}), encoding="utf-8")
+    async with reached(bridge["server"]) as app:
+        await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact")
+        for _ in range(100):
+            if any(step[0] == "compact" for step in bridge["done"]):
+                break
+            await asyncio.sleep(0.05)
+        async with Client(bridge["server"]) as c:
+            refused = await c.call_tool("message_active_session", {"session": "desk", "message": "Hi"})
+        bridge["held"].set()
+    text = refused.content[0].text
+    assert refused.is_error and "being compacted" in text and "under a minute" in text
+    assert "attach_conversation" not in text
 
 
 async def test_only_a_background_session_the_bridge_started_is_stopped_to_be_compacted(bridge):

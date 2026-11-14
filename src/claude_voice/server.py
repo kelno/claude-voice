@@ -2859,6 +2859,12 @@ def build_server(
             return find_live(session), None
         except ToolError:
             known = store.started_session(session)
+            # RULE: a message to a session stopped for its compaction says it is coming back
+            if known and str(known["claude_session_id"]) in compacting:
+                raise ToolError(
+                    f"'{known['name']}' is being compacted: the bridge stopped it to run /compact and starts"
+                    " it again itself, usually in under a minute. Send the message again then."
+                ) from None
             why = why_gone(str(known["claude_session_id"])) if known else ""
             # RULE: a message to a session Claude Code closed for low memory resumes it first
             if not known or not why:
