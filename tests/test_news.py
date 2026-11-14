@@ -1187,3 +1187,36 @@ async def test_a_name_proposal_is_news_once_for_each_relay(served):
     assert first["news"].startswith(f"[Juniper] {said}") and "owner_chose" in first["news"]
     assert "news" not in again
     assert other["news"].startswith(f"[Rowan] {said}")
+
+
+class SignInDue:
+    """Stands in for the work page's board: Claude Code's sign-in runs out soon."""
+
+    def _sign_in(self):
+        return [
+            {"id": "claude-login", "text": "Claude Code's sign-in runs out on 2026-11-16. Run claude and type /login."}
+        ]
+
+    def changed(self):
+        return None
+
+
+async def test_a_sign_in_running_out_is_told_to_each_relay_once_a_day(tmp_path, world):
+    # The work page that says so isn't used here, so the relay is told instead (owner, 2026-11-14).
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    async with bridge(
+        tmp_path, desk, Store(tmp_path / "bridge.db"), work_board=SignInDue(), watch_interval=0.05
+    ) as url:
+        await asyncio.sleep(0.3)  # the watcher asks the board in the background
+        http, client = conversation(url)
+        async with http, client as c:
+            first = await call(c, "list_active_sessions")
+            again = await call(c, "list_active_sessions")
+        http, client = conversation(url)
+        async with http, client as c:
+            other = await call(c, "list_active_sessions", handle="Rowan")
+    said = "Claude Code's sign-in runs out on 2026-11-16. Run claude and type /login."
+    assert first["news"] == f"[Juniper] {said}"
+    assert "news" not in again
+    assert other["news"] == f"[Rowan] {said}"

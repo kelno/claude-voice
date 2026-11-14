@@ -1374,6 +1374,9 @@ def build_server(
                     with contextlib.suppress(Exception):
                         await asyncio.to_thread(rename_pending)  # a name given while the session was busy
                     with contextlib.suppress(Exception):
+                        # Claude Code is asked at most once an hour, off the event loop: it can take seconds.
+                        signin_due[:] = [i["text"] for i in await asyncio.to_thread(board._sign_in)]
+                    with contextlib.suppress(Exception):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
                     await asyncio.sleep(watch_interval)
@@ -1607,6 +1610,11 @@ def build_server(
         typed = any(i > mark["seen"] and t.get("origin") == "human" for i, t in enumerate(turns))
         return int(mark["seen"]) if typed else None
 
+    # Claude Code's sign-in running out within three days, as the work page says it: that page isn't
+    # used here, so each relay is told on the news line instead, once a day (owner, 2026-11-14).
+    signin_due: list[str] = []
+    signin_told: dict[str, str] = {}  # handle, or conversation without one -> the day it was told
+
     def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> dict[str, str]:
         """How the followed sessions stand, in one line (`news`), and any session waiting on a
         permission prompt; and what follows for the relay (`next_step`), in the states where
@@ -1640,6 +1648,11 @@ def build_server(
                 items.append(f"{d.get('name') or sid}: waiting on a permission prompt")
         if handle:
             items.extend(proposals_news(handle, live))
+        today = datetime.now(UTC).date().isoformat()
+        # RULE: a sign-in running out is told to each relay once a day
+        if signin_due and signin_told.get(handle or conversation) != today:
+            items.extend(signin_due)
+            signin_told[handle or conversation] = today
         step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
         if tool in ("read_session_output", "wait_for_session", "ask_active_session"):
             step = " ".join(filter(None, [partial_reply(structured), step])) or None

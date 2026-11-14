@@ -84,7 +84,7 @@ All of upstream's code is in; what is on or off here (owner):
 - Quality levels: as upstream (ADR-CV-009). Continuous integration keeps main's levels with each run, and the software panel shows them.
 - Short session numbers in every list (third 2026-11-14 resync): on, as upstream (owner, 2026-11-14). `list_active_sessions` and `session_tree` give each session its short number, as `fleet_recap` already did; the fork's own numbering counts only the sessions running on this PC, since sessions run inside the bridge are retired here.
 - Why the bridge last restarted, in `health`, and the `claude-voice restart --why` command (third 2026-11-14 resync): in, inert here (owner, 2026-11-14). Both rely on systemd, which this Windows PC doesn't use, so the reason stays empty; the updater still writes its note, which nothing reads here.
-- The warning three days before Claude Code's sign-in runs out (third 2026-11-14 resync): in, on the work page as upstream, which isn't used here; the owner chose to have it also reach the relay (owner, 2026-11-14), which is fork work still to do.
+- The warning three days before Claude Code's sign-in runs out (third 2026-11-14 resync): on, and since the work page that shows it isn't used here, the news line on every result also tells each relay once a day (owner, 2026-11-14). The bridge's watcher asks the work page's board for it in the background, at most once an hour, so no result waits on `claude auth status`. Fork commit "Tell each relay once a day that Claude Code's sign-in runs out".
 
 ### Same tools, different behaviour
 
