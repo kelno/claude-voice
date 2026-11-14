@@ -952,7 +952,7 @@ async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, 
     assert list(kept(tmp_path)) == ["Ash"]  # Ash still follows a session
 
 
-async def test_a_claude_code_session_s_handle_is_its_own_name(tmp_path, world):
+async def test_a_claude_code_session_follows_its_own_sessions(tmp_path, world):
     # A call from Claude Code carries its tool-call id, which its transcript records: the bridge
     # knows the session and never asks it for a handle, and what it follows stays its own.
     root, live = world
@@ -974,6 +974,37 @@ async def test_a_claude_code_session_s_handle_is_its_own_name(tmp_path, world):
     assert not sent.is_error, sent.content
     assert "news" not in voice  # not the voice relay's
     assert own.structured_content["news"] == "[planner] billing-ab (idle): reply to you, read with after=1"
+
+
+async def test_a_claude_code_session_s_handle_is_its_session_id_not_its_name(tmp_path, world):
+    # Its name is a label the owner or an agent may change at any time; the session, and its id,
+    # stay. Renamed, then calling again after a bridge restart (a new connection), it still has its
+    # follows, and the news names it as it is called now.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    planner = Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
+    record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
+    record.parent.mkdir(parents=True)
+    calls = [json.dumps({"type": "assistant", "id": f"toolu_planner_{n}"}) for n in (1, 2)]
+    record.write_text("\n".join(calls) + "\n", encoding="utf-8")
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), planner) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            sent = await c.call_tool(
+                "message_active_session",
+                {"session": "billing-ab", "message": "Go."},
+                meta={"claudecode/toolUseId": "toolu_planner_1"},
+            )
+        desk.transcript.append(turn("assistant", "Gone."))
+        planner.gone()
+        planner.name = "planner, renamed"
+        planner.set("idle")
+        http, client = conversation(url)
+        async with http, client as c:
+            own = await c.call_tool("list_folders", {}, meta={"claudecode/toolUseId": "toolu_planner_2"})
+    assert not sent.is_error, sent.content
+    assert own.structured_content["news"] == "[planner, renamed] billing-ab (idle): reply to you, read with after=1"
+    assert "sid-cc" in kept(tmp_path) and "planner" not in kept(tmp_path)
 
 
 async def test_a_send_while_a_reply_is_unread_is_followed_once_that_reply_is_read(served):

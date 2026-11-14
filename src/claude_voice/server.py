@@ -487,7 +487,7 @@ News
   the owner asks, or to take yours back after a compaction (the one following
   the sessions you were working with): a call without a handle lists the
   handles in use, with the sessions each follows. (Claude Code sessions get none:
-  theirs is their own session name.)
+  the bridge knows the session itself.)
 - A result of a call with your handle may start with news, after your handle
   in brackets: an entry for each session you follow, with its state and what's
   new, or "nothing new". A message or a question follows a session until you
@@ -1463,7 +1463,10 @@ def build_server(
     relays = handles.Handles(manager.store, manager.clock)
     # What a call without a handle marks: thrown away once the call is done.
     nameless: dict[str, dict[str, Any]] = {}
-    # A Claude Code session's handle, by the MCP connection it calls over (one per session).
+    # A Claude Code session's handle, by the MCP connection it calls over (one per session): its
+    # session id. Its name is only a label, which the owner or an agent may change at any time, by the
+    # bridge or by hand; what it follows belongs to the session, so it is kept under the id, which
+    # doesn't change, and the news shows the name it has now.
     claude_code_handles: dict[str, str] = {}
     # A voice conversation's handle, by the MCP session id its calls carry. A relay learns its handle
     # only when the call that hands it out comes back, which a question can hold for minutes; in voice
@@ -1521,7 +1524,7 @@ def build_server(
 
     async def who(connection: str | None, args: dict[str, Any]) -> str | None:
         """The calling relay's handle: the one it passed, matched whatever its capitals; for a
-        Claude Code session, its own name; else None, and a handle not in use is noted as unknown."""
+        Claude Code session, its session id; else None, and a handle not in use is noted as unknown."""
         given = str(args.get("handle") or "").strip()
         handle = None
         if given:
@@ -1532,10 +1535,15 @@ def build_server(
             elif handle is not None and state is not None:
                 state["merged"] = relays.merge_batch(handle)
         elif from_claude_code():
-            handle = claude_code_handles.get(connection or "") or await claude_code_name()
-            if connection:
-                claude_code_handles[connection] = handle
-            relays.touch(handle)
+            handle = claude_code_handles.get(connection or "")
+            if handle is None:
+                session = await calling_session()
+                # RULE: a claude code session's handle is its session id, not its name
+                handle = str(session["sessionId"]) if session else "Claude Code"
+                if connection:
+                    claude_code_handles[connection] = handle
+            now = next((d for d in live_sessions() if str(d.get("sessionId")) == handle), None)
+            relays.session(handle, str((now or {}).get("name") or relays.label(handle)))
             return handle
         if handle is None:
             # A second call made while the first still waits, or one that left its handle out.
@@ -1547,12 +1555,9 @@ def build_server(
                 conversation_handles[connection] = handle  # the one this conversation uses now
         return handle
 
-    async def claude_code_name() -> str:
-        """The calling Claude Code session's name, from the transcript that records the call."""
-        return await calling_session_name() or "Claude Code"
-
-    async def calling_session_name() -> str | None:
-        """The name of the Claude Code session on this PC that made this call; None if none did."""
+    async def calling_session() -> dict[str, Any] | None:
+        """The Claude Code session on this PC that made this call, as Claude Code lists it, found
+        from the transcript that records the call; None if none did."""
         tool_use = confirm.current_caller.get().tool_use_id
         if not tool_use:
             return None
@@ -1560,11 +1565,14 @@ def build_server(
             running_now = live_sessions()
             sid = transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
             if sid:
-                # RULE: a claude code session's handle is its own name
-                d = next(d for d in running_now if str(d.get("sessionId")) == sid)
-                return str(d.get("name") or sid)
+                return next(d for d in running_now if str(d.get("sessionId")) == sid)
             await asyncio.sleep(0.1)
         return None
+
+    async def calling_session_name() -> str | None:
+        """The name of the Claude Code session on this PC that made this call; None if none did."""
+        session = await calling_session()
+        return None if session is None else str(session.get("name") or session.get("sessionId"))
 
     # Turns per session, kept while its conversation file is unchanged.
     turns_seen: dict[str, tuple[tuple[int, int], list[dict[str, Any]]]] = {}
@@ -1682,7 +1690,7 @@ def build_server(
         relays.drop_idle(keep=handle)
         relays.save_if_changed()
         # RULE: the news line starts with the handle
-        news = (f"[{handle}] " if handle else "") + " | ".join(items)
+        news = (f"[{relays.label(handle)}] " if handle else "") + " | ".join(items)
         minted = {"handle": state["minted"]} if state.get("minted") else {}
         return {**({"news": news} if items else {}), **minted, **({"next_step": step} if step else {})}
 

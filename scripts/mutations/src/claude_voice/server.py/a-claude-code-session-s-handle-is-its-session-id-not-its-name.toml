@@ -1,0 +1,5 @@
+[[rule]]
+name = "a claude code session's handle is its session id, not its name"
+file = "src/claude_voice/server.py"
+find = 'handle = str\(session\["sessionId"\]\) if session else "Claude Code"'
+replace = 'handle = str(session.get("name") or session["sessionId"]) if session else "Claude Code"'

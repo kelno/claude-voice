@@ -1,5 +1,5 @@
 [[rule]]
 name = "the news line starts with the handle"
 file = "src/claude_voice/server.py"
-find = 'news = \(f"\[\{handle\}\] " if handle else ""\) \+ " \| ".join\(items\)'
+find = 'news = \(f"\[\{relays.label\(handle\)\}\] " if handle else ""\) \+ " \| ".join\(items\)'
 replace = 'news = " | ".join(items)'

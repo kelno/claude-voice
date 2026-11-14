@@ -1,5 +1,0 @@
-[[rule]]
-name = "a claude code session's handle is its own name"
-file = "src/claude_voice/server.py"
-find = 'd = next\(d for d in running_now if str\(d.get\("sessionId"\)\) == sid\)'
-replace = 'd = {}'

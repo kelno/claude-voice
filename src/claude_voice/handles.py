@@ -6,7 +6,9 @@ MCP session id, but that id changes at every bridge restart, and the same chat c
 carries none. So the conversation names itself, with a handle the bridge hands out (checked with the
 owner, 2026-11-14).
 
-Each handle keeps the time it was last used and its marks, one per Claude session, by session id;
+A relay's handle is a code the bridge hands out; a Claude Code session's is its session id, and the
+news shows its name. Each handle keeps the time it was last used and its marks, one per Claude
+session, by session id;
 what a mark holds and means is in following.py. A handle the bridge handed out also keeps when it
 was handed out and whether a relay has passed it back since. Kept in the bridge's database, so a
 bridge restart doesn't drop them: the voice call runs in the Claude app's cloud and outlives it.
@@ -72,7 +74,18 @@ class Handles:
         ]
 
     def in_use(self) -> list[dict[str, Any]]:
-        return [{"handle": h, "follows": self.follows(h)} for h in self.all]
+        """The relays' handles, with what each follows; not Claude Code sessions', which no relay
+        takes back."""
+        return [{"handle": h, "follows": self.follows(h)} for h, r in self.all.items() if not r.get("session")]
+
+    def session(self, sid: str, name: str) -> None:
+        """Note that the Claude Code session `sid`, called `name` now, used its handle now."""
+        self.touch(sid)
+        self.all[sid].update(session=True, name=name)
+
+    def label(self, handle: str) -> str:
+        """How the news names a handle: a Claude Code session's name as it is now, else the handle."""
+        return str(self.all.get(handle, {}).get("name") or handle)
 
     def find(self, given: str) -> str | None:
         """The handle kept that `given` names, whatever its capitals; None for one not kept, since
