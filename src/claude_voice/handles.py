@@ -1,8 +1,10 @@
 """Relay handles: which relay is calling, so each keeps its own read marks and followed sessions.
 
-Handles exist only because the bridge has no way to tell voice relays apart by itself: they all
-reach it over one connection, with nothing identifying the conversation. If that ever becomes
-possible, this module can be replaced by it (owner, 2026-11-12).
+The owner often has two or more voice conversations open at once, and each must hear only of its
+own sessions. Nothing a call carries identifies its conversation for long: a voice call carries an
+MCP session id, but that id changes at every bridge restart, and the same chat continued by typing
+carries none. So the conversation names itself, with a handle the bridge hands out (checked with the
+owner, 2026-11-14).
 
 Each handle keeps the time it was last used and its marks, one per Claude session, by session id;
 what a mark holds and means is in following.py. A handle the bridge handed out also keeps when it

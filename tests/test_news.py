@@ -816,8 +816,8 @@ async def test_a_send_after_every_reply_is_read_waits_for_its_own_reply(served):
 
 
 # Relay handles: the owner often has two or more voice conversations open at once, each a small
-# relay, and all of them reach the bridge over one connection; so each relay passes a handle on the
-# calls that follow or read, which the bridge hands out, and each handle has its own follows and
+# relay, and nothing a call carries tells them apart for long (handles.py says why); so each relay
+# passes a handle on the calls that follow or read, which the bridge hands out, and each handle has its own follows and
 # news (owner, 2026-11-12). A Claude Code session is never asked: its handle is its own session name.
 
 

@@ -291,9 +291,9 @@ HANDLE_PARAM = (
     "follow apart from other relays'; machinery between you and the bridge, not your name: never say it to "
     "the owner."
 )
-# Several relays reach the bridge over one connection (the Claude app's, for every voice
-# conversation), so each says who it is with a handle the bridge hands out: with the first call that
-# follows a session without one, which goes ahead under it. A refusal came back as an error, which
+# Nothing a call carries identifies its conversation across a bridge restart or from voice to
+# typing (handles.py says why), so each relay says who it is with a handle the bridge hands out: with
+# the first call that follows a session without one, which goes ahead under it. A refusal came back as an error, which
 # the Claude app tells its assistant to report as a failure (owner, 2026-11-12).
 NEW_HANDLE = (
     'Your handle is "{new}": pass it as handle on every call that takes one from now on, since what you '
