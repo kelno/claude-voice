@@ -102,3 +102,54 @@ def test_a_waiting_prompt_is_read_with_the_claude_code_the_bridge_finds(monkeypa
     monkeypatch.setattr(subprocess, "run", run)
     assert "Fetch(https://example.org)" in (jobs.pending_prompt("job-1") or "")
     assert ran == [[installed, "logs", "job-1"]]
+
+
+async def test_a_permission_prompt_is_read_off_the_event_loop(tmp_path):
+    # Reading it runs `claude logs`, about a second each time; on the event loop, every other
+    # call to the bridge would wait that long.
+    import asyncio
+
+    root = tmp_path / "home"
+    (root / "billing").mkdir(parents=True)
+    live = tmp_path / "live"
+    live.mkdir()
+    entry = {
+        "pid": os.getpid(),
+        "sessionId": "sid-1",
+        "cwd": str(root / "billing"),
+        "name": "fetcher",
+        "kind": "bg",
+        "jobId": "job-1",
+        "status": "waiting",
+        "waitingFor": "permission prompt",
+    }
+    (live / "1.json").write_text(json.dumps(entry))
+    on_loop, read = [], []
+
+    def read_prompt(job_id):
+        read.append(job_id)
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(job_id)
+        except RuntimeError:
+            pass  # a worker thread: no loop runs here
+        return "Fetch(https://example.org) Do you want to allow Claude to fetch this content? 1. Yes 3. No"
+
+    async def deliver(name, text):
+        raise AssertionError("a message would only queue behind the prompt")
+
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
+    srv = build_server(
+        m,
+        conversations=lambda **k: [],
+        live_dir=live,
+        deliver=deliver,
+        read_transcript=lambda sid, directory: [],
+        projects_dir=tmp_path / "projects",
+        read_prompt=read_prompt,
+    )
+    async with Client(srv) as c:
+        await c.call_tool("ask_active_session", {"session": "fetcher", "message": "hi"})
+        await c.call_tool("message_active_session", {"session": "fetcher", "message": "hi"})
+        await c.call_tool("wait_for_session", {"session": "fetcher", "wait_seconds": 1})
+    assert read and on_loop == []

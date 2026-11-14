@@ -855,7 +855,7 @@ def mcp_session(ctx: Any) -> str | None:
 
 
 def result_notes(
-    news: Callable[[str, str, dict[str, Any], dict[str, Any]], dict[str, str]] | None = None,
+    news: Callable[[str, str, dict[str, Any], dict[str, Any]], Awaitable[dict[str, str]]] | None = None,
     claude_code_transcript: Callable[[], Path | None] | None = None,
     guide: str = INSTRUCTIONS,
     who: Callable[[str | None, dict[str, Any]], Awaitable[str | None]] | None = None,
@@ -929,7 +929,7 @@ def result_notes(
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
         if news is not None and connection:
-            told = news(str(connection), str(params.get("name") or ""), args, structured)
+            told = await news(str(connection), str(params.get("name") or ""), args, structured)
             if "news" in told:
                 manual["news"] = told["news"]
             if "handle" in told:
@@ -1641,7 +1641,9 @@ def build_server(
     signin_due: list[str] = []
     signin_told: dict[str, str] = {}  # handle, or conversation without one -> the day it was told
 
-    def news_line(conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]) -> dict[str, str]:
+    async def news_line(
+        conversation: str, tool: str, args: dict[str, Any], structured: dict[str, Any]
+    ) -> dict[str, str]:
         """How the followed sessions stand, in one line (`news`), and any session waiting on a
         permission prompt; and what follows for the relay (`next_step`), in the states where
         something does.
@@ -1679,7 +1681,7 @@ def build_server(
         if signin_due and signin_told.get(handle or conversation) != today:
             items.extend(signin_due)
             signin_told[handle or conversation] = today
-        step = next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
+        step = await next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
         if tool in ("read_session_output", "wait_for_session", "ask_active_session"):
             step = " ".join(filter(None, [partial_reply(structured), step])) or None
         if state.get("merged"):
@@ -1712,7 +1714,7 @@ def build_server(
         took = manager.clock() - since
         return f" for {round(took / 60)} min" if took >= 90 else f" for {round(took)} s"
 
-    def next_step(active_before: bool, live: dict[str, dict[str, Any]]) -> str | None:
+    async def next_step(active_before: bool, live: dict[str, dict[str, Any]]) -> str | None:
         """What follows for the relay from the state of the sessions it follows, or None."""
         sentences, paused = [], []
         marks = mine()
@@ -1725,7 +1727,7 @@ def build_server(
                 if not mark.get("told"):
                     # RULE: a session paused on the owner is told once, not waited on
                     mark["told"] = True
-                    prompt = permission_prompt(live[sid]) if sid in live else None
+                    prompt = await prompt_off_loop(live[sid]) if sid in live else None
                     sentences.append(NEXT_WAITING.format(name=name, prompt=f": {prompt}" if prompt else ""))
             elif state == "unread":
                 sentences.append(NEXT_UNREAD.format(name=name))
@@ -2374,7 +2376,7 @@ def build_server(
         if role not in table:
             raise LookupError(f"No role {role!r}; there are: {', '.join(sorted(table))}")
         spec = table[role]
-        blockers = doctor.before_role(host, spec) if spec.get("guard") else []
+        blockers = await asyncio.to_thread(doctor.before_role, host, spec) if spec.get("guard") else []  # gh: network
         # RULE: a contribute session does not start while something it needs is missing
         if blockers:
             raise ToolError(
@@ -2695,10 +2697,18 @@ def build_server(
         return {"id": new, "name": name}
 
     def permission_prompt(d: dict[str, Any]) -> str | None:
-        """The permission prompt a waiting background session shows its owner, if any."""
+        """The permission prompt a waiting background session shows its owner, if any. Reading
+        it runs `claude logs`, about a second: from async code, use prompt_off_loop."""
         if d.get("waitingFor") != "permission prompt" or not d.get("jobId"):
             return None
         return read_prompt(str(d["jobId"]))
+
+    async def prompt_off_loop(d: dict[str, Any]) -> str | None:
+        """permission_prompt, read in a worker thread so the bridge keeps answering other calls."""
+        if d.get("waitingFor") != "permission prompt" or not d.get("jobId"):
+            return None  # nothing to read: no thread for it
+        # RULE: a permission prompt is read off the event loop
+        return await asyncio.to_thread(permission_prompt, d)
 
     def running() -> list[dict[str, Any]]:
         now_ms = manager.clock() * 1000
@@ -3600,7 +3610,7 @@ def build_server(
         msgs = read_transcript(target["sessionId"], target.get("cwd"))
         return [{"index": i, **turn} for i, turn in enumerate(transcripts.recent_turns(msgs, None, origins))]
 
-    def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
+    async def waiting(d: dict[str, Any]) -> dict[str, Any] | None:
         """Why a session can take nothing in right now: an open question, or other input."""
         if d.get("status") != "waiting":
             return None
@@ -3609,7 +3619,7 @@ def build_server(
         )
         if question:
             return {"status": "needs_choice", "question": question}
-        prompt = permission_prompt(d)
+        prompt = await prompt_off_loop(d)
         return {"status": "needs_input", **({"prompt": prompt} if prompt else {})}
 
     def reply_is_final(status: str, new: list[dict[str, Any]]) -> bool:
@@ -3685,7 +3695,7 @@ def build_server(
             else:
                 quiet_since = None
             if settled == "waiting":
-                blocked = waiting(now)
+                blocked = await waiting(now)
                 return target, (blocked["status"] if blocked else "needs_input"), blocked
             if settled:
                 return target, settled, None
@@ -3777,7 +3787,7 @@ def build_server(
         deadline = clock() + within_budget(wait_seconds)
         quiet_since: float | None = None
         while (now := live_by_pid(pid)) is not None:
-            target, blocked = now, waiting(now)
+            target, blocked = now, await waiting(now)
             # At rest as the news line counts it: a turn that ended with a background task still
             # running isn't, though Claude Code lists a desktop session in that state as idle.
             # RULE: a wait on a named session counts a background task still running as working
@@ -3843,7 +3853,7 @@ def build_server(
         moved = moved_to(target)
         if moved:
             return _not_sent(target, {"status": "moved", "moved_to": moved})
-        blocked = waiting(target)
+        blocked = await waiting(target)
         if blocked:
             # A message would only queue behind what it waits for; send nothing.
             return _not_sent(target, blocked)

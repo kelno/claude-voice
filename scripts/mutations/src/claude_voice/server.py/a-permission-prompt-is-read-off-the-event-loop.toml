@@ -1,0 +1,5 @@
+[[rule]]
+name = "a permission prompt is read off the event loop"
+file = "src/claude_voice/server.py"
+find = 'return await asyncio\.to_thread\(permission_prompt, d\)'
+replace = 'return permission_prompt(d)'

@@ -1,0 +1,5 @@
+[[rule]]
+name = "the page reads sessions off the event loop"
+file = "src/claude_voice/api.py"
+find = 'listing = await asyncio\.to_thread\(self\.sessions\)'
+replace = 'listing = self.sessions()'

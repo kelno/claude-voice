@@ -409,7 +409,9 @@ class EventApi:
     async def list_sessions(self, request: Request) -> Response:
         if not await self._allowed(request):
             return JSONResponse({"error": "sign in first"}, 401)
-        return JSONResponse({**self.sessions(), "active": self.get_active()}, headers={"Cache-Control": "no-store"})
+        # RULE: the page reads sessions off the event loop
+        listing = await asyncio.to_thread(self.sessions)  # transcripts, git, `claude logs`: seconds
+        return JSONResponse({**listing, "active": self.get_active()}, headers={"Cache-Control": "no-store"})
 
     async def active(self, request: Request) -> Response:
         if request.method == "GET":
@@ -428,7 +430,8 @@ class EventApi:
         except ValueError:
             body = {}
         try:
-            return JSONResponse(self.set_active(str((body or {}).get("session", "")), "page"))
+            chosen = await asyncio.to_thread(self.set_active, str((body or {}).get("session", "")), "page")
+            return JSONResponse(chosen)
         except LookupError as exc:
             return JSONResponse({"error": str(exc)}, 404)
 
@@ -436,7 +439,7 @@ class EventApi:
         if not await self._allowed(request):
             return JSONResponse({"error": "sign in first"}, 401)
         try:
-            out = read(request.path_params["session"])
+            out = await asyncio.to_thread(read, request.path_params["session"])  # reads a transcript
             if asyncio.iscoroutine(out):
                 out = await out
         except LookupError as exc:
@@ -552,7 +555,7 @@ class EventApi:
         if refused:
             return refused
         try:
-            return JSONResponse(self.start_update(), status_code=202)
+            return JSONResponse(await asyncio.to_thread(self.start_update), status_code=202)
         except RuntimeError as exc:
             return JSONResponse({"error": str(exc)}, 409)
         except LookupError as exc:
@@ -563,7 +566,7 @@ class EventApi:
             return JSONResponse({"error": "sign in first"}, 401)
         if self.bridge is None:
             return JSONResponse({"error": "not here"}, 404)
-        return JSONResponse(self.bridge(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(await asyncio.to_thread(self.bridge), headers={"Cache-Control": "no-store"})
 
     # -- how new sessions start --------------------------------------------------------
 
@@ -746,7 +749,7 @@ class EventApi:
         if not await self._allowed(request):
             return JSONResponse({"error": "sign in first"}, 401)
         wanted = request.path_params.get("programme")
-        found = self.org(wanted)
+        found = await asyncio.to_thread(self.org, wanted)
         if found is None:
             return JSONResponse({"error": f"no programme {wanted!r}"}, 404)
         return JSONResponse(found, headers={"Cache-Control": "no-store"})
@@ -763,7 +766,7 @@ class EventApi:
 
     async def _stream(self, limit: int) -> AsyncIterator[str]:
         sent = 0
-        cursor = self.news(None)["cursor"]
+        cursor = (await asyncio.to_thread(self.news, None))["cursor"]  # a full look: seconds at first
         quiet = 0.0
         with HUB.subscribe() as queue:
             yield ": connected\n\n"
@@ -776,7 +779,7 @@ class EventApi:
                     continue
                 except TimeoutError:
                     pass
-                news = self.news(cursor)
+                news = await asyncio.to_thread(self.news, cursor)
                 cursor = news["cursor"]
                 for item in news["events"]:
                     yield f"event: news\ndata: {json.dumps(item, default=str)}\n\n"

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import os
 import sqlite3
 
 import httpx
@@ -307,3 +308,44 @@ async def test_the_plain_address_sends_a_browser_to_the_phone_page(bridge, tmp_p
     async with client(build_app(server, ui_dir=page)) as c:
         r = await c.get("/", follow_redirects=False)
     assert r.status_code in (302, 307) and r.headers["location"] == "/ui/"
+
+
+async def test_the_page_reads_sessions_off_the_event_loop(tmp_path, root, live):  # noqa: F811
+    # Listing the sessions reads their transcripts, git and waiting prompts (`claude logs`, about a
+    # second each); on the event loop, every voice call and stream would wait meanwhile.
+    on_loop = []
+
+    def read_transcript(sid, directory):
+        try:
+            asyncio.get_running_loop()
+            on_loop.append(sid)
+        except RuntimeError:
+            pass  # a worker thread: no loop runs here
+        return TRANSCRIPT
+
+    def read_prompt(job_id):
+        read_transcript(job_id, None)  # the same check: is a loop running here?
+        return "Bash(rm -rf build) Do you want to proceed? 1. Yes 2. No"
+
+    waiting = {"pid": os.getpid(), "sessionId": "sid-w", "cwd": str(root / "billing"), "name": "fetcher"}
+    waiting |= {"kind": "bg", "jobId": "job-w", "status": "waiting", "waitingFor": "permission prompt"}
+    (live / "waiting.json").write_text(json.dumps(waiting))
+    store = Store(tmp_path / "b.db")
+    oauth = OAuthProvider(store, SECRET, HOST, static_token=SECRET)
+    m = SessionManager(store, project_root=root, client_factory=FakeClaude())
+    server = build_server(
+        m,
+        oauth=oauth,
+        conversations=lambda **k: [],
+        live_dir=live,
+        read_transcript=read_transcript,
+        read_prompt=read_prompt,
+        deliver=Delivered(),
+    )
+    async with client(build_app(server)) as c:
+        listed = await c.get("/api/v1/sessions", headers=BEARER)
+        chosen = await c.put("/api/v1/active", json={"session": "billing-ab"}, headers=BEARER)
+        output = await c.get("/api/v1/sessions/billing-ab/output?limit=2", headers=BEARER)
+        pending = await c.get("/api/v1/sessions/billing-ab/pending", headers=BEARER)
+    assert [r.status_code for r in (listed, chosen, output, pending)] == [200, 200, 200, 200]
+    assert on_loop == []

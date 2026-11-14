@@ -292,6 +292,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Already shaped for upstream: two `# RULE` markers with their rows in `scripts/mutations/`, `tests/test_background_steps.py`. The fork's version also covers its logon wake-up; upstream's has none, so that part stays out of a pull request.
 - Expect discussion: the log level (warning) and whether to log every repeat instead of once.
 
+### 16. Reads that block the event loop, moved to worker threads — fork "Read sessions and their prompts in worker threads, off the event loop"
+
+- Status: an idea; nothing prepared, no branch.
+- What: the event API's routes for the session list, choosing the active session, one session's output, pending questions and detail, the event stream's looks, the bridge's state, the org chart and starting an update call synchronous helpers that read transcripts, run `git` and read a waiting session's prompt with `claude logs`; they now run them through `asyncio.to_thread`. The fork's own news line and waits read the prompt the same way.
+- Why upstream should want it: `claude logs` takes about a second here, and a session list with two sessions waiting on a permission prompt held every other request, MCP calls included, for over two seconds. Sync MCP tools already run in a thread (the SDK does it); these routes are the async callers left.
+- Expect pushback: little; the helpers must be safe to call from a thread, which they already are for the sync tools that call them.
+- Test first: `tests/test_api.py`, the test named after the rule "the page reads sessions off the event loop" (a reader that notes whether a loop is running in its thread).
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.
