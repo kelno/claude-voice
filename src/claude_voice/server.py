@@ -271,7 +271,12 @@ RENAME_RETRY_SECONDS = 60.0
 # until stopped, until it ends, or after this long with nothing new (owner, 2026-11-13).
 QUIET_SECONDS = 24 * 3600
 # Who started a turn, by the origin Claude Code records on the message that started it.
-STARTED_BY = {"human": "the owner typing", "peer": "another session", "task-notification": "a background task"}
+STARTED_BY = {
+    "human": "the owner typing",
+    "peer": "another session",
+    "channel": "another relay",  # a message the bridge delivered through its channel
+    "task-notification": "a background task",
+}
 # Handles handed out this close together, none passed back yet, came from one relay's calls made at
 # once without a handle: the first passed back takes the others over (owner, 2026-11-12). Two
 # relays starting within this time would merge, which the owner says doesn't happen.

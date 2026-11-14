@@ -54,7 +54,8 @@ def recent_turns(messages: Iterable[Any], limit: int | None = 10, origins: bool 
 
     With `origins`, a user turn also says where it came from, as Claude Code records it: "human"
     for one typed into the session, "peer" for a message from another session (the relay's own
-    among them), "task-notification" for a background task's completion note, None if unrecorded.
+    among them), "channel" for one the bridge delivered through its channel, "task-notification"
+    for a background task's completion note, None if unrecorded.
     """
     turns: list[dict[str, Any]] = []
     pending_tools: list[str] = []
@@ -427,7 +428,9 @@ def _lean(raw: bytes) -> Any:
     if entry.get("type") not in ("user", "assistant"):
         # Not a turn, but a task's end the session's state depends on.
         return SimpleNamespace(type="task-ended", message={}, origin=None, ended=ended) if ended else None
-    if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") != "peer":
+    # Claude Code marks a message from another session and a channel event as meta lines too.
+    # RULE: a message the relay channel delivers is kept as a turn
+    if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") not in ("peer", "channel"):
         return None
     message = entry.get("message") or {}
     content = message.get("content")

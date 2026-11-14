@@ -56,6 +56,31 @@ def test_peer_messages_that_arrive_mid_turn_are_kept_and_other_meta_entries_are_
     ]
 
 
+def test_a_message_the_relay_channel_delivers_is_kept_as_a_turn(tmp_path):
+    # Claude Code records a channel event as a meta line, the way it records a message from
+    # another session: dropped with the other meta lines, a relay's message never counted as a
+    # turn, so a read left it out and who started the turn was taken from an earlier one.
+    cwd = "/home/someone/project"
+    text = '<channel source="plugin:relay-channel:claude-voice" via="claude-voice bridge">\nWhich folder?\n</channel>'
+    lines = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Ready."}]}},
+        {
+            "type": "user",
+            "isMeta": True,
+            "origin": {"kind": "channel", "server": "plugin:relay-channel:claude-voice"},
+            "message": {"role": "user", "content": text},
+        },
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "In billing."}]}},
+    ]
+    path = tmp_path / project_key_for_directory(cwd) / "sid-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("".join(json.dumps(x) + "\n" for x in lines))
+
+    turns = recent_turns(read_raw_transcript("sid-1", cwd, projects_dir=tmp_path), None, origins=True)
+    assert turns[1] == {"role": "user", "text": text, "origin": "channel"}
+    assert [t["text"] for t in turns][2] == "In billing."
+
+
 def test_a_missing_transcript_reads_as_empty(tmp_path):
     assert read_raw_transcript("nope", "/x", projects_dir=tmp_path) == []
 

@@ -1156,6 +1156,21 @@ async def test_a_session_stays_in_a_quiet_follow_after_its_reply_is_read(served)
     assert peer["news"] == "[Juniper] billing-ab (idle): new turn, started by another session, read with after=5"
 
 
+async def test_a_turn_the_relay_channel_started_is_named_as_another_relay_s(served):
+    # Sessions the bridge starts get relayed messages through its channel: a new turn in a quiet
+    # follow started that way came from another relay, not from the owner typing.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        await call(c, "read_session_output", session="billing-ab", after=sent["next_after"])
+        desk.transcript.append(turn("user", "Which folder?", "channel"))
+        desk.transcript.append(turn("assistant", "In billing."))
+        out = await call(c, "list_active_sessions")
+    assert out["news"] == "[Juniper] billing-ab (idle): new turn, started by another relay, read with after=3"
+
+
 async def test_a_new_turn_in_a_quiet_follow_wakes_a_wait(tmp_path, world):
     root, live = world
     desk = Desk(live, str(root / "billing"))

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a message the relay channel delivers is kept as a turn"
+file = "src/claude_voice/transcripts.py"
+find = 'if entry.get\("isMeta"\) and \(entry.get\("origin"\) or \{\}\).get\("kind"\) not in \("peer", "channel"\):'
+replace = 'if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") != "peer":'
