@@ -33,7 +33,8 @@ def test_a_confirmation_needs_a_passkey_the_bridge_verified(keys):
     book, _ = keys
     registered(book)
     stranger = SoftKey(RP, ORIGIN)  # never registered
-    with pytest.raises(ValueError):
+    # Refused because it isn't registered, not later by the signature check failing on a missing key.
+    with pytest.raises(ValueError, match="isn't registered"):
         book.verify("request:ABCD", stranger.assert_(book.challenge("request:ABCD")))
 
 
