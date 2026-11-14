@@ -97,6 +97,7 @@ def bridge(tmp_path, monkeypatch):
     transcript(projects, home / "app", "sid-7", "toolu_compact")
     store = Store(tmp_path / "b.db")
     done: list[tuple] = []
+    woken: dict = {}  # the registry entry a wake writes back, when a test gives one
 
     async def stop(sid):
         done.append(("stop", sid))
@@ -107,6 +108,8 @@ def bridge(tmp_path, monkeypatch):
 
     async def start(cwd, name, **options):
         done.append(("wake", cwd, options))
+        if woken:
+            (live / "7.json").write_text(json.dumps(woken), encoding="utf-8")
 
     async def deliver(name, text):
         done.append(("told", name, text))
@@ -129,6 +132,7 @@ def bridge(tmp_path, monkeypatch):
         "live": live,
         "entry": entry,
         "done": done,
+        "woken": woken,
         "cwd": str(home / "app"),
     }
 
@@ -178,3 +182,23 @@ async def test_a_compaction_given_up_is_told_to_the_session_with_why(bridge, mon
     assert (step, name) == ("told", "desk")
     assert "gave up" in text and "background task still running" in text and "compact_after_turn" in text
     assert any("gave_up" in r.message and "background task still running" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("linked", [True, False])
+async def test_a_session_woken_from_a_compaction_without_its_remote_control_link_is_logged(bridge, monkeypatch, caplog, linked):
+    # The wake un-archives the claude.ai session and reattaches to it; where claude.ai refuses
+    # (an untrusted device), the session runs on without Remote Control, out of the app's list.
+    monkeypatch.setattr(server, "RELISTED_SECONDS", 0.3)
+    bridge["store"].record_started("sid-7", "desk", bridge["cwd"])
+    remote = {**bridge["entry"], "status": "idle", "bridgeSessionId": "session_1"}
+    (bridge["live"] / "7.json").write_text(json.dumps(remote), encoding="utf-8")
+    bridge["woken"].update(remote if linked else bridge["entry"], status="idle")
+    caplog.set_level("INFO", logger="claude_voice")
+    async with reached(bridge["server"]) as app:
+        await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact")
+        for _ in range(100):
+            if any("compact_after_turn desk" in r.message for r in caplog.records):
+                break
+            await asyncio.sleep(0.05)
+    warned = [r for r in caplog.records if "without Remote Control" in r.message]
+    assert bool(warned) is not linked

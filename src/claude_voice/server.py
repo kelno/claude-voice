@@ -1014,6 +1014,10 @@ async def wake_interrupted(
 
 COMPACT_POLL_SECONDS = 2.0  # how often the bridge looks whether a session asking to be compacted is at rest
 COMPACT_GIVE_UP_SECONDS = 1800.0  # how long it waits for that turn to end before dropping the request
+# How long a session woken after its compaction has to link up with Remote Control again. The stop
+# archives its claude.ai session; the wake un-archives it and reattaches, within seconds when it
+# works (Claude Code 2.1.325, tested 2026-11-14, ledger F94).
+RELISTED_SECONDS = 30.0
 
 
 async def compact_when_idle(
@@ -3044,7 +3048,8 @@ def build_server(
         For a session the bridge started, at a break you choose: first write down what must survive
         (your notes, a keep-file), then call this and end your turn. Once the turn has ended, the
         bridge stops you, runs /compact on the conversation and starts you again, usually within a
-        minute; your next message finds it compacted. status: scheduled or already_scheduled;
+        minute, and you are off the owner's session list in the Claude app until then; your next
+        message finds it compacted. status: scheduled or already_scheduled;
         if your turn never seems to end within 30 minutes (a background task still running counts
         as not ended), it gives up and sends you a message saying what it saw."""
         d = await asking_session()
@@ -3087,6 +3092,24 @@ def build_server(
             # RULE: a compaction given up is told to the session with why
             await send_into(d, told)
 
+        remote = bool(d.get("bridgeSessionId"))
+
+        async def relinked() -> None:
+            """Warn when the woken session hasn't linked up with Remote Control again: claude.ai
+            refused to un-archive it (an untrusted device), and it is out of the app's list."""
+            deadline = time.monotonic() + RELISTED_SECONDS
+            while time.monotonic() < deadline:
+                now = next((x for x in live_sessions() if str(x.get("sessionId")) == sid), None)
+                if now is not None and now.get("bridgeSessionId"):
+                    return
+                await asyncio.sleep(0.2)
+            # RULE: a session woken from a compaction without its Remote Control link is logged
+            log.warning(
+                "compact_after_turn %s (%s): woken without Remote Control, so it is out of the Claude app's list",
+                name,
+                sid,
+            )
+
         async def run() -> None:
             try:
                 outcome = await compact_when_idle(
@@ -3098,6 +3121,8 @@ def build_server(
                 if outcome == "gave_up":
                     await gave_up()
                 else:
+                    if remote:
+                        await relinked()
                     log.info("compact_after_turn %s (%s): %s", name, sid, outcome)
             except Exception as exc:
                 log.warning("compact_after_turn %s (%s) broke: %s", name, sid, exc)

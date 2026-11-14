@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session woken from a compaction without its Remote Control link is logged"
+file = "src/claude_voice/server.py"
+find = 'if remote:$'
+replace = 'if False:'
