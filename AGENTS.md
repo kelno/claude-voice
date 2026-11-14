@@ -1,3 +1,5 @@
+> **This is upstream's `AGENTS.md`, kept as upstream wrote it.** In this fork it applies only to a session preparing a pull request to upstream. All other work in this fork follows its owner's rules, in `CLAUDE.md`.
+
 # For an assistant setting this up for someone
 
 You are helping a person install claude-voice, a bridge that lets a voice
@@ -24,6 +26,8 @@ yourself, because it holds the login secret.
   account. Ask them to do it; never sign in for them.
 - **Approve a public address.** Exposing the bridge to the internet (for
   example `tailscale funnel`) changes their network. Ask first.
+- **Answer approvals.** A pending approval is the person's yes or no. Never
+  approve one yourself.
 
 ## What never to do
 
