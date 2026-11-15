@@ -219,6 +219,29 @@ async def test_a_message_to_a_session_claude_code_closed_for_low_memory_resumes_
     assert "low memory" in out["resumed"]
 
 
+async def test_a_message_to_a_session_claude_code_closed_while_idle_resumes_it_too(tmp_path, world):
+    # Seen 2026-11-14: Claude Code closes a Remote Control session 8 hours after it last worked,
+    # memory or not, and the log line then has no "[low memory]".
+    async def known():
+        return {OLD}
+
+    async def deliver(name, text):
+        return {"delivered": True, "detail": ""}
+
+    root, live = world
+    log = tmp_path / "daemon.log"
+    log.write_text(f"[2026-11-15T10:54:58.513Z] [bg] bg retire {OLD[:8]}: settled, idle 10h\n")
+    starter = Starter(live)
+    server = resuming(tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=log)
+    Store(tmp_path / "b.db").record_started(OLD, "Prompt test", str(root / "billing"))
+    async with Client(server) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "Prompt test", "message": "Hi"})
+        ).structured_content
+    assert [sid for _, sid in starter.woken] == [OLD]
+    assert "closed by Claude Code while idle" in out["resumed"]
+
+
 async def test_a_message_to_a_session_stopped_on_purpose_does_not_bring_it_back(tmp_path, world):
     async def known():
         return {OLD}

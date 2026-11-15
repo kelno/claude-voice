@@ -534,8 +534,9 @@ Sessions
   task.
 - A session gone from the list keeps its conversation: attach_conversation
   resumes it in place, with its history, so resume it rather than start
-  afresh. Claude Code closes idle ones when memory runs low; a message to one
-  of those resumes it by itself. A "project" the owner names is a folder to
+  afresh. Claude Code closes idle ones on its own, hours after they last
+  worked or sooner when memory runs low; a message to one of those resumes it
+  by itself. A "project" the owner names is a folder to
   the bridge; claude.ai Projects, the chat workspaces, are out of its reach. A
   session the bridge started can start one itself with the bridge's tools. A
   desktop session (one the owner opened in the desktop app) can't: the app
@@ -1843,9 +1844,8 @@ def build_server(
     def why_gone(sid: str) -> str:
         """Why a session is no longer running, when Claude Code says: empty otherwise."""
         # RULE: a session Claude Code closed for low memory says why and how to resume it
-        if sid[:8] in jobs.closed_for_memory(daemon_log):
-            return "closed by Claude Code for low memory"
-        return ""
+        closed = jobs.closed_by_claude_code(daemon_log).get(sid[:8])
+        return f"closed by Claude Code {closed.why}" if closed else ""
 
     def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A followed session's entry in the news line, or none once its finished turn is read
@@ -2927,7 +2927,7 @@ def build_server(
         )
 
     async def find_live_or_wake(session: str) -> tuple[dict[str, Any], str | None]:
-        """The running session `session` names; one Claude Code closed for low memory is resumed
+        """The running session `session` names; one Claude Code closed on its own is resumed
         first, and the second value says so."""
         try:
             return find_live(session), None
@@ -3578,7 +3578,7 @@ def build_server(
         """Send to a session and return at once; wait_for_session then gets the reply.
         Returns once delivered, in a few seconds; use it when your next step doesn't depend on the
         answer, then wait_for_session(after=next_after), or read_session_output(after=next_after)
-        later. A session Claude Code closed for low memory is resumed first; resumed says so."""
+        later. A session Claude Code closed on its own is resumed first; resumed says so."""
         target, resumed = await find_live_or_wake(session)
         woke = {"resumed": resumed} if resumed else {}
         moved = moved_to(target)
@@ -3919,8 +3919,8 @@ def build_server(
         its turn ended; continue with wait_for_session(after=next_after)), "session_ended" (it
         exited meanwhile), "not_received" (the message never reached its conversation), "moved"
         (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
-        user to pick one of question.options). A session Claude Code closed for low memory is
-        resumed first; resumed says so."""
+        user to pick one of question.options). A session Claude Code closed on its own is resumed
+        first; resumed says so."""
         began = asyncio.get_running_loop().time()  # a resume and the delivery count toward the wait
         target, resumed = await find_live_or_wake(session)
         woke = {"resumed": resumed} if resumed else {}

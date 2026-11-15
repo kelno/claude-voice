@@ -393,19 +393,25 @@ async def test_a_not_delivered_message_is_logged_with_its_reason(caplog):
     await courier.close()
 
 
-def test_the_sessions_claude_code_closed_for_low_memory_are_read_from_its_log(tmp_path):
-    from claude_voice.jobs import closed_for_memory
+def test_a_session_claude_code_closed_while_idle_is_read_from_its_log(tmp_path):
+    # Seen 2026-11-14: most closes are after hours at rest, with no "[low memory]" on the line.
+    from claude_voice.jobs import closed_by_claude_code
 
     log = tmp_path / "daemon.log"
     log.write_text(
         "[2026-11-13T00:19:50.365Z] [bg] bg retire aaaa1111: idle-prompt, idle 4h [low memory]\n"
         "[2026-11-13T00:19:50.366Z] [bg] bg retire bbbb2222: settled, idle 2h [low memory]\n"
         "[2026-11-13T00:19:50.367Z] [bg] bg retire cccc3333: settled, idle 8h\n"
+        "[2026-11-13T00:19:50.368Z] [bg] bg retire dddd4444: settled, idle 3h [low memory, monitoring only]\n"
         "[2026-11-13T00:21:26.146Z] [bg] bg spawned bbbb2222 (fleet)\n",
         encoding="utf-8",
     )
-    assert closed_for_memory(log) == {"aaaa1111"}  # bbbb2222 was resumed since; cccc3333 not for memory
-    assert closed_for_memory(tmp_path / "missing.log") == set()
+    closed = closed_by_claude_code(log)
+    assert set(closed) == {"aaaa1111", "cccc3333", "dddd4444"}  # bbbb2222 was resumed since
+    assert closed["aaaa1111"].why == "for low memory" and closed["dddd4444"].why == "for low memory"
+    assert closed["cccc3333"].why == "while idle"
+    assert closed["cccc3333"].at == "2026-11-13T00:19:50.367Z"
+    assert closed_by_claude_code(tmp_path / "missing.log") == {}
 
 
 def replied(sender, body):

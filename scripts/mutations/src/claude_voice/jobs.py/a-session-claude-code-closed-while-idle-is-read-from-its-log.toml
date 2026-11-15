@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session Claude Code closed while idle is read from its log"
+file = "src/claude_voice/jobs.py"
+find = 'why = "for low memory" if "\[low memory" in m\.group\(3\) else "while idle"'
+replace = 'why = "for low memory"'

@@ -1,5 +1,5 @@
 """Claude Code's background jobs, as the fork drives them: listing them, renaming one through its job
-record, reading the permission prompt one waits on, telling which Claude Code closed for low memory,
+record, reading the permission prompt one waits on, telling which Claude Code closed on its own,
 waking a former one in place, and compacting a stopped one's conversation.
 
 These are the fork's own; they live apart from upstream's transcripts.py so a merge from upstream
@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -106,25 +107,36 @@ def rename_job(session_id: str, name: str, jobs_dir: Path = JOBS_DIR) -> None:
 DAEMON_LOG = Path.home() / ".claude" / "daemon.log"
 
 
-_RETIRE = re.compile(r"\[bg\] bg retire (\S+?):.*\[low memory\]")
+_RETIRE = re.compile(r"^\[(\S+?)\] \[bg\] bg retire (\S+?):(.*)$")
 
 
 _SPAWN = re.compile(r"\[bg\] bg spawned (\S+)")
 
 
-def closed_for_memory(log: Path = DAEMON_LOG) -> set[str]:
-    """The short ids (a session id's first 8 characters) of the background sessions Claude Code
-    closed to free memory and that haven't run since. Their conversations are kept."""
+@dataclass(frozen=True)
+class Closed:
+    """A background session Claude Code closed on its own: why, as told to the relay, and when."""
+
+    why: str  # "for low memory" or "while idle"
+    at: str  # the log line's time stamp, UTC
+
+
+def closed_by_claude_code(log: Path = DAEMON_LOG) -> dict[str, Closed]:
+    """The background sessions Claude Code closed on its own and that haven't run since, by short id
+    (a session id's first 8 characters). It closes one at rest a while after it last worked (8 hours
+    with Remote Control), sooner when memory runs low. Their conversations are kept."""
     try:
         lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return set()
-    closed: set[str] = set()
+        return {}
+    closed: dict[str, Closed] = {}
     for line in lines:
         if m := _RETIRE.search(line):
-            closed.add(m.group(1))
+            # RULE: a session Claude Code closed while idle is read from its log
+            why = "for low memory" if "[low memory" in m.group(3) else "while idle"
+            closed[m.group(2)] = Closed(why, m.group(1))
         elif m := _SPAWN.search(line):
-            closed.discard(m.group(1))
+            closed.pop(m.group(1), None)
     return closed
 
 
