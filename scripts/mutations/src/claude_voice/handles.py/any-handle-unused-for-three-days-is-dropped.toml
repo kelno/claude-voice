@@ -1,0 +1,5 @@
+[[rule]]
+name = "any handle unused for three days is dropped"
+file = "src/claude_voice/handles.py"
+find = 'if h != keep and now - self\.all\[h\]\.get\("used", 0\) > IDLE_SECONDS:'
+replace = 'if False:'

@@ -34,8 +34,12 @@ SETTING = "relay_handles"
 # A handle the bridge hands out: "@" and four letters of mixed case, such as "@kQzw", so no one takes
 # it for a name, nor for the owner's codes (P62, F70); l, I, o and O left out, as easily misread.
 LETTERS = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ"
-# A handle that follows nothing and wasn't used for this long is dropped.
-IDLE_SECONDS = 24 * 3600
+# A handle not used for this long is dropped, with what it follows: its conversation is taken as
+# gone for good, so its follows don't pile up, nor an unread reply in them keep a session from being
+# stopped forever. A chat picked up later than this gets a new handle and misses what changed while
+# it was away; its sessions stay readable. One rule for every handle, whether it follows something
+# or not (owner, 2026-11-15; until then, a day for a handle following nothing, never otherwise).
+IDLE_SECONDS = 3 * 24 * 3600
 # Handles handed out this close together, none passed back yet, are taken for one relay's calls made
 # at once without a handle: the first passed back takes the others over (owner, 2026-11-12). Safe
 # because the owner talks to one relay at a time, so two conversations don't start within ten
@@ -99,11 +103,11 @@ class Handles:
         self.all.setdefault(handle, {"used": 0, "sessions": {}})["used"] = self.clock()
 
     def drop_idle(self, keep: str | None = None) -> None:
-        """Drop the handles following nothing and unused for a day, but `keep`, the caller's."""
+        """Drop the handles unused for three days, but `keep`, the caller's."""
         now = self.clock()
         for h in list(self.all):
-            # RULE: a handle following nothing unused for a day is dropped
-            if h != keep and not self.follows(h) and now - self.all[h].get("used", 0) > IDLE_SECONDS:
+            # RULE: any handle unused for three days is dropped
+            if h != keep and now - self.all[h].get("used", 0) > IDLE_SECONDS:
                 del self.all[h]
 
     def snapshot(self) -> str:

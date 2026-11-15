@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session whose reply a relay has not read is not stopped"
+file = "src/claude_voice/server.py"
+find = 'if waiting and not even_unread:'
+replace = 'if False:'

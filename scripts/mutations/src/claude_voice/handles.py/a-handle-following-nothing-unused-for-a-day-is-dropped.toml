@@ -1,5 +1,0 @@
-[[rule]]
-name = "a handle following nothing unused for a day is dropped"
-file = "src/claude_voice/handles.py"
-find = 'del self.all\[h\]$'
-replace = 'pass'

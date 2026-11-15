@@ -310,7 +310,7 @@ NO_HANDLE = (
     "you had one in this conversation, pass it; after a compaction, take yours back (the one following your "
     "sessions){in_use}. Machinery, not your name: don't say it to the owner."
 )
-UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after a day following nothing). '
+UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after three days unused). '
 # The calling relay, during a call: its handle (given, handed out by this call, or a Claude Code
 # session's own name; None without), whether a handle is wanted (calls news reaches, those with an
 # MCP session), a handle given that isn't in use, and one this call handed out. One dict per call,
@@ -481,7 +481,7 @@ News
   while your first still waits, gets the same one until the bridge restarts;
   in a typed chat, it gets a new one, following nothing. So pass yours always.
   A handle the bridge doesn't know (a typo, or one
-  dropped after a day following nothing) counts as none, with the handles in
+  dropped after three days unused) counts as none, with the handles in
   use listed. It is machinery between you and the bridge, not your name: never
   say it to the owner (name the sessions instead). Keep yours for the whole
   conversation. Pass an earlier relay's handle only to carry on its work when
@@ -1893,6 +1893,19 @@ def build_server(
             mark.pop("quiet")
         return []
 
+    def unread_by(sid: str, d: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """The relays (by handle label) following session `sid` whose reply from it they haven't
+        read, with their marks. Asked afresh, as the news would: the mark's last news may be stale.
+        No time limit: an unread reply stays so until it is read or no longer followed."""
+        waiting = {}
+        for handle, record in relays.all.items():
+            mark = record.get("sessions", {}).get(sid)
+            if mark is None or following.stance(mark) != "followed":
+                continue
+            if follow_state(sid, dict(mark), d)[0] == "unread":  # a copy: asking changes nothing
+                waiting[relays.label(handle)] = mark
+        return waiting
+
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
         """Where a followed, running session stands, and its latest message: following.follow_state."""
         turns = all_turns(sid, str(d.get("cwd") or mark.get("cwd")))
@@ -2601,9 +2614,15 @@ def build_server(
         return {"roles": out}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    async def stop_active_session(name: Annotated[str, Field(description=SESSION_PARAM)]) -> dict[str, Any]:
+    async def stop_active_session(
+        name: Annotated[str, Field(description=SESSION_PARAM)],
+        even_unread: Annotated[
+            bool, Field(description="True stops it even though a relay hasn't read its reply yet.")
+        ] = False,
+    ) -> dict[str, Any]:
         """Stop a session the bridge started; any other session is refused.
-        A refused one gets status not_started_here."""
+        A refused one gets status not_started_here. One whose reply a relay hasn't read yet gets
+        status reply_unread, with read_from: read it first, or pass even_unread to stop it anyway."""
         target = named_for_voice(live_sessions(), name)
         if target is None:
             return {"name": name, "status": "not_running"}
@@ -2611,6 +2630,11 @@ def build_server(
         # RULE: only a session the bridge started itself is ever stopped
         if not store.was_started(sid):
             return {"name": name, "status": "not_started_here"}
+        waiting = unread_by(sid, target)
+        # RULE: a session whose reply a relay has not read is not stopped
+        if waiting and not even_unread:
+            read_from = min(max(m["sent"], m["seen"]) for m in waiting.values())
+            return {"name": name, "status": "reply_unread", "unread_by": list(waiting), "read_from": read_from}
         try:
             if target.get("kind") == "bg":
                 await stop_background(sid)

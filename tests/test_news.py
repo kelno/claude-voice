@@ -933,23 +933,25 @@ async def test_a_change_to_the_handles_is_kept_whatever_made_it(served, tmp_path
     assert kept(tmp_path)["Rowan"]["used"] > before
 
 
-async def test_a_handle_following_nothing_unused_for_a_day_is_dropped(tmp_path, world):
+async def test_any_handle_unused_for_three_days_is_dropped(tmp_path, world):
+    # A conversation that never comes back would otherwise keep what it follows forever, and an
+    # unread reply in it would keep its session from being stopped (owner, 2026-11-15).
     root, live = world
     desk = Desk(live, str(root / "billing"))
     store = Store(tmp_path / "bridge.db")
-    old = time.time() - 25 * 3600
+    following = {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}}
     store.set_setting(
         "relay_handles",
         {
-            "Rowan": {"used": old, "sessions": {"sid-1": {"seen": 1, "sent": None, "replied": False}}},
-            "Ash": {"used": old, "sessions": {"sid-1": {"seen": 1, "sent": 1, "replied": False, "name": "billing-ab"}}},
+            "Rowan": {"used": time.time() - 73 * 3600, "sessions": dict(following)},
+            "Ash": {"used": time.time() - 71 * 3600, "sessions": dict(following)},
         },
     )
     async with bridge(tmp_path, desk, store) as url:
         http, client = conversation(url)
         async with http, client as c:
             await call(c, "list_active_sessions", handle="Ash")
-    assert list(kept(tmp_path)) == ["Ash"]  # Ash still follows a session
+    assert list(kept(tmp_path)) == ["Ash"]  # Rowan followed a session too, but went unused for three days
 
 
 async def test_a_claude_code_session_follows_its_own_sessions(tmp_path, world):
@@ -1063,7 +1065,7 @@ async def test_a_handle_not_in_use_counts_as_none(served, tmp_path):
     sent = await elsewhere(url, "message_active_session", session="billing-ab", message="Go.", handle="Rowen")
     read = await elsewhere(url, "read_session_output", session="billing-ab", handle="Rowen")
     step = sent["next_step"]
-    assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after a day following nothing)')
+    assert step.startswith('Handle "Rowen" isn\'t one in use (a typo, or dropped after three days unused)')
     assert f'Your handle is "{sent["handle"]}"' in step and "pass that one instead from now on" in step
     assert "Rowan (follows billing-ab)" in step
     assert read["next_step"].startswith('Handle "Rowen" isn\'t one in use') and "handle" not in read
@@ -1426,3 +1428,38 @@ async def test_a_call_without_an_mcp_session_is_a_relay_too(served):
         desk.transcript.append(turn("assistant", "Export done."))
         later = await call(c, "list_active_sessions", handle=sent["handle"])
     assert "billing-ab" in later.get("news", "") and "reply to you" in later["news"]
+
+
+async def test_a_session_whose_reply_a_relay_has_not_read_is_not_stopped(tmp_path, world):
+    # Seen 2026-11-15: the Coordinator stopped a session whose reply the voice relay's news had
+    # shown as "reply to you" for several calls; the reply could then only be read by resuming it.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    store = Store(tmp_path / "bridge.db")
+    store.record_started("sid-1", "billing-ab", desk.cwd)
+    stopped = []
+
+    def stop_window(pid):
+        stopped.append(pid)
+        desk.gone()
+
+    async with bridge(tmp_path, desk, store, stop_window=stop_window) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Clean up your branches.")
+            desk.transcript.append(turn("assistant", "Branches cleaned up."))
+            told = await call(c, "list_active_sessions")
+            refused = await stop_from_elsewhere(url, {"name": "billing-ab"})
+            anyway = await stop_from_elsewhere(url, {"name": "billing-ab", "even_unread": True})
+    assert "reply to you" in told["news"]
+    assert refused["status"] == "reply_unread" and refused["unread_by"] == [HANDLE] and stopped == [PID]
+    assert anyway["status"] == "stopped"
+
+
+async def stop_from_elsewhere(url, args):
+    """stop_active_session from a conversation of its own, such as the Coordinator's."""
+    http, client = conversation(url)
+    async with http, client as c:
+        res = await c.call_tool("stop_active_session", args)
+    assert not res.is_error, res.content
+    return res.structured_content
