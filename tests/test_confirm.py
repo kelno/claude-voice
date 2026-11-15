@@ -228,6 +228,7 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
 
         handed = outcome(await call(app, "confirm_with_owner", {"code": code}))
         assert handed["link"] == asked["link"]
+        assert handed["tell_the_relay"] == asked["tell_the_relay"]
         assert handed["summary"] == "Allow Bash(git push:*)" and handed["from"] == "desk"
         page = await app.get(path_of(handed["link"]), headers={"x-forwarded-for": PHONE})
         assert page.status_code == 200 and "Allow Bash(git push:*)" in page.text
@@ -281,3 +282,12 @@ async def test_a_caller_no_session_on_this_pc_made_cannot_ask(bridge, monkeypatc
     async with reached(bridge["server"]) as app:
         refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_nowhere")
     assert refused.get("isError")
+
+
+async def test_the_relay_gets_one_confirmation_line_from_either_tool(bridge):
+    # A relay handed only a code still learns the at-the-PC path: the line has one home (owner, 2026-11-15).
+    async with reached(bridge["server"]) as app:
+        transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
+        asked = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))
+        handed = outcome(await call(app, "confirm_with_owner", {"code": asked["code"]}))
+    assert "at the PC" in handed["tell_the_relay"] and handed["tell_the_relay"] == asked["tell_the_relay"]

@@ -1,0 +1,5 @@
+[[rule]]
+name = "the relay gets one confirmation line from either tool"
+file = "src/claude_voice/server.py"
+find = '"tell_the_relay": tell_the_relay\(req\["asker"\]'
+replace = '"tell_the_relay": "",'

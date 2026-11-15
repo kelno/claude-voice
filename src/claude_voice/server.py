@@ -3101,6 +3101,18 @@ def build_server(
             await asyncio.sleep(0.25)
         raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
 
+    def tell_the_relay(name: str, summary: str, expires_at: str, link: str) -> str:
+        """How the relay gets the owner's OK, either way: the one home of that line, which confirm_ask and
+        confirm_with_owner both return, so a relay handed only a code still learns that an OK typed
+        at the PC counts (owner, 2026-11-15). Not aloud: relays read a code or link aloud, which the
+        owner can do nothing with (ledger F93)."""
+        return (
+            "Please get the owner's confirmation. If the owner has told you they're at the PC, ask them to"
+            f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
+            " can't; otherwise send the owner the link below as text in the chat, not aloud, and say in a few words"
+            f' what it asks them to confirm: "{summary}". It expires at {expires_at}. Link: {link}'
+        )
+
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def confirm_ask(
         summary: Annotated[
@@ -3121,13 +3133,7 @@ def build_server(
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         name = str(d.get("name") or d["sessionId"])
-        relay = (
-            "Please get the owner's confirmation. If the owner has told you they're at the PC, ask them to"
-            f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
-            " can't; otherwise send the owner the link below as text in the chat, not aloud, and say in a few words"
-            f' what it asks them to confirm: "{asked["summary"]}". It expires at {asked["expires_at"]}.'
-            f" Link: {link_to(asked)}"
-        )
+        relay = tell_the_relay(name, asked["summary"], asked["expires_at"], link_to(asked))
         return {
             "code": asked["code"],
             "link": link_to(asked),
@@ -3142,23 +3148,25 @@ def build_server(
         code: Annotated[str, Field(description="The code the session's confirm_ask gave it.")],
     ) -> dict[str, Any]:
         """Get the link for a confirm_ask request when a session gave only its code.
-        A session's request normally comes with its link already. Send the owner the link in the
-        chat and tell them in a few words what the returned summary asks, since the page shows the
-        request as the bridge stored it and the owner confirms it there with their passkey.
-        Nothing else confirms it, so never pass on an OK the owner gave aloud; an expired or
-        answered request needs a new confirm_ask from the session."""
+        A session's request normally comes with its link already. Follow the result's
+        tell_the_relay line, the same as confirm_ask's: the page shows the request as the bridge
+        stored it, and the owner confirms it there with their passkey. Never pass on an OK the
+        owner gave aloud; an expired or answered request needs a new confirm_ask from the session."""
         req = confirmations.by_code(code)
         if req is None or req["kind"] != "session":
             raise ToolError(f"No request {code}: ask the session for its code.")
         state = confirmations.state(req)
         if state != "pending":
             raise ToolError(f"Request {req['code']} is {state}; the session asks again if it still needs it.")
+        expires_at = str(confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS))
         return {
             "code": req["code"],
             "link": link_to(req),
             "summary": req["summary"],
             "from": req["asker"],
-            "expires_at": confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS),
+            "expires_at": expires_at,
+            # RULE: the relay gets one confirmation line from either tool
+            "tell_the_relay": tell_the_relay(req["asker"], req["summary"], expires_at, link_to(req)),
             "note": "If carrying it out raises a permission prompt shown at the PC, that still waits for the owner"
             " there.",
         }
@@ -3172,7 +3180,7 @@ def build_server(
         confirmed), pending (the owner can still confirm it until it expires), declined, expired,
         used (only you can check it, so an earlier check of yours was shown the confirmation: act on
         that one if you haven't yet, else ask again) or unknown. A confirmation can't answer a
-        permission prompt at the PC; it does clear a refusal from Claude Code's auto mode."""
+        permission prompt at the PC; it nearly always clears a refusal from Claude Code's auto mode."""
         d = await asking_session()
         return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
 
