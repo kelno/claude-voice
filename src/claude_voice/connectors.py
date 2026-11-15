@@ -11,7 +11,9 @@ its cache folder for the session's project, named by the start's time and naming
 session on each line. A start with a log for some server but none for a `claude-ai-*` one,
 in a folder where they have loaded before, came without its connectors. These are Claude
 Code's own files, not a documented interface: anything unexpected in them tells nothing,
-and nothing is done.
+and nothing is done. The desktop app gives its sessions the connectors another way, without
+these logs, so its sessions are never judged (seen 2026-11-15: two desktop sessions that had
+all their connectors were told they had none).
 """
 
 import contextlib
@@ -84,6 +86,10 @@ def missing(cache: Path, d: dict[str, Any], now: float | None = None) -> bool | 
     Claude Code keeps the logs under the folder the process started in: the session's
     folder or, for one that moved into a worktree since, a folder above it."""
     now = time.time() if now is None else now
+    # RULE: a desktop-app session tells nothing
+    # (the desktop app gives its sessions the connectors without these logs)
+    if d.get("entrypoint") == "claude-desktop":
+        return None
     try:
         started = float(d["startedAt"]) / 1000 - EARLY_SECONDS
         here = Path(str(d["cwd"]))

@@ -97,6 +97,15 @@ def test_a_start_later_than_now_is_not_this_ones(tmp_path):
     assert connectors.missing(tmp_path, row(WAKE), now=at(WAKE) + 120) is True
 
 
+def test_a_desktop_app_session_tells_nothing(tmp_path):
+    # Seen 2026-11-15: the desktop app gives its sessions the connectors without the logs
+    # Claude Code writes for them, so a desktop session with all of them looked like one without.
+    full_start(tmp_path, EARLIER)
+    log(tmp_path, "ccd-connectors", WAKE)
+    desktop = dict(row(WAKE), entrypoint="claude-desktop")
+    assert connectors.missing(tmp_path, desktop, now=at(WAKE) + 120) is None
+
+
 class World:
     """The bridge as the mender sees it: running sessions, and what it can do to them."""
 

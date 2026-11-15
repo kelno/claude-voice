@@ -174,7 +174,9 @@ and `/api/v1/doctor` say whether such a port is there.
   is back, and it then runs without them. The bridge notices from Claude Code's
   MCP logs, and once the session is at rest and claude.ai answers, stops and
   resumes it in place, its conversation kept. A session it can't restart, or
-  whose restart didn't help, is told to warn you.
+  whose restart didn't help, is told to warn you. Sessions of the Claude
+  desktop app aren't checked: the app gives them the connectors without
+  those logs.
 - **A session open in a terminal is never taken over.**
   - Messages are delivered into it, the way one Claude Code session messages
     another.

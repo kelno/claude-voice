@@ -1,0 +1,5 @@
+[[rule]]
+name = "a desktop-app session tells nothing"
+file = "src/claude_voice/connectors.py"
+find = 'if d.get\("entrypoint"\) == "claude-desktop":'
+replace = 'if False:'
