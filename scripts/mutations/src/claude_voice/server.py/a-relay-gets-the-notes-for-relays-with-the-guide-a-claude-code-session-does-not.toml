@@ -1,0 +1,5 @@
+[[rule]]
+name = "a relay gets the notes for relays with the guide, a Claude Code session does not"
+file = "src/claude_voice/server.py"
+find = 'relaying = bool\(connection\) or claude_code_transcript is None or claude_code_transcript\(\) is None'
+replace = 'relaying = True'

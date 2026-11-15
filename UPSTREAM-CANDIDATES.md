@@ -228,7 +228,7 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 ### 6e. A manual for the assistant — fork "Give the bridge a manual, sent at connection and kept in a guide tool", cut down in "Keep in the manual only the rules that span tools"
 
-- What: the server instructions rewritten as a short manual (roles, the rule that the owner sees nothing passing through tools, keeping agents' words apart, the relay's scope, how to wait, what only the owner answers), and a `guide` tool returning the same text for clients that drop server instructions. Since "Keep in the manual only the rules that span tools" it holds only what spans tools; what one tool needs is in that tool's description (6h).
+- What: the server instructions rewritten as a short manual (roles, the rule that the owner sees nothing passing through tools, how to wait, what only the owner answers; keeping agents' words apart and the relay's scope have since moved to the owner's notes for relays, a fork-only feature), and a `guide` tool returning the same text for clients that drop server instructions. Since "Keep in the manual only the rules that span tools" it holds only what spans tools; what one tool needs is in that tool's description (6h).
 - Expect discussion: the manual is written around this fork's voice relay naming; upstream would take the structure and the guide tool, and keep its own words. Test: `tests/test_guide.py`.
 
 ### 6f. "List every session" instruction and the relay label — fork "Tell the assistant to list every session it can see"

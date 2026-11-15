@@ -40,12 +40,7 @@ def test_the_manual_states_its_central_rules():
         "the desk session",
         "the side session",
         "the owner sees nothing",  # the central principle
-        "the desk session says",  # agents stay distinct
-        "that session's call",  # the relay relays; how to do the work is the session's
-        "marked as yours",  # its own ideas go along as suggestions
-        "no limit or permission",  # the relay adds none the owner didn't give; the session's rules govern its process
-        "start the new session itself",  # a session holding the context briefs and starts new work, not the relay
-        "stays reachable",  # and answers the new session's questions
+        "voice in, screen out",  # when the owner reads on screen, the relay's notes say what's left to say
         "wait_for_session",  # asked to wait, the relay waits again rather than handing back
         "don't ask the owner",  # waiting for a reply is the default
         "wait in silence",  # no heads-up or progress between waits, whatever the app asks
@@ -57,19 +52,23 @@ def test_the_manual_states_its_central_rules():
         "not your name",  # the handle is machinery, never said to the owner nor taken for the agent's name
         "nothing new",  # every followed session has an entry, so nothing new isn't mistaken for unfollowed
         "when a topic with the owner wraps up",  # the relay checks the news then, rather than offering to
-        "one thing at a time",  # in voice, news comes what needs the owner first, the rest when asked
         "before telling the owner what it said",  # news says something is new, not what
-        "already approved",  # work done as agreed is confirmed briefly, not walked through again
         "start_active_session",  # new work
         "attach_conversation",  # resumed work
-        "self-contained brief",  # what a session's first task holds
-        "propose changes before applying",  # delegated work is proposed first, unless the owner says otherwise
+        "on remote control",  # sessions the bridge starts can be taken over on the phone or at the PC
         "so never ask one to",  # a desktop session: the app refuses a start from a relayed message
         "a session the bridge started can",  # unlike a desktop session, it starts new work itself
         "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
     ):
         assert words in MANUAL, words
+
+
+def test_what_moved_to_the_relays_notes_left_the_manual():
+    # How a relay works with the owner and the other sessions is in the owner's notes for relays,
+    # handed over with the guide (relay_notes.py); the guide stays for every agent on the bridge (owner, 2026-11-15).
+    for words in ("keep agents distinct", "the relay's scope", "self-contained brief", "one thing at a time"):
+        assert words not in MANUAL, words
 
 
 def test_the_manual_says_what_the_name_marker_means():

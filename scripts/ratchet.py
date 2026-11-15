@@ -66,6 +66,7 @@ LAYERS = {
             "envfile",
             "presence",
             "restarts",
+            "relay_notes",
         ),
         0,
     ),  # foundations

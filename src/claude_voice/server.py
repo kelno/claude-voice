@@ -67,6 +67,7 @@ from . import (
     plugins,
     procs,
     prompts,
+    relay_notes,
     renames,
     restarts,
     roles,
@@ -433,41 +434,23 @@ Roles
 The central rule: the owner sees nothing that passes through these tools
 - Not what you send, not what a session answers, not what agents say to each
   other. Everything that matters must be said in your conversation with the
-  owner: say briefly what you sent and what came back.
-- Keep agents distinct: "the desk session says X", "the side session says X",
-  "I think Y". Never present another agent's words as your own, or blend them.
-- Sessions answer you in self-contained text written for an agent: condense
-  it, and keep what you say aloud short, since the owner is usually away from
-  the machine. When a session reports work the owner already approved, done
-  as agreed, confirm it in a few words and raise only what differs, surprises,
-  or decisions needed.
-
-The relay's scope
-- Relaying to a session that owns a piece of work, pass on the owner's words
-  and the context it lacks, keeping apart: the owner's words, quoted (their
-  approval); your account of them (their direction); your own ideas, marked
-  as yours (suggestions). A session may ask you for the exact words. How to
-  do the work (its structure, wording, plan, and its process: commits,
-  pushes, checks, which its own rules govern) is that session's call. Add no
-  limit or permission the owner didn't give. A change within that session's
-  plan goes to it rather than being done by you on the side.
-- When a session already holds the context for new work, have it write the
-  brief, start the new session itself if it can (see Sessions), and send the
-  brief; then ask it for the new session's name. It stays reachable for the
-  new session's questions. If it can't start one, start it yourself with the
-  first message it wrote: the relay only works from summaries, so its briefs
-  lose details and add mistakes.
+  owner: say briefly what you sent and what came back. When the owner reads
+  the sessions' answers on screen themselves, say only what they don't
+  already have: point 11 of the relay's notes, "Voice in, screen out", when a
+  result gave you those notes (relay_notes). [P136]
 
 Waiting
 - After you send a session a message, wait for its reply; don't ask the owner
   whether to. Call wait_for_session again while it says "still_working",
   until the reply comes: the owner interrupts if they have something to say.
+  [P140]
 - A Claude Code session relaying gets the answer to a message by direct
   message (SendMessage), which wakes it, so it needn't wait: the bridge's note
   on the message tells the session to answer that way. A question
   (ask_active_session) is still answered in the reply text.
 - Wait in silence: nothing between waits, no heads-up, no progress, even when
   the app asks you to say it is taking a while. Speak once, with the reply.
+  [P141]
 - A result may end with next_step: what follows for the sessions you follow,
   in the states where something does. It is for you: say aloud only what it
   asks you to tell the owner.
@@ -521,13 +504,11 @@ News
   not during a silent wait. Read a session first, before telling the owner
   what it said. A waiting prompt is the owner's to answer, on the phone or at
   the PC: say what it asks (list_active_sessions shows it), before a wait if
-  one is coming.
+  one is coming. [P142]
 - When a topic with the owner wraps up, check the news yourself, without
   asking: any call with your handle returns it, list_active_sessions is a
   cheap one. Speak only if something is new. About to offer the owner to check
-  on the sessions? That's the moment to check instead.
-- Tell news one thing at a time: first what needs the owner (an action or a
-  decision), the rest once they ask or that thing is done.
+  on the sessions? That's the moment to check instead. [P143]
 
 Sessions
 - New work: start_active_session in a folder (list_folders), or
@@ -545,11 +526,7 @@ Sessions
   desktop session (one the owner opened in the desktop app) can't: the app
   refuses a start from a relayed message and puts a card in front of the
   owner, so never ask one to.
-- A session's first task is a self-contained brief: the goal, what is known
-  so far (problems found, the owner's words), the notes or files involved, and
-  how much care it deserves. Unless the owner said otherwise, ask it to
-  propose changes before applying them; relay its proposal to the owner.
-  Sessions the bridge starts or resumes are on Remote Control and in the
+- Sessions the bridge starts or resumes are on Remote Control and in the
   desktop app's sidebar, so the owner can open them on the phone or at the PC
   and take over.
 - side_chat marks a "btw: ..." aside the owner opened from a desktop session:
@@ -559,8 +536,6 @@ Sessions
   finds it either way. A name the owner gives, or agrees to when a session
   proposes one (it shows in your news), goes to rename_session or
   start_active_session with owner_chose true.
-- A refusal from Claude Code's auto mode is not a prompt: the session asks for
-  the owner's OK with confirm_ask, and you hand the owner its link.
 
 Missing tools
 - The app caches this connector's tool list. If a tool named here isn't in
@@ -897,10 +872,12 @@ def result_notes(
     claude_code_transcript: Callable[[], Path | None] | None = None,
     guide: str = INSTRUCTIONS,
     who: Callable[[str | None, dict[str, Any]], Awaitable[str | None]] | None = None,
+    relay_notes: Callable[[], str | None] | None = None,
 ) -> Any:
     """Middleware adding notes to results: the manual to the first result of a conversation that
     hasn't called guide (a Claude app conversation by its MCP session, a Claude Code session by
-    the transcript holding the call, given again after that transcript shows a compaction), the
+    the transcript holding the call, given again after that transcript shows a compaction), with
+    the owner's `relay_notes` when the caller is a relay, which a relay's call to guide gets too; the
     `news` line for that MCP session, LATE_NOTE to a slow call's result, and PENDING_NOTE to a
     call on a session that a wait is still running on."""
     waits: dict[str, int] = {}
@@ -968,6 +945,12 @@ def result_notes(
             guided.setdefault(unguided, 0)
             while len(guided) > GUIDED_KEPT:
                 del guided[next(iter(guided))]
+        # RULE: a relay gets the notes for relays with the guide, a Claude Code session does not
+        if relay_notes is not None and (unguided or params.get("name") == "guide"):
+            relaying = bool(connection) or claude_code_transcript is None or claude_code_transcript() is None
+            said = relay_notes() if relaying else None
+            if said:
+                manual["relay_notes"] = said
         if news is not None and relay:
             told = await news(str(relay), str(params.get("name") or ""), args, structured)
             if "news" in told:
@@ -1946,6 +1929,7 @@ def build_server(
     # The guide, with the owner's own rules for the voice when a file holds them: the Claude app
     # doesn't pass the server's instructions to the model, so they reach it through the guide.
     told = voice_instructions(repos.voice_instructions_file)
+    relay_note_files = relay_notes.configured(repos.file)  # the owner's notes for relays (relay_notes.py)
     across = fleet.Fleet()  # the other machines, filled in once they are started below
     across.numbers = manager.store
     across.publish = api.HUB.publish
@@ -1959,7 +1943,13 @@ def build_server(
         auth=auth,
         middleware=[
             log_requests,
-            result_notes(news_line, lambda: calling_transcript(), told, lambda c, a: who(c, a)),
+            result_notes(
+                news_line,
+                lambda: calling_transcript(),
+                told,
+                lambda c, a: who(c, a),
+                lambda: relay_notes.text(relay_note_files),
+            ),
             fleet.middleware(across),
         ],
         lifespan=lifespan,
@@ -3114,7 +3104,7 @@ def build_server(
         """How the relay gets the owner's OK, either way: the one home of that line, which confirm_ask and
         confirm_with_owner both return, so a relay handed only a code still learns that an OK typed
         at the PC counts (owner, 2026-11-15). Not aloud: relays read a code or link aloud, which the
-        owner can do nothing with (ledger F93)."""
+        owner can do nothing with (ledger F93). Its rule: ledger P146."""
         return (
             "Please get the owner's confirmation. If the owner has told you they're at the PC, ask them to"
             f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
