@@ -297,8 +297,7 @@ HANDLED_TOOLS = (
 )
 HANDLE_PARAM = (
     "Your relay handle, which the bridge gave you: pass it on every call that takes one. It keeps what you "
-    "follow apart from other relays'; machinery between you and the bridge, not your name: never say it to "
-    "the owner."
+    "follow apart from other relays'."
 )
 # Nothing a call carries identifies its conversation across a bridge restart or from voice to
 # typing (handles.py says why), so each relay says who it is with a handle the bridge hands out: with
@@ -307,17 +306,15 @@ HANDLE_PARAM = (
 NEW_HANDLE = (
     'Your handle is "{new}": pass it as handle on every call that takes one from now on, since what you '
     "follow is kept under it. If you already had one in this conversation, pass that one instead from now "
-    "on. After a compaction, take yours back (the one following your sessions){in_use}. Machinery, not "
-    "your name: don't say it to the owner."
+    "on. After a compaction, take yours back (the one following your sessions){in_use}."
 )
 SAME_HANDLE = (
-    'Your handle is "{handle}", the one this conversation already has: pass it as handle on every call that '
-    "takes one. Machinery, not your name: don't say it to the owner."
+    'Your handle is "{handle}", the one this conversation already has: pass it as handle on every call that takes one.'
 )
 NO_HANDLE = (
     "No handle passed, so nothing you follow is shown: your first send, question or follow gives you one. If "
     "you had one in this conversation, pass it; after a compaction, take yours back (the one following your "
-    "sessions){in_use}. Machinery, not your name: don't say it to the owner."
+    "sessions){in_use}."
 )
 UNKNOWN_HANDLE = 'Handle "{given}" isn\'t one in use (a typo, or dropped after three days unused). '
 # The calling relay, during a call: its handle (given, handed out by this call, or a Claude Code
@@ -3099,8 +3096,8 @@ def build_server(
         """Get the owner's OK by passkey, past Claude Code's own blocks.
         Put the result's tell_the_relay line in your reply word for word, link included, and end
         your turn: the owner needs the link, not the code. The owner confirms on
-        the bridge's page with their passkey and the bridge then messages you, but you act only on
-        your own confirm_check, which you may call at any time; the result's running.design link
+        the bridge's page with their passkey and the bridge then messages you; confirm_check, which
+        you may call at any time, says whether they did; the result's running.design link
         says how it works and why. Ask at once, not after reporting back, also when Claude Code's
         auto mode refuses an action."""
         d = await asking_session()
@@ -3422,9 +3419,7 @@ def build_server(
         A session the bridge started is renamed in Claude Code too, and the phone and the desktop
         app show it within seconds; for any other, only the bridge's lists know the new name.
         claude_code: renamed, pending (mid-turn: the bridge renames it in Claude Code by itself
-        once idle), bridge_only, or already (Claude Code had that name); note says more. A name
-        the owner chose (not in curly braces) is renamed only with owner_chose; a name is found
-        with or without its braces."""
+        once idle), bridge_only, or already (Claude Code had that name); note says more."""
         new_name = renames.clean(new_name)
         if not renames.valid(new_name):
             raise ToolError("A session name needs at least one visible character.")
@@ -3510,8 +3505,7 @@ def build_server(
         why: Annotated[str, Field(description="Why, in a few words the owner can hear.")],
     ) -> dict[str, Any]:
         """Propose a new name for a session the owner named; the owner decides.
-        Only the owner renames a session whose name isn't in curly braces; for a name in braces,
-        an agent's, use rename_session instead. The proposal shows on the session's row in
+        For a name in curly braces, an agent's, use rename_session instead. The proposal shows on the session's row in
         list_active_sessions and once in each relay's news, for a day or until it is renamed; a
         later proposal replaces it, and no name check comes meanwhile."""
         new_name = renames.clean(new_name)
