@@ -120,10 +120,12 @@ class Access:
         # RULE: only a Desktop scratch folder is opened inside a denied folder
         if inside is not None and not self._exempted(p):
             return ("inside", inside)
-        if inside is None and self.base(p) is None:
-            held = next((d for d in self.denied if _under(d, p)), None)
-            if held is not None:
-                return ("holds", held)
+        # Inside the root or an opened folder too (ADR-CV-101): a session in a folder holding a closed
+        # one could reach it, so where it sits doesn't open it.
+        held = next((d for d in self.denied if _under(d, p)), None)
+        # RULE: a folder that holds a closed one is closed inside the root too
+        if inside is None and held is not None:
+            return ("holds", held)
         return None
 
     def state(self, path: str | Path) -> State:

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a folder that holds a closed one is closed inside the root too"
+file = "src/claude_voice/access.py"
+find = 'if inside is None and held is not None:'
+replace = 'if inside is None and held is not None and self.base(p) is None:'

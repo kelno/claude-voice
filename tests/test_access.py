@@ -168,6 +168,17 @@ async def test_a_denied_folder_stays_closed_inside_the_root(world):
         m.resolve_folder(".ssh")
 
 
+async def test_a_folder_that_holds_a_closed_one_is_closed_inside_the_root_too(world):
+    # ADR-CV-101: a folder holding one is blocked, inside the root too; a session at the home
+    # folder could otherwise reach .ssh under it (owner, 2026-11-15: a bug).
+    running(world, 6, "Home", world["home"])
+    m, srv = server(world, root=world["home"])
+    async with Client(srv) as c:
+        listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
+    assert listed["Home"]["access"] == "folder_closed"
+    assert m.access.closed_by(world["home"]) == ("holds", (world["home"] / ".ssh").resolve())
+
+
 async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
     # To start work remotely in a folder never used from the bridge, the owner opens it by path.
     m, srv = server(world)
