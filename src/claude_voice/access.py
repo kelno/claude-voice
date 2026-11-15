@@ -53,6 +53,8 @@ def default_exempt(home: Path | None = None) -> list[Path]:
     inside one, matches. Everything above it, such as the app's own storage, stays closed.
     """
     home = Path(home) if home is not None else Path.home()
+    # Exact depth, not all of the app's data: the folders above hold its own storage, which may hold
+    # credentials; if the app moves its scratch folders, these stop matching and fail safe (ADR-CV-102).
     return [
         home / "AppData" / "Local" / "Claude-Data" / "*" / "scratch-workspaces" / "*" / "*" / "scratch-*",
         home / "AppData" / "Roaming" / "Claude" / "scratch-workspaces" / "*" / "*" / "scratch-*",
@@ -190,6 +192,9 @@ def trust_new_folder(folder: str | Path, config: Path = CLAUDE_CONFIG) -> str:
 
 def _mark_trusted(key: str, config: Path) -> str:
     """Set `hasTrustDialogAccepted` under `projects[key]` in Claude Code's config file."""
+    # The fork's one writer of Claude Code's trust, for a folder opened by path and one the bridge just
+    # made; upstream's transcripts.trust_folder stays unused, as it ignores CLAUDE_CONFIG_DIR and drops
+    # a failure silently (UPSTREAM.md).
     data = json.loads(config.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"{config} is not a JSON object")

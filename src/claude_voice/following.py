@@ -41,6 +41,7 @@ def session_state(d: dict[str, Any] | None, background_running: Callable[[dict[s
         return "ended"
     if d.get("status") == "waiting":
         return PERMISSION_PROMPT if d.get("waitingFor") == "permission prompt" else ASKING
+    # Both: the desktop app reports such a session as idle, and only a background session says "shell".
     if d.get("status") in ("idle", "shell") and background_running(d):
         # RULE: a session with a background task still running is not at rest
         return BACKGROUND

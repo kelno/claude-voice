@@ -22,6 +22,8 @@ REQUEST_SECONDS = 15 * 60
 FIND_SECONDS = 3.0  # how long to look for a call in its session's transcript
 MAX_SUMMARY = 300  # read on a phone, so short
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, to be read aloud
+# At the running commit, so a session weighs the design of the code it is actually trusting (owner,
+# 2026-11-06; docs/owner-confirmation.md, "Checking the running code").
 DESIGN = "https://github.com/kelno/claude-voice/blob/{commit}/docs/owner-confirmation.md"
 
 SCHEMA = """
@@ -46,6 +48,9 @@ CREATE TABLE IF NOT EXISTS owner_requests(
 class Caller:
     """Who made a call, as the bridge itself observed it."""
 
+    # Only a Claude Code session's call id: every caller shares one sign-in and arrives from Anthropic's
+    # servers, and the product header and connection id can't tell one chat from another
+    # (docs/owner-confirmation.md, "History").
     tool_use_id: str | None = None  # a Claude Code session's id for this call, in its transcript
 
 
@@ -168,6 +173,7 @@ class Confirmations:
             return {"status": status, "code": code, "expires_at": iso(req["asked_at"] + REQUEST_SECONDS)}
         if status != "confirmed":
             return {"status": status, "code": code}
+        # Given once: a confirmation stands for one carrying-out of its summary, as the owner's rule says.
         if req["checked_at"] is not None:
             return {"status": "used", "code": code, "summary": req["summary"]}
         with self.db:
