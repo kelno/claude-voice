@@ -36,7 +36,7 @@ async def said_to_the_voice(tmp_path, repos):
     manager = SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path / "home", client_factory=FakeClaude())
     server = build_server(manager, conversations=lambda **k: [], live_dir=tmp_path / "live", repo_config=repos)
     async with Client(server) as c:
-        return c.instructions or ""
+        return (await c.call_tool("guide", {})).structured_content["guide"]
 
 
 async def test_the_owners_own_rules_file_reaches_the_voice(tmp_path):

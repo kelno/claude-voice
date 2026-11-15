@@ -600,6 +600,17 @@ def general_instructions(rules: Mapping[str, str] = DEFAULT_RULES) -> str:
 # A rule the owner switches on is named in VOICE_RULES_ON.
 VOICE_RULES_ON: frozenset[str] = frozenset()
 INSTRUCTIONS = general_instructions({k: v for k, v in DEFAULT_RULES.items() if k in VOICE_RULES_ON})
+# What the bridge says at connection: only where the guide is, never the guide itself. Claude Code puts
+# a server's instructions in every session's starting text, whether it uses the bridge or not, cut at
+# 2,048 characters mid-word and unmarked (tested 2026-11-11); the Claude app passes none to the model.
+# So the guide comes whole with a conversation's first result instead (result_notes), and again after
+# a compaction. Sent here in full too, every session read a cut copy of it and then the whole again;
+# that crept back in silently once already. Keep it a pointer (owner, 2026-11-15; upstream sends the
+# guide here: UPSTREAM.md).
+OPENING = (
+    "The claude-voice bridge. Its guide comes whole with your first result from it: read it before "
+    "anything else. If no result has carried it, call guide."
+)
 # The owner's own rules for the voice live in a file outside the repository, cut to this size.
 OWN_RULES_BYTES = 8 * 1024
 OWN_RULES_HEADING = "The owner's own rules:"
@@ -1939,7 +1950,8 @@ def build_server(
         "claude-voice",
         title="Claude voice bridge",
         version=running_version,
-        instructions=told,
+        # RULE: the opening instructions only point to the guide
+        instructions=OPENING,
         auth_server_provider=oauth,
         auth=auth,
         middleware=[

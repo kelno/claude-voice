@@ -1,4 +1,4 @@
-"""The bridge's manual: sent as server instructions, and read again from the guide tool. It holds
+"""The bridge's manual: handed over with a conversation's first result, and read again from the guide tool. It holds
 only what spans tools; what one tool needs is in that tool's description (tests/test_surface.py)."""
 
 from fakes import FakeClaude
@@ -13,12 +13,23 @@ from claude_voice.store import Store
 MANUAL = " ".join(INSTRUCTIONS.lower().split())
 
 
-async def test_the_guide_tool_returns_the_same_manual_as_the_server_instructions(tmp_path):
+async def test_the_guide_tool_returns_the_manual(tmp_path):
     (tmp_path / "src").mkdir()
     m = SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path / "src", client_factory=FakeClaude())
     async with Client(build_server(m)) as c:
         out = (await c.call_tool("guide", {})).structured_content
     assert out["guide"] == INSTRUCTIONS
+
+
+async def test_the_opening_instructions_only_point_to_the_guide(tmp_path):
+    # Claude Code keeps a server's instructions cut at 2,048 characters, in every session, used or not,
+    # and the Claude app passes none on: the whole guide comes with the first result (owner, 2026-11-15).
+    (tmp_path / "src").mkdir()
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path / "src", client_factory=FakeClaude())
+    async with Client(build_server(m)) as c:
+        said = c.instructions or ""
+    assert "first result" in said and "call guide" in said
+    assert len(said) < 400 and INSTRUCTIONS[:200] not in said
 
 
 def test_the_manual_states_its_central_rules():
