@@ -1,0 +1,5 @@
+[[rule]]
+name = "only a session on Remote Control is shown offline in the Claude app"
+file = "src/claude_voice/offline.py"
+find = 'if not isinstance\(record, dict\) or not record\.get\("bridgeSessionId"\):'
+replace = 'if not isinstance(record, dict):'

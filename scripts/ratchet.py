@@ -96,6 +96,7 @@ LAYERS = {
             "hints",
             "prompts",
             "following",
+            "offline",
         ),
         1,
     ),  # parts, each about one thing

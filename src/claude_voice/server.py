@@ -60,6 +60,7 @@ from . import (
     launch,
     machines,
     metrics,
+    offline,
     org,
     passkeys,
     plugin_desk,
@@ -535,8 +536,10 @@ Sessions
 - A session gone from the list keeps its conversation: attach_conversation
   resumes it in place, with its history, so resume it rather than start
   afresh. Claude Code closes idle ones on its own, hours after they last
-  worked or sooner when memory runs low; a message to one of those resumes it
-  by itself. A "project" the owner names is a folder to
+  worked or sooner when memory runs low; a message you send one through the
+  bridge resumes it by itself. One the owner types to it in the Claude app
+  doesn't: the app shows the session offline, and the message waits unseen
+  until the session is resumed (list_active_sessions, offline_in_app). A "project" the owner names is a folder to
   the bridge; claude.ai Projects, the chat workspaces, are out of its reach. A
   session the bridge started can start one itself with the bridge's tools. A
   desktop session (one the owner opened in the desktop app) can't: the app
@@ -2745,12 +2748,18 @@ def build_server(
         the folders open to the bridge (the root and what's under it, and those opened with
         request_access; open in an app doesn't count) shows only its name, folder and status, with
         access "folder_not_open" (request_access opens it once the owner confirms) or
-        "folder_closed" (inside or holding a secret or system folder; never opened)."""
+        "folder_closed" (inside or holding a secret or system folder; never opened).
+        offline_in_app, when there are any: sessions Claude Code closed on its own in the last 3
+        days that the Claude app still lists, shown offline. A message the owner types to one
+        there waits unseen until it runs again: when the owner says they wrote to one, resume it
+        with attach_conversation (claude_session_id; one closed earlier and not listed here too),
+        and check with read_session_output that their message arrived before telling them."""
         rows = running()
         numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
         # RULE: every list of sessions shows the number the page shows
         sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
-        return {"sessions": sessions}
+        offline_now = offline.shown_offline(jobs.closed_by_claude_code(daemon_log), jobs_dir)
+        return {"sessions": sessions, **({"offline_in_app": offline_now} if offline_now else {})}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
         """Where a running session's conversation went, if Claude Code continued it elsewhere."""
