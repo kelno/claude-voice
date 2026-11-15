@@ -8,7 +8,7 @@ Everything the bridge says to an assistant is text the assistant has to understa
 - A session receiving relayed messages reads the note attached to each one; that note carries everything it needs to answer.
 - A session that calls one of the bridge's tools for itself (such as `confirm_ask`) reads that tool's description, which stands alone for a reader who has never seen the guide.
 - A side session reads its question and the prompt the bridge gives it, nothing else.
-- Every client is handed the guide the same way, whatever it is. What keeps a session that relays nothing from following it is the guide's own opening, which says who it is for: it is unmistakable from the first lines that the guide is for the relay.
+- Every client is handed the guide the same way, whatever it is. What keeps a session that only answers relayed messages from following it is the guide's own opening, which says who it is for: it is unmistakable from the first lines that the guide is for every agent that calls the tools, and not for a session that only answers.
 
 ## The text is an interface contract
 

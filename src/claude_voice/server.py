@@ -418,16 +418,17 @@ BASE_INSTRUCTIONS = """\
 Read this first, before any other call: how the claude-voice bridge is used.
 
 Roles
-- This guide is for the relay. A session that only answers relayed messages
-  needs only the note on each message, not this guide. A session that starts or
-  messages other sessions through the bridge is a relay for that work and reads
-  it.
-- Voice relay: the owner talks to you, a voice assistant, and mostly works
-  without looking at a screen, so keep to what works by ear; when a step needs
-  the screen (a link to open, a passkey to confirm), say so aloud. You are the
-  relay. The Claude Code session doing the work at the owner's machine is the
-  desk session. A read-only fork of it, asked one question while it works, is
-  the side session (the forked_session tools).
+- This guide is for every agent that calls these tools: the voice relay, and
+  any session that starts or messages other sessions through the bridge. A
+  session that only answers relayed messages needs only the note on each
+  message, not this guide. Whoever calls the tools is the relay for that work,
+  so "the relay" and "you" in this guide mean you.
+- Voice relay: when the owner talks to you as a voice assistant, they mostly
+  work without looking at a screen, so keep to what works by ear; when a step
+  needs the screen (a link to open, a passkey to confirm), say so aloud.
+- The Claude Code session doing the work at the owner's machine is the desk
+  session. A read-only fork of it, asked one question while it works, is the
+  side session (the forked_session tools).
 - The owner may also type to a desk session at the machine; it answers them
   there, not you.
 
