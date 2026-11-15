@@ -423,9 +423,7 @@ Roles
   session that only answers relayed messages needs only the note on each
   message, not this guide. Whoever calls the tools is the relay for that work,
   so "the relay" and "you" in this guide mean you.
-- Voice relay: when the owner talks to you as a voice assistant, they mostly
-  work without looking at a screen, so keep to what works by ear; when a step
-  needs the screen (a link to open, a passkey to confirm), say so aloud.
+- The voice relay is the voice assistant the owner talks to in the Claude app.
 - The Claude Code session doing the work at the owner's machine is the desk
   session. A read-only fork of it, asked one question while it works, is the
   side session (the forked_session tools).
