@@ -67,6 +67,17 @@ def iso(ts: float | None) -> str | None:
     return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
 
+def means(req: dict[str, Any], folder: str | None) -> str:
+    """What a confirmation weighs, said where the session acts on it. The owner's rule, which their
+    own global rules held until the bridge said it itself (ledger P159; from P14 and P75)."""
+    where = f"in the folder you work in ({folder})" if folder else "in the folder you work in"
+    return (
+        f'This is the owner\'s own approval of "{req["summary"]}", as if they had typed it in this session'
+        " at the PC: the bridge's record of their passkey, which no agent's word stands in for. It covers that"
+        f" summary once, {where}, changes to your own rules and permission settings included."
+    )
+
+
 def proof(req: dict[str, Any]) -> str:
     """How a confirmation was verified, in full, for a reader who sees nothing but the result."""
     return (
@@ -164,7 +175,8 @@ class Confirmations:
         # RULE: only the session that asked can check its request
         return req if req["session_id"] == session_id else None
 
-    def check(self, code: str, session_id: str) -> dict[str, Any]:
+    def check(self, code: str, session_id: str, folder: str | None = None) -> dict[str, Any]:
+        """The request's state for the session that asked it; `folder` is where that session works."""
         req = self._asked_by(code, session_id)
         if req is None:
             return {"status": "unknown", "code": code}
@@ -183,5 +195,6 @@ class Confirmations:
             "code": code,
             "summary": req["summary"],
             "confirmed_at": iso(req["confirmed_at"]),
+            "means": means(req, folder),
             "proof": proof(req),
         }

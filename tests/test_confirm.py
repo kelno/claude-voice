@@ -50,6 +50,18 @@ def test_a_request_is_confirmed_once_and_reported_once(requests):
     assert book.check(code, "sid-1")["status"] == "used"
 
 
+def test_a_confirmed_result_says_what_it_weighs_where_the_session_acts(requests):
+    # The owner's rule, once in their global rules, now said by the result itself, at the moment the
+    # session acts on it (ledger P159; from P14 and P75).
+    book, _ = requests
+    asked = book.ask("sid-1", "desk", "Allow Bash(git push:*)")
+    book.decide(asked["link"], confirmed=True)
+    means = book.check(asked["code"], "sid-1", folder="D:/work/app")["means"]
+    assert "the owner's own approval" in means and '"Allow Bash(git push:*)"' in means
+    assert "as if they had typed it in this session" in means and "passkey" in means
+    assert "once" in means and "D:/work/app" in means and "rules and permission settings included" in means
+
+
 def test_a_request_is_answered_once_while_it_is_pending(requests):
     book, _ = requests
     asked = book.ask("sid-1", "desk", "Allow it")

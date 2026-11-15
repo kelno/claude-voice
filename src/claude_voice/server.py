@@ -3124,7 +3124,8 @@ def build_server(
         the bridge's page with their passkey and the bridge then messages you; confirm_check, which
         you may call at any time, says whether they did; the result's running.design link
         says how it works and why. Ask at once, not after reporting back, also when Claude Code's
-        auto mode refuses an action."""
+        auto mode refuses an action, but not for a permission prompt shown at the PC, which it
+        can't answer: that waits for the owner there."""
         d = await asking_session()
         try:
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
@@ -3180,7 +3181,8 @@ def build_server(
         that one if you haven't yet, else ask again) or unknown. A confirmation can't answer a
         permission prompt at the PC; it nearly always clears a refusal from Claude Code's auto mode."""
         d = await asking_session()
-        return {**confirmations.check(code, str(d["sessionId"])), "running": running_code()}
+        checked = confirmations.check(code, str(d["sessionId"]), str(d.get("cwd") or "") or None)
+        return {**checked, "running": running_code()}
 
     compacting: set[str] = set()  # sessions waiting for their turn to end to be compacted
 
