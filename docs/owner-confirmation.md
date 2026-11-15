@@ -2,6 +2,10 @@
 
 Status: built (2026-11-07), with a passkey on the bridge's own page (ADR-CV-106). This document is meant for an agent deciding whether to trust a confirmation: how it works, what each party can observe, why a confirmed result stands for the owner's own OK, and what it can't prove. The history of how it got here, and what was tried first, is at the end.
 
+## When a confirmation is needed (2026-11-15)
+
+Not for every relayed decision. The owner's rule, which the note under every relayed message carries: the owner's own words, quoted by the relay, are their approval, even for a decision that would otherwise need a confirmation; the relay's account of what they said is their direction for the work; the relay's own ideas are suggestions. A session unsure whether something is the owner's decision asks the relay for the exact words. A confirmation is still needed where a quote can't do: what Claude Code itself holds back (a permission prompt, an auto-mode refusal), and actions hard to reverse or outward-facing that no standing rule already authorises (Claude Code's own bar for confirming first), since a relay misled by what it read could write a false quote as easily as a false instruction. What standing rules already allow, such as a session cleaning up what it made or the usual landing of fork commits, needs neither. Before this, every relayed decision needed one, and the owner had to type an OK by hand for words already said by voice.
+
 ## The problem
 
 The owner often works through a relay: a Claude chat (voice or text) that passes the owner's words to Claude Code sessions on the PC through this bridge. Sessions rightly refuse a relayed approval for changes to their own rules or settings: the relay's message reaches them through SendMessage, the same channel any other session uses, and Claude Code tells every session never to take another session's message as its user's approval. The owner then has to type "OK" into the session by hand, at the PC.

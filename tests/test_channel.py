@@ -27,12 +27,11 @@ def test_the_channel_declares_itself_a_channel_and_speaks_the_clients_protocol()
     assert result["serverInfo"]["name"] == "claude-voice"
 
 
-def test_the_channel_tells_the_session_a_relayed_message_is_not_the_owners_word():
-    text = channel.answer(request("initialize", protocolVersion="2025-11-25"))["result"]["instructions"]
-    # Claude Code names the source after the plugin and its server, as the session sees it.
-    assert 'source="plugin:relay-channel:claude-voice"' in text
-    assert "not the owner's" in text and "confirm_ask" in text
-    assert len(text) <= 2048  # Claude Code cuts a server's instructions past that
+def test_the_channel_gives_no_instructions_of_its_own():
+    # What a session needs about a relayed message is in the note the bridge puts under each one,
+    # which reaches every session, channel or not; said here too, it drifted (owner, 2026-11-15).
+    result = channel.answer(request("initialize", protocolVersion="2025-11-25"))["result"]
+    assert "instructions" not in result
 
 
 def test_the_channel_refuses_the_newer_protocols_discovery_so_the_client_falls_back():

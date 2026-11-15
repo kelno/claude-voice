@@ -30,11 +30,21 @@ def live(tmp_path):
 def test_the_note_says_who_sees_what_and_where_to_answer():
     note = RELAYED_MESSAGE_NOTE
     assert "relay" in note
-    assert "owner" in note and "see" in note
+    assert "owner" in note and "sees only" in note
     assert "self-contained" in note
-    assert "SendMessage" in RELAYED_MESSAGE_NOTE and "inbox" in RELAYED_MESSAGE_NOTE
-    # A relayed approval isn't the owner's; the note says where to get the owner's own.
-    assert "confirm_ask" in RELAYED_MESSAGE_NOTE
+    assert "inbox" in note and "reply text" in note
+    # Three kinds of authority, and the passkey for what a quote can't settle (owner, 2026-11-15).
+    assert "quoted words are their approval" in note and "direction" in note and "suggestions" in note
+    assert "confirm_ask" in note
+
+
+def test_both_notes_are_one_text_but_for_the_sender_and_the_answer():
+    from claude_voice.server import relayed_note
+
+    by_session = relayed_note("planner, a Claude Code session", "Answer by SendMessage.")
+    shared = RELAYED_MESSAGE_NOTE.split("passes on. ", 1)[0].split(" working", 1)[1]
+    assert shared in by_session
+    assert RELAYED_MESSAGE_NOTE.split("self-contained. ", 1)[1] == by_session.split("SendMessage. ", 1)[1]
 
 
 async def test_a_relayed_message_carries_the_note_after_its_own_words(tmp_path, root, live):
@@ -85,7 +95,7 @@ async def test_a_message_from_a_claude_code_session_says_to_answer_it_by_direct_
         ("message_active_session", {"session": "billing-ab", "message": "Go."}, PLANNER),
         ("message_active_session", {"session": "billing-ab", "message": "And you?"}, None),
     )
-    assert by_planner.startswith("Go.\n\n[From the claude-voice bridge: this message comes from planner,")
+    assert by_planner.startswith("Go.\n\n[From the claude-voice bridge: sent by planner,")
     assert 'SendMessage to "planner"' in by_planner and "confirm_ask" in by_planner
     assert "inbox" not in by_planner and RELAYED_MESSAGE_NOTE not in by_planner
     # The claude.ai relay has no inbox: its note is unchanged.
@@ -99,7 +109,7 @@ async def test_a_question_from_a_claude_code_session_is_answered_in_the_reply_te
         world,
         ("ask_active_session", {"session": "billing-ab", "message": "Done?", "wait_seconds": 0}, PLANNER),
     )
-    assert asked.startswith("Done?\n\n[From the claude-voice bridge: this message comes from planner,")
+    assert asked.startswith("Done?\n\n[From the claude-voice bridge: sent by planner,")
     assert "planner is waiting for your reply text" in asked and "SendMessage" not in asked
     # The asker reads nothing else meanwhile: a question back would wait out both limits.
     assert "don't ask it anything first" in asked
