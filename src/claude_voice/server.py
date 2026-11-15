@@ -1253,7 +1253,7 @@ def build_server(
     digest_chars: int = 150_000,
     side_answer: Callable[[str, str, str | None], Awaitable[str]] | None = None,
     side_chars: int = 8_000,
-    poll_seconds: float = 0.25,
+    poll_seconds: float = 0.25,  # four looks a second (upstream: one), so a reply reaches the relay sooner
     silent_grace: float = 1.0,
     receive_seconds: float = 15.0,
     projects_dir: Path = PROJECTS_DIR,
@@ -2632,6 +2632,9 @@ def build_server(
             out.append({**roles.public(name, spec), "session": session})
         return {"roles": out}
 
+    # Not destructive, on purpose: marked so, the Claude app asked the owner before every stop. A
+    # stopped session keeps its conversation and can be resumed, and the owner trusts an agent that
+    # stops one to have a reason; request_access is the one grant the owner approves each time.
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def stop_active_session(
         name: Annotated[str, Field(description=SESSION_PARAM)],
@@ -3552,6 +3555,10 @@ def build_server(
             outcome, _ = rename_in_claude(d, str(claude_name), new)
             log.info("pending rename of %s -> %s (%s); Claude Code: %s", claude_name, new, sid, outcome)
 
+    # Not destructive, on purpose: the Claude app asks for a tap before every destructive call, even
+    # with the connector on "always allow", which stalled each relayed message in a voice call. A
+    # message deletes nothing and the receiving session keeps its own permissions. Saying nothing
+    # would count as destructive in MCP, hence the explicit False.
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
     )
@@ -3888,6 +3895,7 @@ def build_server(
             **({"question": blocked["question"]} if status == "needs_choice" and blocked else {}),
         }
 
+    # Not destructive, on purpose: see message_active_session.
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def ask_active_session(
         session: Annotated[str, Field(description=SESSION_PARAM)],

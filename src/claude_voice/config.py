@@ -73,6 +73,9 @@ class Paths:
 @dataclass
 class Sessions:
     remote_control: bool = True
+    # Background by default (upstream: terminal): such a session is on Remote Control and in the desktop
+    # app's sidebar from the start, so the owner can open, watch and take it over from the phone or the
+    # PC; the owner's choice for all new work.
     launch: str = "background"
     terminal_command: str | None = None
 
