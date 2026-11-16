@@ -12,6 +12,9 @@ The rules, in order:
 - the tests run only when asked (on this fork, whose own sessions test before they push);
 - if installing or the tests fail, the folder goes back to the version that ran,
   and the service is not restarted;
+- all the test run printed, or printed before its time ran out, is kept in update-test.log
+  beside the log, readable by the owner only, and the log's own test step names the tests
+  that failed;
 - if the new version does not come back healthy, the old one is put back,
   installed and started again.
 
@@ -38,7 +41,7 @@ from typing import Any
 
 import psutil
 
-from . import procs, restarts
+from . import procs, restarts, safefile
 from .config import STATE_DIR
 
 LOG = Path("~/.local/state/claude-voice/update.json")
@@ -48,6 +51,11 @@ RESTART_EXIT = 75
 # A process of its own with no console, so it outlives the bridge that started it.
 WINDOWS_DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
 HEALTHY_WITHIN = 60.0
+#: Everything the latest update's test run printed, next to the update's own log.
+TEST_LOG = "update-test.log"
+#: The test step's detail is kept to this many characters, room for every failing test it names;
+#: every other step keeps its last 400.
+TEST_DETAIL = 2000
 
 
 def _now() -> str:
@@ -83,8 +91,9 @@ class Log:
         tmp.write_text(json.dumps(self.body))
         tmp.replace(self.path)
 
-    def step(self, step: str, ok: bool, detail: str) -> None:
-        self.body["steps"].append({"step": step, "ok": ok, "detail": detail[-400:], "at": _now()})
+    def step(self, step: str, ok: bool, detail: str, keep: int = 400) -> None:
+        """Add a step, keeping the last `keep` characters of its detail."""
+        self.body["steps"].append({"step": step, "ok": ok, "detail": detail[-keep:], "at": _now()})
         self.write()
 
     def finish(self, result: str, detail: str) -> dict[str, Any]:
@@ -154,10 +163,10 @@ def run(
         return log.finish("rolled_back", reason)
 
     # RULE: an update runs the tests only when asked
-    steps = (("install", install), ("test", tests)) if tests else (("install", install),)
-    for step, action in steps:
+    steps = (("install", install, 400), ("test", tests, TEST_DETAIL)) if tests else (("install", install, 400),)
+    for step, action, keep in steps:
         ok, out = action(repo)
-        log.step(step, ok, out)
+        log.step(step, ok, out, keep)
         # RULE: an update whose tests fail is rolled back without a restart
         if not ok:  # roll back
             return roll_back(f"The new version failed to {step}; the old one is kept.", restarted=False)
@@ -189,6 +198,45 @@ def fetch_failure(output: str) -> str:
             "its own read-only access set up for the bridge's service."
         )
     return "Could not fetch the latest version."
+
+
+#: How many failing tests the test step's detail names; the rest are counted.
+NAMED = 8
+FAILURE = re.compile(r"^(FAILED|ERROR) ")
+SUMMARY = re.compile(r"\b\d+ (passed|failed|errors?|skipped|deselected)\b|\bno tests ran\b")
+
+
+def failure_summary(output: str) -> str:
+    """The failing tests pytest named, at most eight, then its last summary line."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    failures = [line[:200] for line in lines if FAILURE.match(line)]
+    rest = [line for line in lines if not FAILURE.match(line)]
+    summary = next((line for line in reversed(rest) if SUMMARY.search(line)), rest[-1] if rest else "")
+    more = [f"and {len(failures) - NAMED} more"] if len(failures) > NAMED else []
+    return "\n".join([*failures[:NAMED], *more, summary[:200]]).strip()
+
+
+def run_tests(repo: Path, keep: Path) -> tuple[bool, str]:
+    """Run the suite, keep all it printed in `keep`, and name the tests that failed."""
+    uv = procs.find("uv")
+    if not uv:
+        return False, "uv is not installed"
+    command = [uv, "run", "pytest", "-q", "-p", "no:cacheprovider", "-rfE"]
+    try:
+        # stderr goes in with stdout, so a warning printed last cannot hide the summary
+        out = subprocess.run(
+            command, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=900, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        so_far = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or ""
+        said = f"{so_far.rstrip()}\nThe tests ran past {exc.timeout:.0f} s and were stopped.\n".lstrip()
+        safefile.replace(keep, said)
+        return False, failure_summary(said)
+    except (OSError, subprocess.SubprocessError) as exc:
+        safefile.replace(keep, str(exc))
+        return False, str(exc)
+    safefile.replace(keep, out.stdout or "")
+    return out.returncode == 0, failure_summary(out.stdout or "")
 
 
 def _uv(repo: Path, *args: str) -> tuple[bool, str]:
@@ -278,7 +326,7 @@ def main() -> int:
         args.repo,
         Path(args.log).expanduser(),
         install=lambda repo: _uv(repo, "sync", "--locked", "--all-extras"),
-        tests=(lambda repo: _uv(repo, "run", "pytest", "-q", "-p", "no:cacheprovider")) if args.tests else None,
+        tests=(lambda repo: run_tests(repo, Path(args.log).expanduser().parent / TEST_LOG)) if args.tests else None,
         restart=(lambda: restart_on_windows(args.port)) if sys.platform == "win32" else _restart,
         healthy=_healthy(args.port, health_host(args.host)),
         note=lambda reason, frm, to: restarts.note(STATE_DIR, reason, "update_bridge", frm=frm, to=to),

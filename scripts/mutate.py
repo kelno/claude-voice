@@ -33,6 +33,7 @@ import os
 import pathlib
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -249,7 +250,16 @@ def run_suite(targets: list[str] | None = None) -> tuple[int, list[str]]:
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
     MUTATE_TMP.mkdir(parents=True, exist_ok=True)
     temporary = pathlib.Path(tempfile.mkdtemp(prefix="run-", dir=MUTATE_TMP))
+    # A mutant that switches off a cleanup leaks into the suite's temporary folder. Pointing that
+    # here keeps the leak in this run's folder, removed below, out of the machine's.
+    # Not marked as a rule: none of this file's rules has a mutation row yet, so a marker would
+    # claim evidence nobody gathers. Its test is
+    # test_a_mutant_s_leaked_temporary_folder_stays_inside_the_run_s_own_folder.
+    env["TMPDIR"] = str(temporary)
     try:
+        # A plain run is enough here, unlike a ratchet step: nothing outside stops it on its own.
+        # A stop ends this whole process, whose own handling puts the mutated line back in a
+        # `finally`, and `subprocess.run` kills the suite when its wait is cut short.
         r = subprocess.run(
             [
                 sys.executable,
@@ -281,6 +291,26 @@ def run_suite(targets: list[str] | None = None) -> tuple[int, list[str]]:
     return int(m.group(1)) if m else 0, [f.split("::")[-1].split("[")[0] for f in failed]
 
 
+def stop_cleanly() -> None:
+    """Turn a polite stop into an ordinary exit, so every `with` and `finally` still runs.
+
+    CI cancels a run, and a closed terminal ends one, with a stop signal. Python's own answer to
+    it is to end at once, cleaning up nothing, which left whole folders in the temporary folder.
+    """
+
+    def stop(signum: int, _frame: object) -> None:
+        # A second signal (GitHub sends an interrupt, then a stop) must not cut the cleanup short.
+        for later in ("SIGTERM", "SIGHUP", "SIGINT"):
+            if hasattr(signal, later):
+                signal.signal(getattr(signal, later), signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):  # Windows has neither
+            # RULE: a stopped mutation run still cleans up
+            signal.signal(getattr(signal, name), stop)
+
+
 def main() -> int:
     """Mutate every rule in turn, restore the tree, and report."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -288,6 +318,7 @@ def main() -> int:
     parser.add_argument("--json", type=pathlib.Path, help="write the run's figures here, for the checks to keep")
     args = parser.parse_args()
 
+    stop_cleanly()
     repair()
     sweep()
     # RULE: an empty rule table is not a crash

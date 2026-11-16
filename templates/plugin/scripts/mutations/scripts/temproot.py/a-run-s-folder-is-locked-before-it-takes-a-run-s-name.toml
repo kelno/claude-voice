@@ -1,0 +1,5 @@
+[[rule]]
+name = "a run's folder is locked before it takes a run's name"
+file = "scripts/temproot.py"
+find = '^\s*return _old\(status\) and _lock_is_free\(folder, status\)$'
+replace = 'return _lock_is_free(folder, status)'

@@ -38,7 +38,7 @@ from claude_agent_sdk import (
     project_key_for_directory,
 )
 
-from . import channel_hub, procs
+from . import channel_hub, held_folder, procs
 
 MESSAGING_TOOLS = frozenset({"ListAgents", "SendMessage", "ToolSearch"})
 # Claude Code accepts any model name at start and only refuses it at the first message, with
@@ -602,6 +602,31 @@ async def _read_sends(turn: AsyncIterator[Any], job: dict[str, Any]) -> tuple[bo
     return refused, answer
 
 
+#: Where the message helpers make their folders; None is the machine's temporary folder.
+HELPERS_IN: Path | None = None
+#: Every helper folder's name starts so. The session tree and the peer hook hide a helper by it.
+HELPER_PREFIX = "claude-voice-msg-"
+
+
+class HelperFolder(held_folder.HeldFolder):
+    """A folder for one helper session to work in, locked while it is in use.
+
+    It is removed when the helper closes. A restart kills the bridge, which runs no cleanup,
+    so the next start sweeps away every helper folder whose lock nobody holds.
+    """
+
+    def __init__(self, prefix: str, dir: Path | None = None) -> None:
+        super().__init__(prefix, dir if dir is not None else HELPERS_IN)
+
+    def cleanup(self) -> None:
+        self.remove()
+
+
+def sweep_helper_folders(temp: Path | None = None) -> list[str]:
+    """Remove the helper folders a killed bridge left behind, and name each one removed."""
+    return held_folder.sweep(Path(temp or HELPERS_IN or tempfile.gettempdir()), HELPER_PREFIX)
+
+
 class Courier:
     """Carries messages into running sessions through one helper session kept ready.
 
@@ -631,7 +656,7 @@ class Courier:
         self.fresh_after = fresh_after
         self._lock = asyncio.Lock()
         self._client: Any = None
-        self._cwd: tempfile.TemporaryDirectory[str] | None = None
+        self._cwd: HelperFolder | None = None
         self._carried = 0
         self._job: dict[str, Any] | None = None  # the message being carried right now
         self._said: asyncio.Queue[Any] = asyncio.Queue()  # what the helper said, for the delivery
@@ -662,7 +687,7 @@ class Courier:
         return {"hookSpecificOutput": {"hookEventName": "PreToolUse", **decision}}
 
     async def _open(self) -> Any:
-        self._cwd = tempfile.TemporaryDirectory(prefix="claude-voice-msg-")
+        self._cwd = HelperFolder(HELPER_PREFIX)
         opts = ClaudeAgentOptions(
             cwd=self._cwd.name,
             model=self.model,
@@ -818,7 +843,7 @@ async def summarize(text: str, question: str | None, language: str | None = None
         ask = f"Answer in {language}, whatever language the conversation is in. {ask}"
     reply = ""
     # The helper sits in a courier folder, so it is hidden from session lists and trees.
-    with tempfile.TemporaryDirectory(prefix="claude-voice-msg-digest-") as cwd:
+    with HelperFolder(HELPER_PREFIX + "digest-") as cwd:
         opts = ClaudeAgentOptions(
             cwd=cwd,
             model="haiku",
@@ -861,11 +886,11 @@ class SideReader:
         self.fresh_after = fresh_after
         self._lock = asyncio.Lock()
         self._client: Any = None
-        self._cwd: tempfile.TemporaryDirectory[str] | None = None
+        self._cwd: HelperFolder | None = None
         self._asked = 0
 
     async def _open(self) -> None:
-        self._cwd = tempfile.TemporaryDirectory(prefix="claude-voice-msg-side-")
+        self._cwd = HelperFolder(HELPER_PREFIX + "side-")
         opts = ClaudeAgentOptions(
             cwd=self._cwd.name,
             model="haiku",

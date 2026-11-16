@@ -237,6 +237,14 @@ def test_root_must_exist(tmp_path):
         load_config({"CLAUDE_VOICE_ROOT": str(tmp_path / "nope")}, transport="stdio")
 
 
+def test_a_ui_folder_is_used_when_it_exists_and_stops_the_bridge_when_it_does_not(tmp_path):
+    env = {"CLAUDE_VOICE_ROOT": str(tmp_path)}
+    (tmp_path / "ui").mkdir()
+    assert load_config({**env, "CLAUDE_VOICE_UI_DIR": f" {tmp_path / 'ui'} "}, "stdio").ui_dir == tmp_path / "ui"
+    with pytest.raises(ConfigError, match="CLAUDE_VOICE_UI_DIR is not a directory"):
+        load_config({**env, "CLAUDE_VOICE_UI_DIR": str(tmp_path / "nope")}, "stdio")
+
+
 def test_public_url_comes_from_the_tunnel_host(tmp_path):
     env = {"CLAUDE_VOICE_ROOT": str(tmp_path), "CLAUDE_VOICE_TOKEN": "x" * 32}
     assert load_config(env, "http").public_url == "http://127.0.0.1:8811"
@@ -456,6 +464,51 @@ async def test_a_cancelled_tool_call_is_logged_as_cancelled(caplog):
     assert METRICS.snapshot()["errors"][0]["kind"] == "cancelled"
 
 
+@pytest.mark.parametrize("method", ["tools/call", "resources/read"])
+async def test_a_call_that_raises_is_logged_with_its_error_and_only_a_tool_call_is_counted(caplog, method):
+    import logging
+    from types import SimpleNamespace
+
+    from claude_voice.metrics import METRICS
+    from claude_voice.server import log_requests
+
+    METRICS.reset()
+    ctx = SimpleNamespace(method=method, params={"name": "list_projects"}, request_id=8)
+
+    async def breaks(_ctx):
+        raise RuntimeError("disk full")
+
+    with caplog.at_level(logging.INFO, logger="claude_voice"), pytest.raises(RuntimeError):
+        await log_requests(ctx, breaks)
+    lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
+    assert any(line.startswith(f"mcp {method} list_projects -> RuntimeError ") for line in lines)
+    errors = METRICS.snapshot()["errors"]
+    if method == "tools/call":
+        assert (errors[0]["kind"], errors[0]["error"]) == ("exception", "RuntimeError: disk full")
+    else:
+        assert errors == []
+
+
+async def test_a_cancelled_call_that_is_not_a_tool_call_is_logged_but_not_counted(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    from claude_voice.metrics import METRICS
+    from claude_voice.server import log_requests
+
+    METRICS.reset()
+    ctx = SimpleNamespace(method="resources/read", params={}, request_id=9)
+
+    async def gives_up(_ctx):
+        raise asyncio.CancelledError
+
+    with caplog.at_level(logging.INFO, logger="claude_voice"), pytest.raises(asyncio.CancelledError):
+        await log_requests(ctx, gives_up)
+    lines = [r.getMessage() for r in caplog.records if r.name == "claude_voice"]
+    assert any(line.startswith("mcp resources/read -> cancelled ") for line in lines)
+    assert METRICS.snapshot()["errors"] == []
+
+
 async def test_a_trace_id_sent_with_a_call_is_logged_with_it_and_its_time(tmp_path, root, caplog):
     import logging
     import re
@@ -541,29 +594,46 @@ async def test_a_switched_off_upstream_tool_is_offered_to_no_one_but_keeps_its_p
     assert all(titles.load().get(name) for name in SWITCHED_OFF)
 
 
-def slow_first_look(monkeypatch, seconds=2.5):
-    """Make every tree build take `seconds`, as the first one does on a busy machine, where it
-    reads each running session's whole conversation. Returns an event set once one has begun."""
-    import threading
-    import time
+class HeldLook:
+    """Every tree build waits until the test lets it go, as the first one does on a busy machine,
+    where it reads each running session's whole conversation.
 
-    from claude_voice import transcripts
-    from claude_voice.tree import SessionTree
+    `began` is set when a look starts and `ended` when one finishes, so a test proves an answer
+    came first by the order of events, never by a clock: a slow runner cannot fail it. A look
+    still held after `HOLD` seconds goes on, so a bridge that waits on its look ends the test
+    with a wrong order, not a hang. HOLD is that hang breaker, not a timing check: lowering it
+    only brings the old flake back.
+    """
 
-    began = threading.Event()
-    build = SessionTree.build
+    HOLD = 15
 
-    def slow(self):
-        began.set()
-        time.sleep(seconds)
-        return build(self)
+    def __init__(self, monkeypatch):
+        import threading
 
-    async def warm():
-        return None
+        from claude_voice import transcripts
+        from claude_voice.tree import SessionTree
 
-    monkeypatch.setattr(SessionTree, "build", slow)
-    monkeypatch.setattr(transcripts.shared_reader(), "warm", warm)
-    return began
+        self.began = threading.Event()
+        self.ended = threading.Event()
+        self._go = threading.Event()
+        build = SessionTree.build
+
+        def held(tree):
+            self.began.set()
+            self._go.wait(self.HOLD)
+            try:
+                return build(tree)
+            finally:
+                self.ended.set()
+
+        async def warm():
+            return None
+
+        monkeypatch.setattr(SessionTree, "build", held)
+        monkeypatch.setattr(transcripts.shared_reader(), "warm", warm)
+
+    def let_go(self):
+        self._go.set()
 
 
 def watched(tmp_path, root, **extra):
@@ -574,29 +644,27 @@ def watched(tmp_path, root, **extra):
 async def test_the_bridge_answers_as_soon_as_it_has_started_while_its_first_look_runs_behind(
     tmp_path, root, monkeypatch
 ):
-    import time
-
-    slow_first_look(monkeypatch)
-    started = time.monotonic()
+    look = HeldLook(monkeypatch)
     async with Client(watched(tmp_path, root)) as client:
-        await call(client, "guide")
-        answered = time.monotonic() - started
+        try:
+            await call(client, "guide")
+            answered_during_the_look = not look.ended.is_set()
+        finally:
+            look.let_go()
         for _ in range(100):  # the first look still happens, behind
             looked = (await call(client, "health"))["watcher"]["last_check_at"]
             if looked:
                 break
             await asyncio.sleep(0.05)
-    assert answered < 1.5  # well under the 2.5 s look, with room for a slow Windows runner
+    assert answered_during_the_look
     assert looked
 
 
 async def test_a_question_about_news_does_not_wait_for_a_look_already_under_way(tmp_path, root, monkeypatch):
-    import time
-
     from claude_voice import api
 
     # The fork has no whats_new: the news stream of the companion API is what asks for news.
-    began = slow_first_look(monkeypatch)
+    look = HeldLook(monkeypatch)
     secret = "s3cret-token-for-the-news-stream"
     store = Store(tmp_path / "bridge.db")
     oauth = OAuthProvider(store, secret, "http://127.0.0.1:8811", static_token=secret)
@@ -604,13 +672,35 @@ async def test_a_question_about_news_does_not_wait_for_a_look_already_under_way(
     app = build_app(server)
     transport = httpx.ASGITransport(app=app)
     async with Client(server), httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8811") as web:
-        await asyncio.to_thread(began.wait, 5)
-        asked = time.monotonic()
-        headers = {"Authorization": f"Bearer {secret}"}
-        stream = asyncio.create_task(web.get("/api/v1/events?max_events=1", headers=headers))
-        await asyncio.sleep(0.2)
-        api.HUB.publish("ping", {})
-        reply = await asyncio.wait_for(stream, 10)
-        answered = time.monotonic() - asked
+        try:
+            assert await asyncio.to_thread(look.began.wait, HeldLook.HOLD)
+            headers = {"Authorization": f"Bearer {secret}"}
+            stream = asyncio.create_task(web.get("/api/v1/events?max_events=1", headers=headers))
+            await asyncio.sleep(0.2)
+            api.HUB.publish("ping", {})
+            reply = await asyncio.wait_for(stream, 10)
+            answered_during_the_look = not look.ended.is_set()
+        finally:
+            look.let_go()
     assert reply.status_code == 200 and "event: ping" in reply.text
-    assert answered < 1.5  # well under the 2.5 s look, with room for a slow Windows runner
+    assert answered_during_the_look
+
+
+async def test_the_bridge_removes_the_helper_folders_a_killed_bridge_left_when_it_starts(tmp_path, root, monkeypatch):
+    import os
+    import sys
+    import time
+
+    from claude_voice import transcripts
+
+    if sys.platform == "win32":
+        pytest.skip("Windows has no flock; there the sweep does nothing")
+    look = HeldLook(monkeypatch)
+    left = transcripts.HELPERS_IN / "claude-voice-msg-left"
+    left.mkdir()
+    an_hour_ago = time.time() - 2 * 60 * 60
+    os.utime(left, (an_hour_ago, an_hour_ago))
+    async with Client(watched(tmp_path, root)) as client:
+        look.let_go()
+        await call(client, "health")
+    assert not left.exists()

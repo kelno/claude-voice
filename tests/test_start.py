@@ -593,3 +593,38 @@ async def test_a_session_that_started_without_its_claude_ai_connectors_is_restar
     assert [sid for _, sid in starter.woken] == [
         OLD
     ] and starter.options == []  # resumed in place, its conversation kept
+
+
+async def test_a_name_already_taken_elsewhere_gets_a_suffix_rather_than_a_clash(tmp_path, world):
+    root, live = world
+    (root / "other").mkdir()
+    (live / "busy.json").write_text(
+        json.dumps(
+            {"pid": PID, "sessionId": "sid-old", "cwd": str(root / "other"), "name": "invoices", "status": "idle"}
+        )
+    )
+    starter = Starter(live)
+    asked = {"folder": "billing", "name": "invoices", "owner_chose": True}
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        out = (await c.call_tool("start_active_session", asked)).structured_content
+    assert out["name"].startswith("invoices-") and starter.calls == [(str(root / "billing"), out["name"])]
+
+
+async def test_an_unknown_place_to_start_in_is_refused_before_anything_starts(tmp_path, world):
+    starter = Starter(world[1])
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        bad = await c.call_tool("start_active_session", {"folder": "billing", "start_in": "moon"})
+    assert (
+        bad.is_error
+        and bad.content[0].text.endswith("start_in is one of: terminal, background")
+        and starter.calls == []
+    )
+
+
+async def test_a_start_claude_code_refuses_is_reported_with_its_reason(tmp_path, world):
+    async def refuses(cwd, name, **how):
+        raise OSError("claude not found")
+
+    async with Client(bridge(tmp_path, world, refuses)) as c:
+        bad = await c.call_tool("start_active_session", {"folder": "billing", "name": "x"})
+    assert bad.is_error and bad.content[0].text.endswith(": Claude Code could not start a session: claude not found")

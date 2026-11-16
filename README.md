@@ -71,6 +71,11 @@ That is the whole bridge, used locally. The next two steps let you reach it from
 a phone: [run it as a service](#run-it-as-a-service-and-reach-it-from-the-phone),
 then give it a public address.
 
+To see every setup step at once, run `claude-voice setup --check`. It says what
+is done, what is missing and what only you can do, and changes nothing. It also
+covers the repositories and plugins your profile names
+([docs/setup.md](docs/setup.md)).
+
 ## What it depends on
 
 Only a signed-in Claude Code is required. Each of the rest adds something, and
@@ -493,6 +498,24 @@ first, and what it may never run ([docs/permissions.md](docs/permissions.md)). I
 uv run pytest -m e2e
 ```
 
+## Skills
+
+A skill is a set of written steps that Claude Code follows for one kind of
+task. These come with the clone, in `.claude/skills/`, and Claude Code offers
+them as soon as you open it in this folder; type `/` to see them by name.
+
+| Skill | When it is used | What it does |
+| --- | --- | --- |
+| `write-plugin` | Making a local tool reachable by voice | Writes or wires up a plugin, and adds, approves or changes one |
+| `code-quality` | A measure on the code-health page is amber or red | Measures it locally, fixes the worst one test-first and lands the fix |
+| `write-commit` | Every commit and every pull request description | Writes the message for a reader who has never seen the project |
+| `review-contribution` | A pull request comes from outside the project | Reviews it, runs its code only in a sandbox, merges it and thanks the author |
+| `org-chart` | Sessions that belong together should show as one programme | Writes the programme file the bridge's org chart reads, after the owner's yes |
+| `manage` | You are the session the owner talks to about the bridge and its plugins | Keeps the overview, passes decisions on and collects the owner's questions |
+
+The last two are for running several sessions as an organisation, and are
+optional.
+
 ## Plugins: other local tools for the voice
 
 A plugin is another MCP server on this computer whose tools the voice may call
@@ -555,16 +578,85 @@ Once a plugin is approved, three things can happen to it
   files out of the plugin's folder or list them in its `.git/info/exclude`.
 - **A new plugin, or a new command or folder.** Always typed, as above.
 
+To take an approval back, run `claude-voice plugins revoke garage`. A running bridge
+stops offering the plugin's tools within a few seconds, and it waits for a typed
+approval again.
+
 An approval written by an older version of the bridge did not cover the words the
 voice reads. So after upgrading, every plugin waits for one more approval, typed as
 above or by voice in developer mode, because its command and folder are still known.
 Until then its tools are not offered, and `claude-voice plugins list` says `tools changed`.
+
+### Installing a plugin in one command
+
+A plugin that ships a manifest ([docs/plugin-manifest.md](docs/plugin-manifest.md))
+is installed from its checkout in one go, instead of the steps above by hand:
+
+<!-- not run: it asks for typed input -->
+```
+claude-voice plugins install fuel --from ~/fuel-mcp --dry-run   # shows each change, writes nothing
+claude-voice plugins install fuel --from ~/fuel-mcp             # does it, step by step
+```
+
+Each step is numbered and names the file it changes:
+
+1. It reads the manifest. The checkout must be a clean git checkout on the
+   manifest's branch. If the folder is missing, it prints the `git clone` command
+   for you to run; it never fetches anything itself.
+2. It adds the plugin's entry to the settings file, after a backup. The entry is
+   written as TOML by a library, so no text in the manifest can add another table, and
+   the result must read back as your old file plus exactly that entry. If an entry by
+   that name is already there and differs, it changes nothing and shows the
+   difference for you to edit by hand.
+3. When the plugin uses the shared home position and there is none yet, it asks for
+   it, as `home set` does.
+4. It writes the plugin's own config to `~/.config/<dir>/config.toml`, from the default
+   the plugin ships, and asks only for the values the manifest marks as yours, without
+   showing them. A config that is already there is kept. It writes nowhere else: never
+   through a symlink, never outside that folder, never inside a git repository, and it
+   asks first when no known plugin uses the folder.
+5. It ends with the usual typed approval, or says the plugin is already approved.
+
+The summary at the end lists each file it changed, where the backup is and the exact
+command that undoes it. A second run changes nothing. A dry run shows each file's
+difference with your values masked, and asks nothing. It asks you questions, so it
+runs only in a terminal of your own:
+
+```console
+$ claude-voice plugins install fuel --from ~/fuel-mcp
+claude-voice: plugins install asks you questions; run it in a terminal of your own, not from Claude Code or through a pipe.
+```
 
 To list them:
 
 ```console
 $ claude-voice plugins
 No plugins in the settings file.
+```
+
+### One home position for every plugin
+
+A plugin that needs to know where home is, such as a weather or fuel price plugin,
+reads one shared file: `~/.config/claude-voice-home/home.toml`, readable by you
+alone. It holds only `lat` and `lon`, rounded to 2 decimals (about 1 km), and it is
+outside the bridge's own config and every repository. Each plugin is told the file's
+path in its own config, as `home_file`, and reads it itself; the bridge passes it
+nothing, and nothing looks the position up from the network.
+
+`claude-voice home set` asks for latitude and longitude, typed or pasted from your
+phone's map, without showing them. Each must be a number inside Norway (57 to 72
+north, 4 to 32 east) unless you add `--anywhere`. It keeps one backup, of the file
+it replaced, and prints the command that undoes the change. It refuses when the file
+would land inside a git repository, as it would if `~/.config` linked into a dotfiles
+repository. That check finds a `.git` folder above the file, so it cannot see a
+dotfiles tool that keeps its repository elsewhere: never add
+`~/.config/claude-voice-home` to a dotfiles tool such as yadm or vcsh. A folder others
+could list is narrowed to owner-only, and it says so.
+Every plugin sees the new position at its next read. It asks you questions, so it runs only in a terminal of your own:
+
+```console
+$ claude-voice home set
+claude-voice: home set asks you questions; run it in a terminal of your own, not from Claude Code or through a pipe.
 ```
 
 ## Another machine

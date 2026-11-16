@@ -247,3 +247,175 @@ def test_a_new_module_must_keep_every_function_at_fifteen_or_below():
     found = problems(BASE, now)
     assert found and "pkg/new.py" in found[0]
     assert problems(BASE, measured(complexity={"pkg/a.py": 10, "pkg/b.py": 5, "pkg/new.py": 15})) == []
+
+
+STOPPED_RATCHET = """
+import sys, tempfile, time
+sys.path.insert(0, sys.argv[1])
+import ratchet
+ratchet.stop_cleanly()
+with tempfile.TemporaryDirectory(dir=sys.argv[2]):
+    print("ready", flush=True)
+    time.sleep(60)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no polite stop signal to send")
+def test_a_stopped_ratchet_still_removes_its_copy_of_main(tmp_path):
+    """The ratchet measures main in a copy of it, and a stop signal used to leave that copy.
+
+    Python runs no `finally` and no `with` exit on a stop signal unless it is told to, which is
+    how whole copies of the repository piled up in the temporary folder.
+    """
+    import signal
+    import subprocess
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    script = tmp_path / "stopped.py"
+    script.write_text(STOPPED_RATCHET)
+    where = str(pathlib.Path(ratchet.__file__).parent)
+    run = subprocess.Popen([sys.executable, str(script), where, str(scratch)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert run.stdout.readline().strip() == "ready"
+        run.send_signal(signal.SIGTERM)
+        assert run.wait(60) == 128 + signal.SIGTERM
+    finally:
+        run.kill()
+    assert list(scratch.iterdir()) == []
+
+
+def test_the_ratchet_turns_a_stop_into_an_exit_before_it_starts(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ratchet, "stop_cleanly", lambda: seen.append("stop"))
+    monkeypatch.setattr(sys, "argv", ["ratchet.py", "check"])
+    assert ratchet.main() == 1  # no --base: it stops before measuring anything
+    assert seen == ["stop"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no hang-up signal")
+def test_a_second_stop_cannot_cut_the_cleanup_short():
+    """GitHub sends an interrupt and then a stop; the second must not end the cleanup halfway."""
+    import signal
+
+    kept = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
+    try:
+        ratchet.stop_cleanly()
+        with pytest.raises(SystemExit):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        assert {s: signal.getsignal(s) for s in kept} == dict.fromkeys(kept, signal.SIG_IGN)
+    finally:
+        for s, handler in kept.items():
+            signal.signal(s, handler)
+
+
+def test_a_stop_while_main_is_being_copied_still_removes_the_copy(monkeypatch, tmp_path):
+    """The copy is made inside the ratchet's own folder, which goes whatever stops the run."""
+    monkeypatch.setattr(ratchet.tempfile, "tempdir", str(tmp_path))
+
+    def run(*args, **kwargs):
+        if "fetch" in args:
+            raise SystemExit(143)  # a stop the moment the copy has begun
+        return ratchet.subprocess.CompletedProcess(args, 0, "abc123\n", "")
+
+    monkeypatch.setattr(ratchet, "_run", run)
+    with pytest.raises(SystemExit):
+        ratchet.measure_at("main")
+    assert list(tmp_path.iterdir()) == []
+
+
+def _git(where, *args):
+    import subprocess
+
+    return subprocess.run(["git", *args], cwd=where, capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_the_base_is_measured_where_no_other_branch_can_be_seen(monkeypatch, tmp_path):
+    """A worktree shares every branch of the clone, and git keeps a record of it that a kill leaves."""
+    here = tmp_path / "clone"
+    here.mkdir()
+    _git(here, "init", "-q", "-b", "main")
+    _git(here, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "base")
+    _git(here, "branch", "under-review")
+    monkeypatch.setattr(ratchet, "ROOT", here)
+    copy = tmp_path / "copy"
+    ratchet.copy_of("main", copy)
+    assert _git(copy, "rev-parse", "HEAD") == _git(here, "rev-parse", "main")
+    assert _git(copy, "for-each-ref") == ""
+    assert _git(here, "worktree", "list").count("\n") == 0  # no record of the copy in the clone
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no flock; there the sweep does nothing")
+def test_a_killed_ratchet_s_copy_is_removed_at_the_next_start(tmp_path):
+    import os
+
+    left = ratchet.hold(dir=tmp_path)
+    os.close(left._lock)
+    left._lock = None
+    ratchet.sweep(tmp_path)
+    assert not left.path.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows has no flock; there the sweep does nothing")
+def test_a_ratchet_copy_still_in_use_is_never_removed(tmp_path):
+    import os
+    import time
+
+    held = ratchet.hold(dir=tmp_path)
+    young, old = tmp_path / f"{ratchet.RUN_PREFIX}young", tmp_path / f"{ratchet.RUN_PREFIX}old"
+    young.mkdir()
+    old.mkdir()
+    an_hour_ago = time.time() - 2 * 60 * 60
+    os.utime(old, (an_hour_ago, an_hour_ago))
+    try:
+        ratchet.sweep(tmp_path)
+        assert (held.path.exists(), young.exists(), old.exists()) == (True, True, False)
+    finally:
+        held.remove()
+    assert not held.path.exists()
+
+
+def test_the_ratchet_sweeps_before_it_measures(monkeypatch):
+    seen = []
+    monkeypatch.setattr(ratchet, "stop_cleanly", lambda: seen.append("stop"))
+    monkeypatch.setattr(ratchet, "sweep", lambda: seen.append("sweep"))
+    monkeypatch.setattr(sys, "argv", ["ratchet.py", "check"])
+    assert ratchet.main() == 1
+    assert seen == ["stop", "sweep"]
+
+
+def test_measuring_never_needs_the_held_folder_module():
+    """`measure` runs this script in a copy of main, whose package may not have it yet."""
+    import subprocess
+
+    probe = (
+        "import sys; sys.modules['claude_voice.held_folder'] = None\n"  # importing it now fails
+        f"sys.path.insert(0, {str(pathlib.Path(__file__).parent.parent / 'scripts')!r})\n"
+        "import ratchet\n"
+        "ratchet.measure = lambda *a, **k: {}\n"
+        "sys.argv = ['ratchet.py', 'measure']\n"
+        "sys.exit(ratchet.main())\n"
+    )
+    ran = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=False)
+    assert ran.returncode == 0, ran.stderr[-1500:]
+
+
+def test_the_base_may_be_a_commit_no_branch_points_at(monkeypatch, tmp_path):
+    """CI's base is main's commit when the pull request began, which main may since have moved on from.
+
+    git's newer protocol fetches such a commit by its id; the older one refuses it, so the test
+    sets the older one, as an old git or a person's own settings would."""
+    settings = tmp_path / "gitconfig"
+    settings.write_text("[protocol]\n\tversion = 0\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(settings))
+    here = tmp_path / "clone"
+    here.mkdir()
+    _git(here, "init", "-q", "-b", "main")
+    for message in ("base", "later"):
+        who = ("-c", "user.name=t", "-c", "user.email=t@example.com")
+        _git(here, *who, "commit", "-q", "--allow-empty", "-m", message)
+    behind = _git(here, "rev-parse", "main~1")
+    monkeypatch.setattr(ratchet, "ROOT", here)
+    copy = tmp_path / "copy"
+    ratchet.copy_of(behind, copy)
+    assert _git(copy, "rev-parse", "HEAD") == behind

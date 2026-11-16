@@ -46,6 +46,11 @@ decision nobody writes down.
 | [ADR-CV-012](ADR-CV-012-a-session-opens-where-the-owner-is.md) | A session opens where the owner is | Accepted |
 | [ADR-CV-013](ADR-CV-013-an-agreed-exception-is-shown-as-exempt.md) | A measure left outside its limit by agreement is shown as exempt, never green | Accepted |
 | [ADR-CV-014](ADR-CV-014-each-programme-describes-itself-in-its-own-repository.md) | Each programme describes its org chart in a file in its own repository | Accepted |
+| [ADR-CV-015](ADR-CV-015-the-red-run-is-proved-by-ci.md) | The red run is proved by continuous integration, not by a red commit | Accepted |
+| [ADR-CV-016](ADR-CV-016-a-plugin-is-installed-from-its-own-manifest.md) | A plugin is installed from a data-only manifest it ships, in the owner's own terminal | Accepted |
+| [ADR-CV-017](ADR-CV-017-a-profile-is-an-allow-listed-shape-without-values.md) | A profile is an allow-listed shape, and the values stay with the user | Accepted |
+| [ADR-CV-018](ADR-CV-018-a-paired-machine-powers-off-only-on-a-yes-the-hub-signed.md) | A paired machine powers off only on a yes the hub signed, through a helper of its own | Accepted |
+| [ADR-CV-019](ADR-CV-019-sessions-live-in-tmux-and-a-private-file-lists-them.md) | Sessions live in tmux, and a private file lists them for recovery | Accepted |
 | [ADR-CV-101](ADR-CV-101-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-102 |
 | [ADR-CV-102](ADR-CV-102-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-103](ADR-CV-103-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-104 |

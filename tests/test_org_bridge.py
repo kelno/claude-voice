@@ -290,3 +290,56 @@ def test_the_voice_is_told_to_ask_the_org_chart_who_handles_what_once_it_is_swit
 
     # The fork's guide names org_chart only once the owner switches it on.
     assert ("org_chart" in INSTRUCTIONS) == ("org_chart" not in SWITCHED_OFF)
+
+
+def keeper(tmp_path, world):
+    root, live = world
+    m = SessionManager(Store(tmp_path / "k.db"), project_root=root, client_factory=FakeClaude(), clock=Clock())
+    kept = tmp_path / "state" / "sessions.toml"
+    server = build_server(
+        m,
+        conversations=lambda **k: [],
+        live_dir=live,
+        read_transcript=lambda s, d: [],
+        org_folders=[],
+        sessions_file=kept,
+    )
+    return server, kept
+
+
+def kept_rows(path):
+    from claude_voice import roster
+
+    return {(r.organisation, r.role): r.conversation for r in roster.read(path)}
+
+
+async def test_the_bridge_writes_each_running_session_under_its_programme(tmp_path, world):
+    server, kept = keeper(tmp_path, world)
+    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    assert kept_rows(kept) == {
+        ("acme", "acme-robots"): "acme-id",
+        ("acme", "fix-gripper"): "gripper-id",
+        ("shop", "shop"): "shop-id",
+        ("solo", "loose"): "loose-id",
+    }
+
+
+async def test_a_session_the_bridge_renames_moves_to_its_new_row(tmp_path, world):
+    server, kept = keeper(tmp_path, world)
+    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    renamed = await call(server, "rename_session", session="loose", new_name="tidy", owner_chose=True)
+    assert not renamed.is_error, renamed.content
+    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    rows = kept_rows(kept)
+    assert rows[("solo", "tidy")] == "loose-id" and ("solo", "loose") not in rows
+
+
+async def test_a_session_that_ends_keeps_its_row(tmp_path, world):
+    server, kept = keeper(tmp_path, world)
+    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    _, live = world
+    for f in live.glob("*.json"):
+        if json.loads(f.read_text())["name"] == "loose":
+            f.unlink()
+    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    assert kept_rows(kept)[("solo", "loose")] == "loose-id"

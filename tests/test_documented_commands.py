@@ -39,16 +39,25 @@ LOOKS_LIKE_A_COMMAND = re.compile(
 NOT_RUN = re.compile(r"<!--\s*not run:\s*(.+?)\s*-->\s*$")
 
 
-def pages(root: pathlib.Path = ROOT) -> list[pathlib.Path]:
-    """Every Markdown page that could carry a command, found by walking."""
-    found = []
-    for folder, subfolders, files in os.walk(root):
-        here = pathlib.Path(folder)
-        subfolders[:] = [
-            d for d in subfolders if d not in SKIP and not d.startswith(".venv") and not (here / d / ".git").exists()
-        ]
-        found += [here / f for f in files if f.endswith(".md")]
-    return sorted(found)
+def pages() -> list[pathlib.Path]:
+    """Every Markdown page that could carry a command, as git tracks them.
+
+    Asking git rather than walking the folder leaves out what is not part of this checkout:
+    a page not yet added, and the checkouts other sessions keep under .claude/worktrees/,
+    each holding every page of some other branch.
+    """
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "--", "*.md"],  # noqa: S607
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    # Sorted as git names them, so the order, and the test ids, are the same on every platform:
+    # Windows compares paths without regard to case.
+    names = sorted(name for name in tracked.split("\0") if name)
+    found = (pathlib.PurePosixPath(name) for name in names)
+    return [ROOT / p for p in found if not any(part in SKIP or part.startswith(".venv") for part in p.parts)]
 
 
 def examples() -> list[tuple[str, str, str]]:
@@ -109,15 +118,32 @@ def argv_and_env(command: str) -> tuple[list[str], dict[str, str]]:
     return ([found, *argv[1:]] if found else argv), env
 
 
-def test_a_checkout_nested_in_this_one_keeps_its_own_pages(tmp_path: pathlib.Path):
-    """A worktree under .claude/worktrees, or a clone inside this one, is another checkout: its
-    pages are its own, checked by its own run, and walking into them runs the same commands again."""
-    for page in ("README.md", "docs/guide.md", ".claude/worktrees/other/README.md", "vendored/README.md"):
+def _git(cwd: pathlib.Path, *args: str) -> None:
+    subprocess.run(  # noqa: S603
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],  # noqa: S607
+        cwd=cwd,
+        capture_output=True,
+        check=True,
+    )
+
+
+def test_only_the_pages_git_tracks_here_are_run(tmp_path, monkeypatch):
+    """A page not yet added, and another session's checkout under .claude/worktrees/, are not ours."""
+    _git(tmp_path, "init", "-q")
+    for page in ("README.md", "docs/guide.md", "evidence/quoted.md", "draft.md"):
         (tmp_path / page).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / page).write_text("# a page\n", encoding="utf-8")
-    (tmp_path / ".claude/worktrees/other/.git").write_text("gitdir: elsewhere\n", encoding="utf-8")
-    (tmp_path / "vendored/.git").mkdir()
-    assert pages(tmp_path) == sorted([tmp_path / "README.md", tmp_path / "docs/guide.md"])
+    _git(tmp_path, "add", "README.md", "docs/guide.md", "evidence/quoted.md")
+    other = tmp_path / ".claude" / "worktrees" / "agent-1"
+    other.mkdir(parents=True)
+    _git(other, "init", "-q")
+    (other / "README.md").write_text("# another branch's page\n", encoding="utf-8")
+    _git(other, "add", "README.md")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+
+    found = [p.relative_to(tmp_path).as_posix() for p in pages()]
+
+    assert found == ["README.md", "docs/guide.md"]
 
 
 def test_the_documentation_shows_at_least_one_command():

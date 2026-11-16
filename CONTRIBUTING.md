@@ -18,9 +18,9 @@ uv run claude-voice permissions
 The `git config` line turns on the commit-msg hook, which refuses a message the gates
 would refuse later while it is still being written. The last gives Claude Code
 the permission rules for this clone and the other voice repositories. It may
-look and run the tests without asking, must ask before a push to main, a
-GitHub write others see or a device tool, and may never delete history or read
-a secret. [docs/permissions.md](docs/permissions.md) lists them; `--dry-run` shows
+look, run the tests and fast-forward main without asking. It must ask before a
+GitHub write others see or a device tool. It may never push to main, delete
+history or read a secret. [docs/permissions.md](docs/permissions.md) lists them; `--dry-run` shows
 what it would add first.
 
 The commit linter is a separate binary,
@@ -44,6 +44,9 @@ python3 scripts/clean_install.py
 The last one follows the README's "Start here" on an empty Ubuntu, so it needs
 Docker and about two minutes. Run it when you touch the README's first steps,
 the setup check or the packaging.
+
+A change to `templates/plugin/` also runs the template's own gates on a rendered copy, in a
+job of its own: `uv run pytest -m template`. It takes a few minutes and needs no network.
 
 The ratchet takes about ten minutes, because it switches every rule off in
 turn; `--skip-mutation` gives a quick look without that. It keeps main's
@@ -102,9 +105,16 @@ and it changes only by hand.
 2. **Say it before you build it.** A rule, a flag or a field is written down
    before it is code. If the documentation does not say it, it is not decided.
 3. **Write a test and watch it fail.** A test that passes on its first run
-   proves nothing. Where the rule already exists and no test can precede it,
-   turn the rule off with `uv run python scripts/mutate.py`, watch a named test
-   go red, and keep the row.
+   proves nothing. Commit it together with the code that turns it green: every
+   commit on `main` is green. On the pull request, the `red-first` check runs
+   your new and changed tests against the code before your change, and each must
+   fail there. A test that pins behaviour that already exists (a refactor's
+   pinning test, say) passes there. Excuse it with a line of its own in the pull
+   request body: `Red-first: existing behaviour - <test name>`
+   ([ADR-CV-015](decisions/ADR-CV-015-the-red-run-is-proved-by-ci.md)).
+   Where the rule already exists and no test can precede it, turn the rule off
+   with `uv run python scripts/mutate.py`, watch a named test go red, and keep
+   the row.
 
    A rule is a line marked `# RULE: what it says` in the source. Every one needs
    a row and a test whose name is the rule's own
@@ -244,10 +254,11 @@ change them for yourself in `~/.config/claude-voice/roles.toml`.
 Point rather than copy. Where a document has to copy anyway, two test files
 keep the copy honest. Any block fenced as ` ```console ` is run by
 `tests/test_documented_commands.py`, and its output has to match what the page
-shows. Pages are found by walking rather than listed, so a new one is covered
-the day it is written; a block that looks like commands and is not run must
-carry `<!-- not run: why -->` above it, because choosing another fence would
-otherwise be an opt-out nobody sees.
+shows. Pages are found by asking git for every page it tracks rather than
+listed, so a new one is covered the day it is added. Other checkouts kept inside
+this folder, and pages not yet added, are left out. A block that looks like
+commands and is not run must carry `<!-- not run: why -->` above it, because
+choosing another fence would otherwise be an opt-out nobody sees.
 
 `tests/test_documentation.py` checks the facts that are not commands: the
 gates above against the workflow that must run them, and every deferred item

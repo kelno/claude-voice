@@ -8,6 +8,7 @@ import threading
 import time
 
 import httpx
+import pytest
 from fakes import FakeClaude
 from mcp.client import Client
 
@@ -112,11 +113,38 @@ async def test_the_app_reads_both_repositories_on_one_page(tmp_path):
     await asyncio.to_thread(server.software_report.refresh)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=build_app(server)), base_url=HOST) as c:
         page = (await c.get("/api/v1/health/software", headers=BEARER)).json()
-    assert [r["mutations"] and r["mutations"]["run"] for r in page["repos"]] == [7, None]
+    assert [r["mutations"] and r["mutations"]["run"] for r in page["repos"]] == [7, None, None]
     names = [r["name"] for r in page["repos"]]
-    assert names == ["claude-voice", "claude-voice-ui"] and page["as_of"]
+    assert names[:2] == ["claude-voice", "claude-voice-ui"] and page["as_of"]
     assert by_id(page["repos"][1])["coverage"]["status"] == "bad"
     assert by_id(page["repos"][0])["ci"]["url"] == "https://ci/roykollensvendsen/claude-voice"
+
+
+async def test_the_phone_app_is_on_the_software_panel_after_the_page(tmp_path):
+    voice = repo_with_history(tmp_path / "voice", QUALITY)
+    mobile = tmp_path / "mobile"
+    mobile.mkdir()
+    store = Store(tmp_path / "b.db")
+    m = SessionManager(store, project_root=tmp_path, client_factory=FakeClaude())
+    repos = config.Config(config.Repos(), config.Paths(voice, None, None, None, mobile), None)
+    asked = []
+    server = build_server(
+        m,
+        oauth=OAuthProvider(store, SECRET, HOST, static_token=SECRET),
+        conversations=lambda **k: [],
+        live_dir=tmp_path / "live",
+        repo_config=repos,
+        ci_status=lambda repo, **_: {"conclusion": "success", "status": "completed", "url": f"https://ci/{repo}"},
+        kept_levels=lambda repo, **_: asked.append(repo) or [],
+        kept_mutations=lambda repo, **_: None,
+        main_head=lambda repo, **_: "aaa",
+    )
+    await asyncio.to_thread(server.software_report.refresh)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=build_app(server)), base_url=HOST) as c:
+        page = (await c.get("/api/v1/health/software", headers=BEARER)).json()
+    assert [r["name"] for r in page["repos"]] == ["claude-voice", "claude-voice-ui", "claude-voice-mobile"]
+    assert "roykollensvendsen/claude-voice-mobile" in asked
+    assert by_id(page["repos"][2])["ci"]["url"] == "https://ci/roykollensvendsen/claude-voice-mobile"
 
 
 def test_layering_and_duplication_are_measures_once_a_repository_records_them(tmp_path):
@@ -404,11 +432,46 @@ async def test_the_bridge_starts_listening_while_the_software_report_is_built(tm
     assert server.software_report.answer()["repos"][0]["name"] == "claude-voice"
 
 
+def _kotlin_levels(tmp_path, **levels):
+    """A Kotlin repository's kept levels: Pitest's mutants in place of rules proven."""
+    empty = tmp_path / "app"
+    empty.mkdir()
+    kept = {key: value for key, value in QUALITY.items() if key != "mutation"} | levels
+    return by_id(software.repo_report("claude-voice-mobile", "https://github.com/o/m", empty, kept=[kept]))
+
+
+def test_a_repository_that_keeps_no_rules_proven_shows_that_row_unmeasured_and_the_rest(tmp_path):
+    metrics = _kotlin_levels(tmp_path)
+    assert metrics["mutation"]["status"] == "unknown"
+    assert metrics["mutation"]["text"] == "Nothing measured yet"
+    assert metrics["coverage"]["value"] == QUALITY["coverage"]
+
+
+@pytest.mark.parametrize(("killed", "status"), [(42, "ok"), (35, "warn"), (30, "bad")])
+def test_code_changes_the_tests_catch_show_for_a_repository_that_publishes_them(tmp_path, killed, status):
+    row = _kotlin_levels(tmp_path, mutants={"killed": killed, "total": 45})["mutants"]
+    assert row["label"] == "Code changes the tests catch"
+    assert row["status"] == status
+    assert row["text"] == f"{killed} of 45 ({round(100 * killed / 45)} %)"
+
+
+def test_a_measure_only_some_repositories_publish_is_left_out_where_none_is_kept(tmp_path):
+    # Shown where one report keeps it, so leaving it out elsewhere is the rule at work, not a
+    # measure that does not exist.
+    kept, none = tmp_path / "kept", tmp_path / "none"
+    kept.mkdir()
+    none.mkdir()
+    assert "mutants" in _kotlin_levels(kept, mutants={"killed": 1, "total": 2})
+    assert "mutants" not in _kotlin_levels(none)
+    assert "mutants" not in by_id(software.repo_report("x", "u", None))
+
+
 def test_the_published_list_of_measures_matches_what_the_bridge_sends():
     """Other programs, the companion page first, read this list to know every measure a
     repository's report carries; a measure added here and not there goes unnamed on the
-    page. The list is built from the report itself, so it cannot be left behind."""
-    sent = [{"id": m["id"], "unit": m["unit"]} for m in software.repo_report("x", "u", None)["metrics"]]
+    page. The list is built from the bridge's own measures, so it cannot be left behind,
+    including a measure a report leaves out where nothing publishes it."""
+    sent = software.every_measure()
     published = pathlib.Path(__file__).parent.parent / "docs" / "event-api" / "measures.json"
     wanted = json.dumps(sent, indent=2) + "\n"
     kept = published.read_text(encoding="utf-8") if published.exists() else ""

@@ -26,6 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from . import invocation
 from .config import PluginSpec
 
 log = logging.getLogger("claude_voice")
@@ -188,9 +189,26 @@ def approve(spec: PluginSpec, listing: dict[str, dict[str, Any]], path: Path | N
     log.info("plugin %s approved", spec.name)
 
 
+def revoke(name: str, path: Path | None = None) -> bool:
+    """Take a plugin's approval back, so a running bridge stops offering its tools; whether
+    there was one."""
+    target = (path or APPROVALS).expanduser()
+    body = _approvals(target)
+    if name not in body:
+        return False
+    # RULE: a revoked plugin is no longer approved
+    del body[name]
+    _save(target, body)
+    log.info("plugin %s's approval was taken back", name)
+    return True
+
+
 def _write(name: str, entry: dict[str, Any], path: Path | None) -> None:
     target = (path or APPROVALS).expanduser()
-    body = {**_approvals(target), name: entry}
+    _save(target, {**_approvals(target), name: entry})
+
+
+def _save(target: Path, body: dict[str, Any]) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     spare = target.with_name(target.name + ".tmp")
     spare.write_text(json.dumps(body, indent=2) + "\n")
@@ -456,7 +474,7 @@ def check_one(spec: PluginSpec, approvals: Path | None = None, client: Callable[
     """List one plugin's tools and check them against the owner's approval, offering nothing
     yet: the plugin or None, its listing, and in a word why."""
     if not approved(spec, approvals):
-        log.info("plugin %s is not approved; run: claude-voice plugins approve %s", spec.name, spec.name)
+        log.info("plugin %s is not approved; run: %s plugins approve %s", spec.name, invocation.command(), spec.name)
         return None, {}, "not approved"
     plugin = Plugin(spec, client or CLIENT)
     listing = plugin.listing()
@@ -465,7 +483,7 @@ def check_one(spec: PluginSpec, approvals: Path | None = None, client: Callable[
         log.info("plugin %s did not start in time, so it is not offered: %s", spec.name, plugin.unlisted)
         return None, {}, "not started"
     if not inputs_approved(spec, listing, approvals):
-        log.info("plugin %s's tools changed; run: claude-voice plugins approve %s", spec.name, spec.name)
+        log.info("plugin %s's tools changed; run: %s plugins approve %s", spec.name, invocation.command(), spec.name)
         return None, listing, "tools changed"
     return plugin, listing, "started"
 

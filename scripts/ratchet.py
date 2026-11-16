@@ -31,13 +31,17 @@ import ast
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from claude_voice.held_folder import HeldFolder
 
 # The tree to measure: this one, or a copy of the base named by RATCHET_ROOT (see measure_at).
 ROOT = Path(os.environ.get("RATCHET_ROOT") or Path(__file__).resolve().parent.parent)
@@ -52,24 +56,29 @@ NEW_MODULE_CEILING = 15  # the most tangled function a new module may have
 BLOCK = 6  # lines in a row that count as a copied block
 # Each module's layer: a module may use, when it loads, only modules in the layers below it.
 LAYERS = {
+    # foundations
     **dict.fromkeys(
         (
             "procs",
+            "held_folder",
             "config",
             "store",
             "metrics",
             "titles",
-            "access",
             "tailnet",
-            "channel",
-            "channel_hub",
             "envfile",
             "presence",
             "restarts",
+            "invocation",
+            "fields",
+            "safefile",
+            "access",
+            "channel",
+            "channel_hub",
             "relay_notes",
         ),
         0,
-    ),  # foundations
+    ),
     **dict.fromkeys(
         (
             "transcripts",
@@ -96,11 +105,17 @@ LAYERS = {
             "permissions",
             "hints",
             "prompts",
+            "manifest",
+            "home",
+            "reposync",
+            "profiles",
+            "roster",
             "following",
             "offline",
         ),
         1,
     ),  # parts, each about one thing
+    # parts built from parts
     **dict.fromkeys(
         (
             "events",
@@ -113,12 +128,14 @@ LAYERS = {
             "answers",
             "jobs",
             "handles",
+            "install",
+            "setup",
         ),
         2,
-    ),  # parts built from parts
+    ),
     **dict.fromkeys(("api", "phone_hook", "agent", "fleet"), 3),  # the doors in from outside
     "server": 4,  # where it is all put together
-    "cli": 5,  # the command line that starts it
+    **dict.fromkeys(("cli", "cv"), 5),  # the command lines: one starts the bridge, one reads its files
 }
 EXCEPTION = re.compile(r"^\s*ratchet-exception:\s*([a-z_]+)", re.IGNORECASE | re.MULTILINE)
 
@@ -371,29 +388,100 @@ def base_levels(kept: Path | None, measure_base: Callable[[], dict[str, Any]]) -
     return measure_base()
 
 
+#: Every folder the ratchet measures the base in starts so, and holds a lock while in use.
+RUN_PREFIX = "claude-voice-ratchet-"
+
+
+def hold(dir: Path | None = None) -> HeldFolder:
+    """A folder of the ratchet's own in the temporary folder, locked while the ratchet runs.
+
+    A kill runs no cleanup, so the next ratchet sweeps away every such folder whose lock is free.
+    The module is imported here, never when this script loads: `measure` runs this script in a
+    copy of main, whose package may not have it.
+    """
+    from claude_voice import held_folder
+
+    return held_folder.HeldFolder(RUN_PREFIX, dir)
+
+
+def sweep(place: Path | None = None) -> None:
+    """Remove the folders a ratchet killed before it could clean up left behind."""
+    from claude_voice import held_folder
+
+    held_folder.sweep(Path(place or tempfile.gettempdir()), RUN_PREFIX)
+
+
+#: git, set to fetch a commit by its id whether or not a branch points at it. The newer protocol
+#: does by default; the older one, still chosen by an old git or a person's own settings,
+#: refuses unless the serving side allows it.
+ANY_COMMIT = ("git", "-c", "protocol.version=2", "-c", "uploadpack.allowAnySHA1InWant=true")
+
+
+def copy_of(ref: str, copy: Path) -> None:
+    """Check `ref` out into `copy`, a repository of its own holding that one commit and no ref.
+
+    A worktree would share every branch of this clone, and git keeps a record of it that a
+    killed run leaves behind. `ref` may be any commit this clone has, a branch tip or not:
+    CI's base is main's commit when the pull request began, which main may have moved past.
+    """
+    sha = _run("git", "rev-parse", "--verify", f"{ref}^{{commit}}", cwd=ROOT)
+    if sha.returncode:
+        raise SystemExit(f"Cannot find {ref} to measure it:\n{sha.stderr}")
+    copy.mkdir(parents=True)
+    # RULE: the base is measured where no other branch can be seen
+    steps = (
+        ("git", "init", "-q"),
+        # RULE: the base may be a commit no branch points at
+        (*ANY_COMMIT, "fetch", "-q", "--depth", "1", str(ROOT), sha.stdout.strip()),
+        ("git", "checkout", "-q", "--detach", "FETCH_HEAD"),
+    )
+    for step in steps:
+        done = _run(*step, cwd=copy)
+        if done.returncode:
+            raise SystemExit(f"Cannot check out {ref} to measure it:\n{done.stderr}")
+
+
 def measure_at(ref: str, skip_mutation: bool = False) -> dict[str, Any]:
     """Measure `ref` in a copy of it, with this ratchet, so both sides are measured alike.
 
     The copy keeps its own tests and scripts unchanged: this ratchet runs from where it is
     and is pointed at the copy, so the base is measured exactly as it stands."""
-    with tempfile.TemporaryDirectory() as tmp:
-        copy, out = Path(tmp) / "base", Path(tmp) / "levels.json"
-        added = _run("git", "worktree", "add", "--detach", str(copy), ref)
-        if added.returncode:
-            raise SystemExit(f"Cannot check out {ref} to measure it:\n{added.stderr}")
-        try:
-            synced = _run("uv", "sync", "--locked", "--all-extras", cwd=copy)
-            if synced.returncode:
-                raise SystemExit(f"Cannot install {ref} to measure it:\n{synced.stderr[-2000:]}")
-            env = {**os.environ, "RATCHET_ROOT": str(copy)}
-            here = str(Path(__file__).resolve())
-            quick = ["--skip-mutation"] if skip_mutation else []
-            measured = _run("uv", "run", "python", here, "measure", "--out", str(out), *quick, cwd=copy, env=env)
-            if measured.returncode:
-                raise SystemExit(f"Measuring {ref} failed:\n{measured.stdout[-2000:]}{measured.stderr[-2000:]}")
-            return dict(json.loads(out.read_text()))
-        finally:
-            _run("git", "worktree", "remove", "--force", str(copy))
+    held = hold()
+    try:  # the copy is made inside the held folder, so a stop at any point removes it too
+        copy, out = held.path / "base", held.path / "levels.json"
+        copy_of(ref, copy)
+        synced = _run("uv", "sync", "--locked", "--all-extras", cwd=copy)
+        if synced.returncode:
+            raise SystemExit(f"Cannot install {ref} to measure it:\n{synced.stderr[-2000:]}")
+        env = {**os.environ, "RATCHET_ROOT": str(copy)}
+        here = str(Path(__file__).resolve())
+        quick = ["--skip-mutation"] if skip_mutation else []
+        measured = _run("uv", "run", "python", here, "measure", "--out", str(out), *quick, cwd=copy, env=env)
+        if measured.returncode:
+            raise SystemExit(f"Measuring {ref} failed:\n{measured.stdout[-2000:]}{measured.stderr[-2000:]}")
+        return dict(json.loads(out.read_text()))
+    finally:
+        held.remove()
+
+
+def stop_cleanly() -> None:
+    """Turn a polite stop into an ordinary exit, so every `with` and `finally` still runs.
+
+    CI cancels a run, and a closed terminal ends one, with a stop signal. Python's own answer to
+    it is to end at once, cleaning up nothing, which left whole folders in the temporary folder.
+    """
+
+    def stop(signum: int, _frame: object) -> None:
+        # A second signal (GitHub sends an interrupt, then a stop) must not cut the cleanup short.
+        for later in ("SIGTERM", "SIGHUP", "SIGINT"):
+            if hasattr(signal, later):
+                signal.signal(getattr(signal, later), signal.SIG_IGN)
+        raise SystemExit(128 + signum)
+
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):  # Windows has neither
+            # RULE: a stopped ratchet still removes its copy of main
+            signal.signal(getattr(signal, name), stop)
 
 
 def main() -> int:
@@ -405,12 +493,14 @@ def main() -> int:
     parser.add_argument("--skip-mutation", action="store_true")
     parser.add_argument("--mutations", type=Path, help="where the mutation run writes its report, rule by rule")
     args = parser.parse_args()
+    stop_cleanly()
     if args.action == "measure":
         now = measure(args.skip_mutation)
         if args.out:
             write_levels(args.out, now)
         print(json.dumps(now, indent=2, sort_keys=True))
         return 0
+    sweep()  # only when checking: a measure run is inside a check that has swept
     if not args.base:
         print("check needs --base, the ref to compare with (usually origin/main).", file=sys.stderr)
         return 1

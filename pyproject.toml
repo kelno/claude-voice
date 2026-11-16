@@ -14,10 +14,12 @@ dependencies = [
     "mcp>=2.3.0",
     "psutil>=7",
     "webauthn>=3.0.1",
+    "tomli-w>=1.2",
 ]
 
 [project.scripts]
 claude-voice = "claude_voice.cli:entry"
+cv = "claude_voice.cv:entry"
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
@@ -25,7 +27,9 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "cryptography>=46",
     "httpx>=0.28.1",
+    "jeepney>=0.9.0",
     "jsonschema>=4.26.0",
     "mypy>=2.4.1",
     "pytest>=9.2.0",
@@ -35,9 +39,21 @@ dev = [
     "types-psutil>=7.2.2.20260906",
 ]
 
+[tool.coverage.run]
+# The plugin template is a project of its own, and its own checks measure its coverage.
+# Its scripts are only imported here, by the tests that read the template.
+omit = ["templates/*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Said outright, so pytest-asyncio does not warn on every run that it is unset.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "e2e: needs a real logged-in Claude Code; never run in CI",
+    "template: runs the rendered plugin template's own gates; a CI job of its own",
+]
+addopts = "-m 'not e2e and not template'"
 # A passing test's temporary files are deleted at once, and only the latest run's
 # failures are kept to read: a day of runs otherwise filled the machine's /tmp.
 tmp_path_retention_count = 1
@@ -50,5 +66,10 @@ line-length = 120
 select = ["E", "F", "I", "B", "UP", "ASYNC"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["claude_voice"]
-known-third-party = ["fakes"]
+known-first-party = ["claude_voice", "claude_voice_power"]
+known-third-party = ["fakes", "power_fakes", "power_scan"]
+
+# jeepney, the helper's D-Bus library, ships no type hints.
+[[tool.mypy.overrides]]
+module = ["jeepney", "jeepney.*"]
+ignore_missing_imports = true

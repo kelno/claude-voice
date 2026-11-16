@@ -71,6 +71,7 @@ from . import (
     renames,
     restarts,
     roles,
+    roster,
     session_modes,
     software,
     tailnet,
@@ -655,21 +656,65 @@ MAKE_TOKEN = (
 )
 
 
-def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = True) -> Config:
-    """The bridge's settings from `env`. A command that never touches the work folders, such as
-    `claude-voice passkey`, passes need_root=False, so a shell without CLAUDE_VOICE_ROOT can run it."""
+def _refuse_an_api_key(env: Mapping[str, str]) -> None:
+    """Stop the bridge where Claude would bill the API instead of the owner's subscription."""
     # RULE: an api key in the environment stops the bridge from starting
     if env.get("ANTHROPIC_API_KEY") and env.get("CLAUDE_VOICE_ALLOW_API_KEY") != "1":
         raise ConfigError(
             "ANTHROPIC_API_KEY is set, so Claude would bill the API instead of your "
             "subscription. Unset it, or set CLAUDE_VOICE_ALLOW_API_KEY=1 if that is intended."
         )
+
+
+def _projects_root(env: Mapping[str, str], need_root: bool) -> Path:
+    """The folder that holds the owner's work folders, which must exist when `need_root`."""
     root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
     if need_root and not root.is_dir():
         raise ConfigError(
             f"CLAUDE_VOICE_ROOT is not a directory: {root}. Make it with `mkdir -p {root}`, or set "
             "CLAUDE_VOICE_ROOT to the folder that holds your work folders."
         )
+    return root
+
+
+def _ui_folder(env: Mapping[str, str]) -> Path | None:
+    """The folder the companion page is served from, when one is set; it must exist."""
+    ui_dir = env.get("CLAUDE_VOICE_UI_DIR", "").strip()
+    if not ui_dir:
+        return None
+    folder = Path(ui_dir).expanduser()
+    if not folder.is_dir():
+        raise ConfigError(f"CLAUDE_VOICE_UI_DIR is not a directory: {folder}. Build the UI there, or unset it.")
+    return folder
+
+
+def _access_seconds(env: Mapping[str, str]) -> int | None:
+    """How long an access token lasts, when the owner set it: whole seconds, at least a minute."""
+    ttl = env.get("CLAUDE_VOICE_ACCESS_TOKEN_SECONDS", "").strip()
+    if not ttl:
+        return None
+    # RULE: an access-token lifetime that is not a whole number of at least a minute stops the bridge
+    if not ttl.isdigit() or int(ttl) < MIN_ACCESS_TTL:
+        raise ConfigError(
+            f"CLAUDE_VOICE_ACCESS_TOKEN_SECONDS is {ttl!r}; use a whole number of seconds, "
+            f"at least {MIN_ACCESS_TTL} (an hour is 3600, a week 604800)."
+        )
+    return int(ttl)
+
+
+def _check_the_token(token: str | None) -> None:
+    """Serving over HTTP needs a token, and a long one."""
+    if not token:
+        raise ConfigError(f"CLAUDE_VOICE_TOKEN must be set to serve over HTTP. {MAKE_TOKEN}")
+    if len(token) < MIN_TOKEN_CHARS:
+        raise ConfigError(f"CLAUDE_VOICE_TOKEN must be at least {MIN_TOKEN_CHARS} characters. {MAKE_TOKEN}")
+
+
+def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = True) -> Config:
+    """The bridge's settings from `env`. A command that never touches the work folders, such as
+    `claude-voice passkey`, passes need_root=False, so a shell without CLAUDE_VOICE_ROOT can run it."""
+    _refuse_an_api_key(env)
+    root = _projects_root(env, need_root)
     cfg = Config(
         root=root,
         db=Path(env.get("CLAUDE_VOICE_DB", "~/.local/state/claude-voice/bridge.db")).expanduser(),
@@ -681,20 +726,12 @@ def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = Tru
     )
     cfg.courier_name = env.get("CLAUDE_VOICE_COURIER_NAME", "").strip() or transcripts.COURIER_NAME
     cfg.ui_origins = [o.strip().rstrip("/") for o in env.get("CLAUDE_VOICE_UI_ORIGINS", "").split(",") if o.strip()]
-    ui_dir = env.get("CLAUDE_VOICE_UI_DIR", "").strip()
-    if ui_dir:
-        cfg.ui_dir = Path(ui_dir).expanduser()
-        if not cfg.ui_dir.is_dir():
-            raise ConfigError(f"CLAUDE_VOICE_UI_DIR is not a directory: {cfg.ui_dir}. Build the UI there, or unset it.")
-    ttl = env.get("CLAUDE_VOICE_ACCESS_TOKEN_SECONDS", "").strip()
-    if ttl:
-        # RULE: an access-token lifetime that is not a whole number of at least a minute stops the bridge
-        if not ttl.isdigit() or int(ttl) < MIN_ACCESS_TTL:
-            raise ConfigError(
-                f"CLAUDE_VOICE_ACCESS_TOKEN_SECONDS is {ttl!r}; use a whole number of seconds, "
-                f"at least {MIN_ACCESS_TTL} (an hour is 3600, a week 604800)."
-            )
-        cfg.access_ttl = int(ttl)
+    ui_folder = _ui_folder(env)
+    if ui_folder is not None:
+        cfg.ui_dir = ui_folder
+    seconds = _access_seconds(env)
+    if seconds is not None:
+        cfg.access_ttl = seconds
     cfg.new_session_mode = env.get("CLAUDE_VOICE_PERMISSION_MODE", "").strip() or "default"
     if cfg.new_session_mode not in session_modes.MODES:
         raise ConfigError(
@@ -705,10 +742,7 @@ def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = Tru
         f"https://{cfg.public_hosts[0]}" if cfg.public_hosts else f"http://127.0.0.1:{cfg.port}"
     )
     if transport == "http":
-        if not cfg.token:
-            raise ConfigError(f"CLAUDE_VOICE_TOKEN must be set to serve over HTTP. {MAKE_TOKEN}")
-        if len(cfg.token) < MIN_TOKEN_CHARS:
-            raise ConfigError(f"CLAUDE_VOICE_TOKEN must be at least {MIN_TOKEN_CHARS} characters. {MAKE_TOKEN}")
+        _check_the_token(cfg.token)
     return cfg
 
 
@@ -777,6 +811,41 @@ def note_voice_call(ctx: Any, tool: str, trace: str | None, result: Any) -> None
         usage.record(VOICE_STORE[0], client, str(connection), tool, _result_chars(result))
 
 
+def _trace_of(params: dict[str, Any]) -> str | None:
+    """The trace id a voice client sent with a call, as params._meta.trace_id."""
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        return None
+    return str(meta.get("trace_id") or "") or None
+
+
+def _error_text(result: Any) -> str:
+    """The first text of a failed tool result, which says what went wrong."""
+    content = getattr(result, "content", None) or (result.get("content") if isinstance(result, dict) else None)
+    first = content[0] if content else None
+    return str(getattr(first, "text", None) or (first.get("text") if isinstance(first, dict) else first) or "")
+
+
+def _log_finished_tool_call(
+    ctx, tool: str, params: dict[str, Any], what: str, trace: str | None, ms: float, result: Any
+) -> None:
+    """Log, show and count a tool call that came back, failed or not."""
+    api.publish_focus(tool, params.get("arguments"), caller_kind(ctx, trace))
+    note_voice_call(ctx, tool, trace, result)
+    failed = getattr(result, "is_error", None) or (isinstance(result, dict) and result.get("isError"))
+    target = api.session_of(tool, params.get("arguments"))
+    log.info(
+        "mcp %s -> %s %dms trace=%s%s from=%s",
+        what,
+        "error" if failed else "ok",
+        ms,
+        trace or "-",
+        f" session={target}" if target else "",
+        caller_kind(ctx, trace),
+    )
+    METRICS.record(tool, ms, error=_error_text(result) if failed else None, trace_id=trace)
+
+
 async def log_requests(ctx, call_next):
     """Log and count each MCP call: method, tool, outcome, time and the caller's trace id.
 
@@ -786,14 +855,14 @@ async def log_requests(ctx, call_next):
     params = ctx.params if isinstance(ctx.params, dict) else {}
     tool = str(params.get("name", ""))
     what = f"{ctx.method} {tool}".rstrip()
-    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
-    trace = str(meta.get("trace_id") or "") or None
+    trace = _trace_of(params)
     with contextlib.suppress(TypeError):
         if (session := getattr(ctx, "session", None)) is not None:
             LISTENERS.add(session)
     token = transcripts.current_trace.set(trace)
     client_token = transcripts.current_client.set(caller_kind(ctx, trace))
     request = getattr(ctx, "request", None)
+    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
     seen = confirm.caller_from(meta) if request else confirm.Caller()
     caller_token = confirm.current_caller.set(seen)
     started = time.monotonic()
@@ -820,25 +889,7 @@ async def log_requests(ctx, call_next):
         confirm.current_caller.reset(caller_token)
     ms = (time.monotonic() - started) * 1000
     if ctx.method == "tools/call":
-        api.publish_focus(tool, params.get("arguments"), caller_kind(ctx, trace))
-        note_voice_call(ctx, tool, trace, result)
-        failed = getattr(result, "is_error", None) or (isinstance(result, dict) and result.get("isError"))
-        target = api.session_of(tool, params.get("arguments"))
-        log.info(
-            "mcp %s -> %s %dms trace=%s%s from=%s",
-            what,
-            "error" if failed else "ok",
-            ms,
-            trace or "-",
-            f" session={target}" if target else "",
-            caller_kind(ctx, trace),
-        )
-        error = None
-        if failed:
-            content = getattr(result, "content", None) or (result.get("content") if isinstance(result, dict) else None)
-            first = content[0] if content else None
-            error = str(getattr(first, "text", None) or (first.get("text") if isinstance(first, dict) else first) or "")
-        METRICS.record(tool, ms, error=error, trace_id=trace)
+        _log_finished_tool_call(ctx, tool, params, what, trace, ms, result)
     elif ctx.request_id is not None:
         log.info("mcp %s", what)
     return result
@@ -1269,6 +1320,7 @@ def build_server(
     org_folders: list[Path] | None = None,
     connector_logs: Path = connectors.CACHE_DIR,
     connectors_reachable: Callable[[], Awaitable[bool]] = connectors.proxy_answers,
+    sessions_file: Path | None = None,
 ) -> MCPServer:
     auth = None
     if oauth is not None:
@@ -1400,6 +1452,7 @@ def build_server(
             return
         try:
             watcher.check()
+            keep_roster()
             version = tree.build()["version"]
             if tree_version and tree_version[0] != version:
                 watcher.record("claude-voice", "tree_changed", version)
@@ -1416,6 +1469,10 @@ def build_server(
 
     @contextlib.asynccontextmanager
     async def lifespan(_server):
+        # A restart kills the bridge, so its helpers' folders are cleared here, at the next start.
+        with contextlib.suppress(Exception):
+            if removed := transcripts.sweep_helper_folders():
+                log.info("removed %d helper folders a stopped bridge left behind", len(removed))
         # Watch running sessions between polls, so short-lived states are not missed.
         task = None
         if watch_interval:
@@ -2144,6 +2201,23 @@ def build_server(
         org_kept[:] = [manager.clock(), chart]
         return chart
 
+    def keep_roster() -> None:
+        """Write each running session's row to the sessions file, when the bridge keeps one."""
+        if sessions_file is None:
+            return
+        placer = org_now().placer()
+
+        def organisation(d: dict[str, Any]) -> str | None:
+            found = placer(d).programme
+            return found.code if found else None
+
+        now = datetime.now(UTC).isoformat(timespec="minutes")
+        try:
+            rows = roster.seen(roster.read(sessions_file), reachable(), organisation, now)
+            roster.write(sessions_file, rows)
+        except (OSError, ValueError) as exc:  # the news still comes; only recovery's list is late
+            log.warning("could not keep the sessions file %s: %s", sessions_file, exc)
+
     def tell_programmes() -> None:
         """Tell open streams when the programmes have changed since last looked at."""
         now = org_now().listing()
@@ -2209,53 +2283,85 @@ def build_server(
             live_ids = [str(r["claude_session_id"]) for r in running()]
         return store.number_sessions(live_ids, scope=lambda sid: "/" not in sid)
 
+    def recap_of_running(row: dict[str, Any], d: dict[str, Any], numbers: dict[str, int]) -> dict[str, Any]:
+        """One running Claude Code session as fleet_recap gives it; `d` is its live entry."""
+        if "access" in row:
+            # Not open to the bridge: nothing is read from it.
+            item = {k: v for k, v in row.items() if k != "claude_session_id"}
+            number = numbers.get(str(row["claude_session_id"]))
+            return {"id": row["claude_session_id"], "number": number, **item, "doing": ""}
+        if row["status"] == "moved":
+            where = row["moved_to"]["name"] or "another session"
+            doing = f"moved to {where}"
+        else:
+            doing = transcripts.doing_line(str(row["claude_session_id"]), str(d.get("cwd")), projects_dir)
+        state, waiting_kind = live_state(
+            str(row["status"]), str(row["claude_session_id"]), str(d.get("cwd")), d.get("waitingFor")
+        )
+        item = {
+            "id": row["claude_session_id"],
+            "number": numbers.get(str(row["claude_session_id"])),
+            "name": row["name"],
+            "kind": row["kind"],
+            "folder": row["folder"],
+            "status": row["status"],
+            "state": state,
+            "state_since": observe(str(row["claude_session_id"]), str(row["name"]), state, doing),
+            "waiting_kind": waiting_kind,
+            "git": git_of(str(row["claude_session_id"]), str(d.get("cwd"))) if d.get("cwd") else None,
+            "context": usage.context(statusline_dir, str(row["claude_session_id"])),
+            "app_url": app_url(d.get("bridgeSessionId")),
+            "doing": doing,
+            "minutes_since_update": row["minutes_since_update"],
+            "sending": list(sending.get(str(row["claude_session_id"]), [])),
+        }
+        for key in ("waiting_for", "question", "moved_to", "side_chat"):
+            if key in row:
+                item[key] = row[key]
+        return item
+
     @tool(annotations=READ_ONLY)
     def fleet_recap() -> dict[str, Any]:
         """Every running session with its status and one line on what it is doing.
         Answers "what are my sessions up to?" without reading each one; kind is "desktop",
         "terminal" or "background" (no window), and side_chat marks a desktop aside."""
-        sessions = []
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         live_rows = running()
         numbers = local_numbers([str(r["claude_session_id"]) for r in live_rows])
-        for row in live_rows:
-            if "access" in row:
-                # Not open to the bridge: nothing is read from it.
-                item = {k: v for k, v in row.items() if k != "claude_session_id"}
-                number = numbers.get(str(row["claude_session_id"]))
-                sessions.append({"id": row["claude_session_id"], "number": number, **item, "doing": ""})
-                continue
-            d = live_by_id.get(str(row["claude_session_id"]), {})
-            if row["status"] == "moved":
-                where = row["moved_to"]["name"] or "another session"
-                doing = f"moved to {where}"
-            else:
-                doing = transcripts.doing_line(str(row["claude_session_id"]), str(d.get("cwd")), projects_dir)
-            state, waiting_kind = live_state(
-                str(row["status"]), str(row["claude_session_id"]), str(d.get("cwd")), d.get("waitingFor")
-            )
-            item = {
-                "id": row["claude_session_id"],
-                "number": numbers.get(str(row["claude_session_id"])),
-                "name": row["name"],
-                "kind": row["kind"],
-                "folder": row["folder"],
-                "status": row["status"],
-                "state": state,
-                "state_since": observe(str(row["claude_session_id"]), str(row["name"]), state, doing),
-                "waiting_kind": waiting_kind,
-                "git": git_of(str(row["claude_session_id"]), str(d.get("cwd"))) if d.get("cwd") else None,
-                "context": usage.context(statusline_dir, str(row["claude_session_id"])),
-                "app_url": app_url(d.get("bridgeSessionId")),
-                "doing": doing,
-                "minutes_since_update": row["minutes_since_update"],
-                "sending": list(sending.get(str(row["claude_session_id"]), [])),
-            }
-            for key in ("waiting_for", "question", "moved_to", "side_chat"):
-                if key in row:
-                    item[key] = row[key]
-            sessions.append(item)
+        sessions = [
+            recap_of_running(row, live_by_id.get(str(row["claude_session_id"]), {}), numbers) for row in live_rows
+        ]
         return {"sessions": sessions}
+
+    def checked_model_and_effort(model: str | None, effort: str | None) -> None:
+        """Refuse a model or an effort Claude Code should never be handed."""
+        # RULE: only a well-formed model name and a known effort reach Claude Code
+        if model is not None and not transcripts.MODEL_NAME.fullmatch(model):
+            raise ToolError(f"Not a model name: {model!r}. Use an alias such as opus, or a full model name.")
+        if effort is not None and effort not in transcripts.EFFORTS:
+            raise ToolError(f"Unknown effort {effort!r}; use one of: {', '.join(transcripts.EFFORTS)}.")
+
+    def made_folder(folder: str) -> bool:
+        """Make a folder under the root when it does not exist; whether it was made."""
+        # RULE: a new folder must be a simple name under the root
+        if not SIMPLE_FOLDER.fullmatch(folder):
+            raise ToolError(f"{folder!r} is not a simple name; use letters, digits, '.', '_' or '-' only.")
+        new = manager.root / folder
+        if new.exists():
+            return False
+        new.mkdir()  # never over something that exists
+        # RULE: only a folder the bridge just made is trusted for claude code
+        try:
+            trust_new(new)
+        except (OSError, ValueError) as exc:
+            log.warning("could not trust the new folder %s for Claude Code (%s); it asks in its window", new, exc)
+        return True
+
+    def running_already(name: str | None, path: Path) -> dict[str, Any] | None:
+        """The running session with this name in this folder, if there is one."""
+        return next(
+            (d for d in live_sessions() if name and d.get("name") == name.strip() and d.get("cwd") == str(path)), None
+        )
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_active_session(
@@ -2288,27 +2394,8 @@ def build_server(
         """Start new work: a session in a folder, on Remote Control on phone and PC.
         It is listed at once, so ask_active_session reaches it, and has no window unless the
         settings say otherwise."""
-        # RULE: only a well-formed model name and a known effort reach Claude Code
-        if model is not None and not transcripts.MODEL_NAME.fullmatch(model):
-            raise ToolError(f"Not a model name: {model!r}. Use an alias such as opus, or a full model name.")
-        if effort is not None and effort not in transcripts.EFFORTS:
-            raise ToolError(f"Unknown effort {effort!r}; use one of: {', '.join(transcripts.EFFORTS)}.")
-        folder_created = False
-        if create_folder:
-            # RULE: a new folder must be a simple name under the root
-            if not SIMPLE_FOLDER.fullmatch(folder):
-                raise ToolError(f"{folder!r} is not a simple name; use letters, digits, '.', '_' or '-' only.")
-            new = manager.root / folder
-            if not new.exists():
-                new.mkdir()  # never over something that exists
-                folder_created = True
-                # RULE: only a folder the bridge just made is trusted for claude code
-                try:
-                    trust_new(new)
-                except (OSError, ValueError) as exc:
-                    log.warning(
-                        "could not trust the new folder %s for Claude Code (%s); it asks in its window", new, exc
-                    )
+        checked_model_and_effort(model, effort)
+        folder_created = made_folder(folder) if create_folder else False
         try:
             path = manager.resolve_folder(folder)
         except ValueError as exc:
@@ -2316,10 +2403,8 @@ def build_server(
         if not owner_chose:
             # RULE: a started session gets the marker unless the owner named it
             name = renames.marked(renames.clean(name or "") or f"{path.name}-{secrets.token_hex(2)}")
+        same = running_already(name, path)
         # RULE: starting the same session twice gives back the one already running
-        same = next(
-            (d for d in live_sessions() if name and d.get("name") == name.strip() and d.get("cwd") == str(path)), None
-        )
         if same is not None:  # a retry after an answer lost on the way must not open a second window
             return {
                 "name": same.get("name"),
@@ -2550,10 +2635,14 @@ def build_server(
         except LookupError as exc:
             raise ToolError(str(exc)) from None
 
-    # Each plugin's own repository joins the two above, on the software panel and the work page.
+    # Each plugin's own repository joins the three above, on the software panel and the work page.
     plugin_repos = work.plugin_repos(repos.plugins)
     board = work_board or work.Board(
-        {"claude-voice": repos.repos.claude_voice, "claude-voice-ui": repos.repos.claude_voice_ui}
+        {
+            "claude-voice": repos.repos.claude_voice,
+            "claude-voice-ui": repos.repos.claude_voice_ui,
+            "claude-voice-mobile": repos.repos.claude_voice_mobile,
+        }
         | {name: repo for name, repo, _ in plugin_repos},
         run=software._gh,
         login_expiry=lambda: work.read_login_expiry(),  # looked up late, so the suite can stand in for it
@@ -2566,6 +2655,8 @@ def build_server(
         listed = (
             ("claude-voice", repos.repos.claude_voice, bridge_folder or repos.paths.claude_voice),
             ("claude-voice-ui", repos.repos.claude_voice_ui, repos.paths.claude_voice_ui),
+            # RULE: the phone app is on the software panel after the page
+            ("claude-voice-mobile", repos.repos.claude_voice_mobile, repos.paths.claude_voice_mobile),
             *plugin_repos,
         )
         return [(name, repo, folder, followed.get(str(folder), "main")) for name, repo, folder in listed]

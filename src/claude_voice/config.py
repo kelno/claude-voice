@@ -7,10 +7,13 @@ runs from, so the file is only needed to change something:
 
     voice_instructions_file = "~/.config/claude-voice/voice-instructions.md"  # your own rules for the voice;
                                                 # at the top, before any [table]; default: none
+    profile = "~/.config/claude-voice/profile.toml"  # your own profile over the default one; also at
+                                                # the top; default: none (docs/setup.md)
 
     [repos]
     claude_voice = "roykollensvendsen/claude-voice"        # the project, on GitHub
     claude_voice_ui = "roykollensvendsen/claude-voice-ui"
+    claude_voice_mobile = "roykollensvendsen/claude-voice-mobile"  # the phone app
     fork = "you/claude-voice"                               # your fork, if you have one
 
     [paths]
@@ -47,6 +50,7 @@ STATE_DIR = Path("~/.local/state/claude-voice")  # what the bridge keeps between
 REPO = re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9._-]+")
 UPSTREAM = "roykollensvendsen/claude-voice"
 UPSTREAM_UI = "roykollensvendsen/claude-voice-ui"
+UPSTREAM_MOBILE = "roykollensvendsen/claude-voice-mobile"
 LAUNCHES = ("terminal", "background")
 
 
@@ -58,6 +62,7 @@ class ConfigError(ValueError):
 class Repos:
     claude_voice: str = UPSTREAM
     claude_voice_ui: str = UPSTREAM_UI
+    claude_voice_mobile: str = UPSTREAM_MOBILE
     fork: str | None = None
 
 
@@ -97,25 +102,25 @@ class PluginSpec:
 
 
 def _plugins(raw: Any, home: str) -> list[PluginSpec]:
-    out = []
-    for name, body in (raw or {}).items():
-        body = body if isinstance(body, dict) else {}
-        tools = body.get("tools")
-        # RULE: a plugin without a command or any allowed tool is refused
-        if not PLUGIN_NAME.fullmatch(str(name)) or not body.get("command") or not body.get("cwd") or not tools:
-            raise ConfigError(f"[plugins.{name}] needs a lowercase name, a command, a cwd and at least one tool")
-        out.append(
-            PluginSpec(
-                name=str(name),
-                command=str(body["command"]),
-                args=[str(a) for a in body.get("args") or []],
-                cwd=str(_path(body["cwd"], home)),
-                tools=[str(t) for t in tools],
-                timeout=float(body.get("timeout", 30.0)),
-                branch=str(body.get("branch") or "main"),
-            )
-        )
-    return out
+    return [plugin_spec(str(name), body, home) for name, body in (raw or {}).items()]
+
+
+def plugin_spec(name: str, body: Any, home: str) -> PluginSpec:
+    """One [plugins.<name>] table as the bridge reads it, or ConfigError."""
+    body = body if isinstance(body, dict) else {}
+    tools = body.get("tools")
+    # RULE: a plugin without a command or any allowed tool is refused
+    if not PLUGIN_NAME.fullmatch(name) or not body.get("command") or not body.get("cwd") or not tools:
+        raise ConfigError(f"[plugins.{name}] needs a lowercase name, a command, a cwd and at least one tool")
+    return PluginSpec(
+        name=name,
+        command=str(body["command"]),
+        args=[str(a) for a in body.get("args") or []],
+        cwd=str(_path(body["cwd"], home)),
+        tools=[str(t) for t in tools],
+        timeout=float(body.get("timeout", 30.0)),
+        branch=str(body.get("branch") or "main"),
+    )
 
 
 MACHINE_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
@@ -190,6 +195,7 @@ class Config:
     agent_sessions: bool = False  # on another machine: whether its agent offers its sessions
     agent_root: Path = field(default_factory=Path.home)  # where that agent starts sessions
     voice_instructions_file: Path | None = None  # the owner's own rules, added to the voice's instructions
+    profile: Path | None = None  # the user's own profile, laid over the default (docs/setup.md)
 
 
 def _repo(value: Any, key: str) -> str:
@@ -226,6 +232,7 @@ def load(path: Path | None = FILE, own_clone: Path | None = None, env: Mapping[s
         _machines(raw.get("machines")),
         *_agent(raw.get("agent"), home),
         _path(raw.get("voice_instructions_file"), home),
+        _path(raw.get("profile"), home),
     )
 
 
@@ -234,6 +241,7 @@ def _repos(raw: dict[str, Any]) -> Repos:
     return Repos(
         claude_voice=_repo(raw.get("claude_voice", UPSTREAM), "claude_voice"),
         claude_voice_ui=_repo(raw.get("claude_voice_ui", UPSTREAM_UI), "claude_voice_ui"),
+        claude_voice_mobile=_repo(raw.get("claude_voice_mobile", UPSTREAM_MOBILE), "claude_voice_mobile"),
         fork=_repo(raw["fork"], "fork") if raw.get("fork") else None,
     )
 

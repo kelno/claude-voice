@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import envfile, procs, restarts
+from . import envfile, invocation, procs, restarts
 from .config import STATE_DIR
 from .server import Config, ConfigError, load_config, serve_forever
 
@@ -25,11 +25,14 @@ COMMANDS: tuple[str, ...] = (
     "check",
     "plugins",
     "passkey",
+    "home",
     "agent",
     "machines",
     "permissions",
     "org",
     "restart",
+    "setup",
+    "repos",
 )
 
 SIGN_IN = (
@@ -68,10 +71,22 @@ def _config_check_name(text: str) -> str:
     return "configuration"
 
 
+def _env_file_unread(env: Mapping[str, str]) -> list[envfile.Problem]:
+    """No problems, because the service's env file is not opened at all."""
+    return []
+
+
 def checks(
-    env: Mapping[str, str], transport: str, login: Callable[[], tuple[bool, str]]
+    env: Mapping[str, str],
+    transport: str,
+    login: Callable[[], tuple[bool, str]],
+    env_file: Callable[[Mapping[str, str]], list[envfile.Problem]] = envfile.read,
 ) -> tuple[Config | None, list[dict[str, Any]]]:
-    """Every check, in the order a person would fix them, each with the step that fixes it."""
+    """Every check, in the order a person would fix them, each with the step that fixes it.
+
+    `env_file` reads the service's env file for its warnings; `setup --check` passes
+    `_env_file_unread`, so that file is never opened.
+    """
     found: list[dict[str, Any]] = []
 
     def add(name: str, ok: bool, detail: str, fix: str = "", required: bool = True) -> None:
@@ -91,7 +106,8 @@ def checks(
         add("project_root", root.is_dir(), f"projects under {root}", f"Make it with `mkdir -p {root}`.")
     if transport == "http" and "secret" not in names:
         token = env.get("CLAUDE_VOICE_TOKEN", "")
-        add("secret", len(token) >= 32, "a login secret is set", "Set CLAUDE_VOICE_TOKEN; see `claude-voice check`.")
+        fix = f"Set CLAUDE_VOICE_TOKEN; see `{invocation.command()} check`."
+        add("secret", len(token) >= 32, "a login secret is set", fix)
     if env.get("ANTHROPIC_API_KEY") and env.get("CLAUDE_VOICE_ALLOW_API_KEY") == "1":
         add("signed_in", True, "Claude Code uses the API key")
     else:
@@ -106,7 +122,7 @@ def checks(
             "To reach it from a phone, set CLAUDE_VOICE_PUBLIC_HOSTS to the tunnel's hostname (see the README).",
             required=False,
         )
-    for problem in envfile.read(env):
+    for problem in env_file(env):
         # RULE: a misread env file line is a warning and never stops the check
         add("env_file", False, problem.detail, problem.fix, required=False)
     return cfg, found
@@ -134,12 +150,20 @@ def main(
         p.add_argument("--transport", choices=["stdio", "http"], default="stdio")
         if name == "check":
             p.add_argument("--json", action="store_true", help="answer in JSON, for an assistant doing the setup")
-    plugin_cmd = sub.add_parser("plugins", help="list plugins, or approve one by typing its name")
-    plugin_cmd.add_argument("action", nargs="?", choices=["list", "approve"], default="list")
+    plugin_cmd = sub.add_parser(
+        "plugins", help="list plugins, install one from its checkout, approve one by typing its name, or revoke one"
+    )
+    plugin_cmd.add_argument("action", nargs="?", choices=["list", "install", "approve", "revoke"], default="list")
     plugin_cmd.add_argument("name", nargs="?")
     key_cmd = sub.add_parser("passkey", help="add the owner's passkey from a one-time link, list or remove them")
     key_cmd.add_argument("action", nargs="?", choices=["add", "list", "remove"], default="list")
     key_cmd.add_argument("id", nargs="?")
+    plugin_cmd.add_argument("--from", dest="source", help="with install: the plugin's checkout (default ~/<its repo>)")
+    plugin_cmd.add_argument("--dry-run", action="store_true", help="with install: show each change, write nothing")
+    plugin_cmd.add_argument("--anywhere", action="store_true", help="with install: allow a home outside Norway")
+    home_cmd = sub.add_parser("home", help="set the home position plugins share, typed without showing it")
+    home_cmd.add_argument("action", nargs="?", choices=["set"], default="set")
+    home_cmd.add_argument("--anywhere", action="store_true", help="allow a position outside Norway")
     agent_cmd = sub.add_parser("agent", help="on another machine: answer the paired hub, or pair with one")
     agent_cmd.add_argument(
         "action",
@@ -160,16 +184,25 @@ def main(
     restart_cmd = sub.add_parser("restart", help="restart the bridge's service, noting why for its health answer")
     restart_cmd.add_argument("--why", default="", help="what the restart is for, shown in health")
     restart_cmd.add_argument("--dry-run", action="store_true", help="say what it would do, and do nothing")
+    setup_cmd = sub.add_parser("setup", help="set up the platform; --check reports each step and changes nothing")
+    setup_cmd.add_argument("--check", action="store_true", help="say what is done, missing or yours to run")
+    setup_cmd.add_argument("--json", action="store_true", help="answer in JSON, for an assistant doing the setup")
+    repos_cmd = sub.add_parser("repos", help="the profile's repositories: where each one stands")
+    repos_cmd.add_argument("action", choices=["sync"])
+    repos_cmd.add_argument("--check", action="store_true", help="say what a sync would do, from local refs only")
     parsed = parser.parse_args(args)
 
     verbs: dict[str, Callable[[], int]] = {
+        "setup": lambda: setup_command(parsed.check, parsed.json, env, login),
+        "repos": lambda: repos_command(parsed.check, env),
         "restart": lambda: restart_command(parsed.why, parsed.dry_run, systemctl),
         "permissions": lambda: permissions_command(parsed.folders, parsed.dry_run, env),
         "org": lambda: org_command(parsed.action, env),
         "machines": lambda: machines_command(parsed.action, parsed.name, env),
         "agent": lambda: agent_command(parsed.action, env, parsed.sessions),
-        "plugins": lambda: plugins_command(parsed.action, parsed.name, env),
         "passkey": lambda: passkey_command(parsed.action, parsed.id, env),
+        "plugins": lambda: plugins_command(parsed.action, parsed.name, env, parsed),
+        "home": lambda: home_command(parsed.anywhere, env),
         "check": lambda: check_command(env, parsed.transport, parsed.json, login),
     }
     if parsed.command in verbs:
@@ -262,6 +295,79 @@ def passkey_command(action: str, key_id: str | None, env: Mapping[str, str]) -> 
     return 0
 
 
+NOT_BUILT = (
+    "claude-voice: only the check is built so far. "
+    "Run `{command} --check`: it says what is left, and changes nothing.\n"
+)
+
+
+def _where(value: str, home: Path) -> Path:
+    return Path(str(home) + value[1:] if value.startswith("~") else value)
+
+
+def _platform(env: Mapping[str, str]) -> tuple[Any, Any, list[Any], Path] | str:
+    """The settings, the merged profile and its folders as they stand, or what is wrong and its fix."""
+    from . import config as settings
+    from . import profiles, reposync, roles
+
+    home = Path(env.get("HOME") or Path.home())
+    try:
+        cfg = settings.load(settings.FILE, own_clone=roles.own_clone(), env=env)
+        profile = profiles.load(profiles.layers(cfg.profile, home))
+    except (settings.ConfigError, profiles.ProfileError) as exc:
+        return f"claude-voice: {exc}"
+    known = {Path(p.cwd).name: Path(p.cwd) for p in cfg.plugins}
+    for name, path in (
+        ("claude-voice", cfg.paths.claude_voice),
+        ("claude-voice-ui", cfg.paths.claude_voice_ui),
+        ("claude-voice-mobile", cfg.paths.claude_voice_mobile),
+    ):
+        if path is not None:
+            known[name] = path
+    parent = _where(env.get("CLAUDE_VOICE_ROOT", "~/src"), home)
+    return cfg, profile, reposync.check(profile.repos.values(), parent, known), home
+
+
+def setup_command(check: bool, as_json: bool, env: Mapping[str, str], login: Callable[[], tuple[bool, str]]) -> int:
+    """Report every setup step as done, missing or the person's own to run; change nothing."""
+    from dataclasses import asdict
+
+    from . import setup
+
+    if not check:
+        sys.stderr.write(NOT_BUILT.format(command="claude-voice setup"))
+        return 2
+    state = _platform(env)
+    if isinstance(state, str):
+        sys.stderr.write(state + "\n")
+        return 1
+    cfg, profile, folders, home = state
+    # RULE: setup never opens the service's env file
+    _, bridge = checks(env, "stdio", login, env_file=_env_file_unread)  # it holds the login secret
+    found = setup.steps(cfg, env, home, bridge, profile, folders, procs.find)
+    left = setup.missing(found)
+    if as_json:
+        report = {"ready": not left, "missing": [s.name for s in left], "steps": [asdict(s) for s in found]}
+        sys.stdout.write(json.dumps(report, indent=2) + "\n")
+    else:
+        sys.stdout.write("\n".join(setup.lines(found)) + "\n")
+    return 1 if left else 0
+
+
+def repos_command(check: bool, env: Mapping[str, str]) -> int:
+    """Say where each of the profile's repositories stands, and what a sync would do with it."""
+    if not check:
+        sys.stderr.write(NOT_BUILT.format(command="claude-voice repos sync"))
+        return 2
+    state = _platform(env)
+    if isinstance(state, str):
+        sys.stderr.write(state + "\n")
+        return 1
+    for folder in state[2]:
+        sys.stdout.write(folder.line() + "\n")
+    return 0
+
+
 def _plugin_state(spec: PluginSpec) -> str:
     """Whether a plugin is approved, checked the way a restart checks it: started, and its
     tools and words for the voice compared with the approval."""
@@ -273,7 +379,7 @@ def _plugin_state(spec: PluginSpec) -> str:
         return "approved"
     if why == "not started":
         return "approved, but it did not start; check its command and folder"
-    return f"{why}; to approve it, run: claude-voice plugins approve {spec.name}"
+    return f"{why}; to approve it, run: {invocation.command()} plugins approve {spec.name}"
 
 
 def _list_plugins(specs: list[PluginSpec]) -> int:
@@ -299,11 +405,15 @@ def _show_approved(spec: PluginSpec, listing: dict[str, dict[str, Any]]) -> None
         sys.stdout.write(f"  {spec.name}'s rules for the voice: {rules}\n")
 
 
-def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> int:
-    """List the plugins in the settings file, or approve one: the owner types its name."""
+def plugins_command(action: str, name: str | None, env: Mapping[str, str], options: Any = None) -> int:
+    """List the plugins in the settings file, install one, approve one (the owner types its
+    name), or take an approval back."""
     from . import config as settings
-    from . import plugins
 
+    if action == "revoke":
+        return _revoke(name)
+    if action == "install":
+        return install_command(name, options, env)
     try:
         specs = settings.load(settings.FILE, env=env).plugins
     except settings.ConfigError as exc:
@@ -315,13 +425,87 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> in
     if chosen is None:
         sys.stderr.write(f"claude-voice: no plugin {name!r} in the settings file\n")
         return 1
-    spec = chosen
+    return _approve(chosen)
+
+
+def install_command(name: str | None, options: Any, env: Mapping[str, str]) -> int:
+    """Add a plugin from its checkout step by step, then ask for the typed approval."""
+    import getpass
+
+    from . import install
+
+    # RULE: plugins install asks only in a real terminal
+    if _refuse_outside_a_terminal("plugins install", env):
+        return 1
+    if not name:
+        sys.stderr.write(
+            "claude-voice: say which plugin, such as: claude-voice plugins install fuel --from ~/fuel-mcp\n"
+        )
+        return 1
+    try:
+        plan = install.plan(name, options.source, env)
+    except install.InstallError as exc:
+        sys.stderr.write(f"claude-voice: {exc}.\n")
+        return 1
+    outcome = install.run(plan, install.Asker(_say, getpass.getpass, input), options.dry_run, options.anywhere)
+    code = 1 if outcome.stopped else _install_approval(plan, outcome, options.dry_run, env)
+    if outcome.error:
+        sys.stderr.write(f"claude-voice: {outcome.error}.\n")
+    for line in install.summary(outcome, plan, options.dry_run):
+        _say(line)
+    return code
+
+
+def _install_approval(plan: Any, outcome: Any, dry_run: bool, env: Mapping[str, str]) -> int:
+    """The last step: plugins approve's own typed approval, unless it is still valid."""
+    from . import config as settings
+    from . import install, plugins
+
+    name, number = plan.manifest.name, outcome.steps + 1
+    if dry_run:
+        _say(f"{number}. Approve {name}: would ask you to type {name}.")
+        return 0
+    spec = next(s for s in settings.load(settings.FILE, env=env).plugins if s.name == name)
+    if plugins.check_one(spec)[2] == "started":
+        _say(f"{number}. Approve {name}: already approved.")
+        return 0
+    _say(f"{number}. Approve {name}:")
+    code = _approve(spec)
+    if code == 0:
+        outcome.changes.append(install.Change("approved", name, f"claude-voice plugins revoke {name}"))
+    return code
+
+
+def _revoke(name: str | None) -> int:
+    """Take a plugin's approval back; it needs typing again before the voice gets its tools."""
+    from . import plugins
+
+    if not name:
+        sys.stderr.write("claude-voice: say which plugin, such as: claude-voice plugins revoke garage\n")
+        return 1
+    if plugins.revoke(name):
+        sys.stdout.write(
+            f"{name} is no longer approved. A running bridge stops offering its tools within a few "
+            f"seconds. To approve it again: claude-voice plugins approve {name}\n"
+        )
+    else:
+        sys.stdout.write(f"{name} was not approved, so nothing changed.\n")
+    return 0
+
+
+def _approve(spec: PluginSpec) -> int:
+    """Show what the plugin runs and approve it when the owner types its name."""
+    from . import plugins
+
     sys.stdout.write(
         f"Plugin {spec.name}\n  runs: {' '.join([spec.command, *spec.args])}\n  in:   {spec.cwd}\n"
         f"  the voice may call: {', '.join(spec.tools)}\n"
     )
     try:
-        typed = input(f"Type {spec.name} to approve it, anything else to stop: ")
+        # RULE: the approval prompt says the plugin starts after its name is typed
+        typed = input(
+            f"Type {spec.name} to approve it (this starts it once to read its tools), anything else to stop: "
+        )
     except EOFError:  # run with nothing to read from, such as from inside another program
         sys.stdout.write("\nNot approved: no answer was typed. Run it in a terminal.\n")
         return 1
@@ -336,6 +520,46 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str]) -> in
     plugins.approve(spec, listing)
     _show_approved(spec, listing)
     sys.stdout.write(f"Approved. A running bridge offers {spec.name}'s tools within a few seconds.\n")
+    return 0
+
+
+def _terminal(env: Mapping[str, str]) -> bool:
+    """Whether the owner is at a terminal of their own to answer questions."""
+    from . import fields
+
+    return fields.in_terminal(env, sys.stdin, sys.stdout)
+
+
+def _refuse_outside_a_terminal(verb: str, env: Mapping[str, str]) -> bool:
+    """Say why a command that asks questions will not run here, before it reads anything."""
+    from . import fields
+
+    if _terminal(env):
+        return False
+    sys.stderr.write(f"claude-voice: {fields.NOT_A_TERMINAL.format(verb=verb)}.\n")
+    return True
+
+
+def _say(line: str) -> None:
+    sys.stdout.write(line + "\n")
+
+
+def home_command(anywhere: bool, env: Mapping[str, str]) -> int:
+    """Ask for the home position again and save it for every plugin that reads it."""
+    import getpass
+
+    from . import home, safefile
+
+    if _refuse_outside_a_terminal("home set", env):
+        return 1
+    try:
+        home.set_position(Path(env.get("HOME") or Path.home()), getpass.getpass, _say, anywhere)
+    except (EOFError, KeyboardInterrupt):
+        sys.stdout.write("\nStopped; nothing was changed.\n")
+        return 1
+    except (safefile.Unsafe, OSError) as exc:
+        sys.stderr.write(f"claude-voice: {exc}. Nothing was changed.\n")
+        return 1
     return 0
 
 
