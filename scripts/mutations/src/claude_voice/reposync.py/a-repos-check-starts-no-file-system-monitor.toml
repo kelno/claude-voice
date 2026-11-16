@@ -1,0 +1,5 @@
+[[rule]]
+name = "a repos check starts no file system monitor"
+file = "src/claude_voice/reposync.py"
+find = 'NO_MONITOR = \("-c", "core.fsmonitor=false"\)'
+replace = 'NO_MONITOR = ()'

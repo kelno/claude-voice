@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 # RULE: a repos check takes no git lock
 LOCKLESS = ("--no-optional-locks",)  # a plain `git status` writes a refreshed index back
+# RULE: a repos check starts no file system monitor
+NO_MONITOR = ("-c", "core.fsmonitor=false")  # Git for Windows turns one on in its own settings
 #: What git leaves in its folder while an operation waits for the person to finish it.
 OPERATIONS = (
     ("rebase-merge", "rebase"),
@@ -94,7 +96,11 @@ def _git(folder: Path, *args: str) -> str | None:
     git = procs.find("git") or "git"
     try:
         out = subprocess.run(
-            [git, *LOCKLESS, "-C", str(folder), *args], capture_output=True, text=True, timeout=10, check=False
+            [git, *LOCKLESS, *NO_MONITOR, "-C", str(folder), *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError):
         return None
