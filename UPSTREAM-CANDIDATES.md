@@ -254,13 +254,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: a large feature, three tools and a command; a new dependency (`webauthn`); a page served by the bridge, which answers only from a private network (the owner's VPN, the computer itself, or a tailnet), so it needs one reachable from the owner's phone. `request_access` uses the same passkey in the fork (6), so the two may be offered together, or this one first with its own tools.
 - Test first: `tests/test_confirm.py`, `tests/test_passkeys.py`.
 
-### 11. A suite that keeps to its own checkout, and away from the owner's Claude Code — fork "Leave a nested checkout's pages to its own run", "Keep the owner's own Claude Code out of the suite"
+### 11. A suite that keeps away from the owner's Claude Code — fork "Keep the owner's own Claude Code out of the suite"
 
 - Status: an idea; nothing prepared, no branch.
-- What: `tests/test_documented_commands.py` skips a folder holding its own `.git` (a Claude Code worktree under `.claude/worktrees`, a clone) and prunes skipped folders instead of walking `.venv`; `build_server` looks up `jobs.background_sessions`, `jobs.background_jobs` and `transcripts.summarize` when it is built, not when `server.py` loads, and `tests/conftest.py` puts fakes there, as it already does for GitHub and the side-question reader.
-- Why upstream should want it: anyone whose Claude Code sessions use worktrees runs each documented command once per worktree, and fails on another branch's pages. Every watched bridge in the suite ran the developer's real `claude agents` listing, and the `digest_session` case of `tests/test_api.py` made a real Haiku call on their account in every run (no login in CI, so it fails quietly there).
+- What: `build_server` looks up `jobs.background_sessions`, `jobs.background_jobs` and `transcripts.summarize` when it is built, not when `server.py` loads, and `tests/conftest.py` puts fakes there, as it already does for GitHub and the side-question reader.
+- Why upstream should want it: every watched bridge in the suite ran the developer's real `claude agents` listing, and the `digest_session` case of `tests/test_api.py` made a real Haiku call on their account in every run (no login in CI, so it fails quietly there).
 - Expect pushback: little; three defaults become `None`, as `side_answer` already is.
-- Test first: `tests/test_documented_commands.py` (a nested checkout keeps its own pages), `tests/test_wake.py` and `tests/test_digest.py` (a bridge given no helper uses the one in place when built).
+- Test first: `tests/test_wake.py` and `tests/test_digest.py` (a bridge given no helper uses the one in place when built).
 
 ### 12. A quick ratchet check that skips the sweep on both sides — fork "Leave the mutation sweep out of a quick check's copy of main too"
 
@@ -299,6 +299,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why upstream should want it: `claude logs` takes about a second here, and a session list with two sessions waiting on a permission prompt held every other request, MCP calls included, for over two seconds. Sync MCP tools already run in a thread (the SDK does it); these routes are the async callers left.
 - Expect pushback: little; the helpers must be safe to call from a thread, which they already are for the sync tools that call them.
 - Test first: `tests/test_api.py`, the test named after the rule "the page reads sessions off the event loop" (a reader that notes whether a loop is running in its thread).
+
+### 17. The repos check without git's file-system monitor — fork "Keep the repos check from starting a file-system monitor"
+
+- Status: an idea; nothing prepared, no branch.
+- What: `reposync._git` passes `-c core.fsmonitor=false` with each git call, next to `--no-optional-locks`.
+- Why upstream should want it: Git for Windows turns `core.fsmonitor` on in its system settings, so the `git status` of `repos sync --check` started a daemon that writes into the clone's `.git` folder; upstream's own test that the check changes nothing fails there.
+- Expect pushback: little; it only matters on Windows and macOS, where git has the daemon. It may wait for candidate 8 (Windows in CI).
+- Test first: `tests/test_reposync.py`, the test named after the rule "a repos check starts no file system monitor" (it sets `core.fsmonitor` in the clone and checks no daemon folder appears).
 
 ## Not for upstream
 
