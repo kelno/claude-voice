@@ -6,13 +6,16 @@ session may run without asking (looking at git, running the tests), and what it 
 never run (deleting history, reading a secret). The owner's own rules are kept.
 """
 
+import contextlib
 import json
 import os
 import re
+import shlex
+from pathlib import Path, PurePosixPath
 
 import pytest
 
-from claude_voice import permissions
+from claude_voice import permissions, session_hook
 from claude_voice.cli import main
 
 RULES = permissions.Rules(allow=["Bash(git status*)", "Bash(uv run pytest*)"], deny=["Bash(git reset --hard*)"])
@@ -312,6 +315,12 @@ def test_everything_refused_before_is_still_refused():
 
 def test_the_shipped_rules_name_no_person_host_or_home_folder():
     text = permissions.TABLE.read_text(encoding="utf-8")
+    # The rules about removing folders name everyone's home and state folders the same way and
+    # no person's, so those exact rules are taken out before looking for anything private.
+    raw = json.loads(text)
+    generic = raw["what cannot be got back"]["targets"]
+    for rule in generic:
+        text = text.replace(json.dumps(rule), "")
     for private in ("/home/", "/users/", "~/", "roykollensvendsen", "192.168.", "100.", ".local/"):
         assert private not in text.lower(), private
 
@@ -321,7 +330,11 @@ def test_the_shipped_rules_name_no_person_host_or_home_folder():
 # The permissions module has no matcher of its own: Claude Code does the matching. This is a
 # small faithful copy of it. A rule without `*` matches the whole command exactly. With `*`,
 # each `*` matches any run of characters, spaces included, and the rule must match the whole
-# command. A command matching any deny rule is refused, even when an allow rule matches too.
+# command. A rule ending in `:*` is the older prefix form instead: what stands before the colon
+# is a plain prefix, with no wildcard in it, so `Bash(git push* :*)` matches only commands that
+# begin with "git push* " itself, which none does. Quotes are taken off the command first, the
+# way a shell would, so `git push origin ':feature'` is matched as `git push origin :feature`.
+# A command matching any deny rule is refused, even when an allow rule matches too.
 
 
 def _matches(rule, command):
@@ -329,6 +342,10 @@ def _matches(rule, command):
         return False  # another tool's rule: these tests match only shell commands
     assert rule.endswith(")"), rule
     pattern = rule[len("Bash(") : -1]
+    with contextlib.suppress(ValueError):  # unbalanced quotes: matched as written
+        command = " ".join(shlex.split(command))
+    if pattern.endswith(":*"):
+        return command.startswith(pattern[:-2])
     if "*" not in pattern:
         return command == pattern
     return re.fullmatch(".*".join(re.escape(part) for part in pattern.split("*")), command, re.DOTALL) is not None
@@ -356,6 +373,50 @@ def test_the_matcher_reads_rules_the_way_claude_code_does():
     assert decision(asking, "git push origin feature") == "allowed"
     assert decision(asking, "git push origin main") == "asked"
     assert decision(asking, "git push origin main -f") == "refused"
+    prefixed = permissions.Rules(allow=["Bash(npm test:*)"], deny=["Bash(git push* :*)"])
+    assert decision(prefixed, "npm test --watch") == "allowed"
+    assert decision(prefixed, "git push origin :feature") == "asked"  # the old form never applied
+    quoted = permissions.Rules(allow=["Bash(git push origin *)"], deny=["Bash(git push* :**)"])
+    assert decision(quoted, "git push origin ':feature'") == "refused"
+    assert decision(quoted, 'git push origin ":feature"') == "refused"
+
+
+def test_a_rule_ending_in_a_colon_and_a_star_is_refused(tmp_path):
+    table = json.loads(permissions.TABLE.read_text(encoding="utf-8"))
+    table["ask"]["pushes that delete a branch or could land on main without naming it"].append("Bash(git push* :*)")
+    broken = tmp_path / "permissions.json"
+    broken.write_text(json.dumps(table), encoding="utf-8")
+    with pytest.raises(permissions.PermissionsError, match=r"git push\* :\*"):
+        permissions.load(broken)
+    permissions.load()  # the shipped table has none
+
+
+def test_the_ask_rule_that_never_applied_is_taken_out_of_the_settings(tmp_path):
+    with_settings(tmp_path, {"permissions": {"ask": ["Bash(git push* :*)"]}})
+    apply(tmp_path, permissions.load())
+    asked = read(tmp_path)["permissions"]["ask"]
+    assert "Bash(git push* :*)" not in asked and "Bash(git push* :**)" in asked
+
+
+APPROVALS_IN_THE_OWNERS_NAME = (
+    "gh pr review 5 --approve",
+    "gh pr review --approve 5",
+    "gh pr review 5 --approve --body fine",
+    "gh pr review 5 -a",
+    "gh pr review -a 5",
+    "gh api repos/o/r/pulls/5/reviews -f event=APPROVE",
+    "gh api repos/o/r/pulls/5/reviews -F event=APPROVE",
+    "gh api repos/o/r/pulls/5/reviews --field event=APPROVE",
+    "gh api repos/o/r/pulls/5/reviews --raw-field event=APPROVE",
+    "gh api -X POST repos/o/r/pulls/5/reviews -f event=APPROVE",
+    "gh api graphql -f query='mutation { addPullRequestReview(input: {event: APPROVE}) { clientMutationId } }'",
+)
+
+
+@pytest.mark.parametrize("command", APPROVALS_IN_THE_OWNERS_NAME)
+def test_a_session_can_never_approve_a_pull_request(command):
+    """Sessions act on GitHub as the owner, so an approval would be public in his name."""
+    assert decision(permissions.load(), command) == "refused"
 
 
 OWN_BRANCH_PUSHES = (
@@ -394,6 +455,10 @@ PUSHES_THAT_CHECK_NOTHING = (
     "git push --force-with-lease origin",
     "git push --force-with-lease origin HEAD",
     "git push --force-with-lease origin :feature",
+    "git push --force-with-lease origin ':feature'",
+    'git push --force-with-lease origin ":feature"',
+    "git push origin +:feature",
+    "git push --force-with-lease origin +:feature",
     "git push --force-with-lease origin --delete feature",
     "git push --force-with-lease origin --all",
     "git push --force-with-lease origin --mirror",
@@ -478,7 +543,12 @@ NOW_ASKED = (
     "git push origin feature --force-with-lease",
     "gh pr comment 5 --body hi",
     "gh pr close 5",
-    "gh pr review 5 --approve",
+    "gh pr review 5 --comment --body looks-fine",
+    "gh pr review 5 --request-changes --body fix-this",
+    "git push -u origin :feature",
+    "git push origin ':feature'",
+    'git push origin ":feature"',
+    "gh api repos/o/r/pulls/5/reviews -f event=COMMENT",
     "gh issue create --title x",
     "gh issue comment 7 --body x",
     "gh release create v2",
@@ -671,3 +741,85 @@ def test_with_no_folders_named_and_none_in_the_settings_it_says_how_to_name_them
     env = config_naming(tmp_path, tmp_path / "gone", tmp_path / "gone-too")
     assert main(["permissions"], env=env) == 1
     assert "name the folders" in capsys.readouterr().err
+
+
+# -- removing folders: every recursive remove asks, and what can't be got back is refused --
+
+
+def for_a_folder():
+    """The shipped rules as written for one repository, with its placeholders filled. The paths
+    are fixed POSIX ones, so the rows read the same on every system the suite runs on."""
+    home = PurePosixPath("/home/u")
+    folder = home / "voice-repo"
+    return permissions.for_folder(permissions.load(), folder, home=home, uid=1000), home, folder
+
+
+def test_the_placeholders_are_filled_in_for_each_repository():
+    rules, home, folder = for_a_folder()
+    every = rules.allow + rules.ask + rules.deny
+    assert not [rule for rule in every if any(p in rule for p in ("{uid}", "{home}", "{repo}", "{folder}"))]
+    assert f"Bash(rm -r* {home})" in rules.deny and f"Bash(rm -r* {folder})" in rules.deny
+
+
+def test_removing_what_cannot_be_got_back_is_refused():
+    rules, home, folder = for_a_folder()
+    for command in (
+        "rm -r ~",
+        "rm -rf ~/",
+        "rm -rf /",
+        "rm -rf $HOME",
+        f"rm -rf {home}",
+        f"rm -rf {folder}",
+        f"rm -rf {folder}/",
+        "rm -rf .",
+        "rm -r .git",
+        "rm -rf sub/.git",
+        "rm -R ~/.claude/projects",
+        f"rm --recursive {home}/.config/claude-voice",
+        "rm -fr ~/.local/state/claude-voice",
+    ):
+        assert decision(rules, command) == "refused", command
+
+
+def test_every_other_recursive_remove_still_asks_first():
+    """No recursive remove runs unasked; the deny rules only make some of them a plain no."""
+    rules, home, folder = for_a_folder()
+    for command in (
+        "rm -rf ~/*",
+        "rm -rf ${HOME}",
+        f"rm -rf {home}/*",
+        "rm -rf /home",
+        "rm -rf /*",
+        "rm -rf *",
+        "rm -rf ./*",
+        f"rm -rf {folder}/*",
+        "rm -rf ~/.ssh",
+        "rm -rf /tmp/claude-1000/x",
+        "rm -rf .claude/worktrees/x",
+        "rm -rf src /tmp/claude-1000/x",
+        "rm -r /var/tmp/x",
+    ):
+        refused = any(_matches(rule, command) for rule in rules.deny)
+        said = session_hook.decision(
+            {"tool_name": "Bash", "session_id": "0" * 8, "cwd": str(folder), "tool_input": {"command": command}},
+            tmp_root=Path("/tmp/claude-1000"),
+            repos=[],
+            terms=None,
+        )
+        assert refused or said == "ask", command
+
+
+def test_a_remove_or_an_issue_is_no_longer_asked_by_a_rule_since_the_session_hook_asks():
+    rules, _, _ = for_a_folder()
+    for rule in ("Bash(rm -r*)", "Bash(gh issue create*)"):
+        assert rule not in rules.ask and rule in rules.retired_ask, rule
+
+
+def test_applied_settings_have_the_placeholders_filled(tmp_path):
+    folder = tmp_path / "voice-repo"
+    folder.mkdir()
+    apply(folder, permissions.load())
+    written = read(folder)["permissions"]
+    every = written["allow"] + written["ask"] + written["deny"]
+    assert not [rule for rule in every if "{" in rule and "}" in rule]
+    assert f"Bash(rm -r* {folder.resolve()})" in written["deny"]

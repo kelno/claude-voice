@@ -22,7 +22,7 @@ import json
 import logging
 import os
 import threading
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -229,13 +229,18 @@ def CLIENT(params: Any) -> Any:  # noqa: N802 - a stand-in for the MCP client cl
 
 
 def parameters(spec: PluginSpec) -> Any:
-    """How to start the plugin. The program is looked up the way the bridge finds its own tools
-    (the service's PATH is short), and the child gets the MCP library's small default
-    environment: nothing of the bridge's own, so no key or token passes through it."""
+    """How to start the plugin. A plugin declared as `uv run <script>` is synced and started
+    from its own environment (plugin_venv); refused there, it raises plugin_venv.Refused. Any
+    other program is looked up the way the bridge finds its own tools (the service's PATH is
+    short). The child gets the MCP library's small default environment: nothing of the
+    bridge's own, so no key or token passes through it. This waits for the sync, so it is
+    called off the event loop."""
     from mcp.client.stdio import StdioServerParameters
 
-    from . import procs
+    from . import plugin_venv, procs
 
+    if (started := plugin_venv.ready(spec)) is not None:
+        return StdioServerParameters(command=started[0], args=started[1], cwd=spec.cwd)
     program = spec.command if os.path.isabs(spec.command) else procs.find(spec.command) or spec.command
     return StdioServerParameters(command=program, args=spec.args, cwd=spec.cwd)
 
@@ -250,6 +255,7 @@ class Plugin:
         self.state = "not started"
         self.offered: list[str] = []
         self.unlisted: str | None = None  # why the latest listing got no answer, or None
+        self.refused: str | None = None  # why its start was refused, with what fixes it, or None
         self._failure: Exception | None = None
         self._down = False  # its latest start failed, and that was logged once
         self.last_failure: Exception | None = None  # what made the latest call fail, for a caller to tell apart
@@ -270,7 +276,7 @@ class Plugin:
         plugin gave no answer, `unlisted` says why."""
         found: dict[str, dict[str, Any]] = {}
         limit = self.list_seconds()
-        self.unlisted = None
+        self.unlisted = self.refused = None
 
         async def read() -> None:
             async with self.open() as client:
@@ -286,8 +292,13 @@ class Plugin:
                         }
 
         def run() -> None:
+            from .plugin_venv import Refused
+
             try:
                 asyncio.run(asyncio.wait_for(read(), limit))
+            except Refused as exc:
+                self.refused = str(exc)
+                self._unlisted(self.refused)
             except Exception as exc:
                 self._unlisted(_reason(exc, limit))
 
@@ -328,9 +339,13 @@ class Plugin:
             self._client = None
             self._ready.set()  # wake a caller waiting for a start that failed
 
-    def open(self) -> Any:
-        """A connection to the plugin, to use with `async with`."""
-        return self.client_factory(parameters(self.spec))
+    @contextlib.asynccontextmanager
+    async def open(self) -> AsyncIterator[Any]:
+        """A connection to the plugin, to use with `async with`. How to start it is worked out
+        on a thread, since a sync may take a while."""
+        started = await asyncio.to_thread(parameters, self.spec)
+        async with self.client_factory(started) as client:
+            yield client
 
     def trouble(self, exc: Exception) -> str:
         """What to tell the voice when a call failed with `exc`."""
@@ -481,7 +496,8 @@ def check_one(spec: PluginSpec, approvals: Path | None = None, client: Callable[
     # RULE: a plugin that could not be listed is reported as not started never as changed tools
     if plugin.unlisted is not None:
         log.info("plugin %s did not start in time, so it is not offered: %s", spec.name, plugin.unlisted)
-        return None, {}, "not started"
+        # RULE: a plugin refused at start says why and what fixes it
+        return None, {}, f"not started: {plugin.refused}" if plugin.refused else "not started"
     if not inputs_approved(spec, listing, approvals):
         log.info("plugin %s's tools changed; run: %s plugins approve %s", spec.name, invocation.command(), spec.name)
         return None, listing, "tools changed"
