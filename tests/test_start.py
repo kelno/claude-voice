@@ -242,6 +242,38 @@ async def test_a_message_to_a_session_claude_code_closed_while_idle_resumes_it_t
     assert "closed by Claude Code while idle" in out["resumed"]
 
 
+async def test_a_background_session_the_owner_started_is_known_from_its_job_record_too(tmp_path, world):
+    # The owner started it, so the bridge has no record of it: Claude Code's job record names it.
+    async def known():
+        return {OLD}
+
+    async def deliver(name, text):
+        return {"delivered": True, "detail": ""}
+
+    root, live = world
+    log = tmp_path / "daemon.log"
+    log.write_text(f"[2026-11-15T10:54:58.513Z] [bg] bg retire {OLD[:8]}: settled, idle 10h\n")
+    jobs = tmp_path / "jobs"
+    (jobs / OLD[:8]).mkdir(parents=True)
+    record = {
+        "sessionId": OLD,
+        "name": "Owner's own",
+        "cwd": str(root / "billing"),
+        "updatedAt": "2026-11-15T01:00:00Z",
+    }
+    (jobs / OLD[:8] / "state.json").write_text(json.dumps(record), encoding="utf-8")
+    starter = Starter(live)
+    server = resuming(
+        tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=log, jobs_dir=jobs
+    )
+    async with Client(server) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "Owner's own", "message": "Hi"})
+        ).structured_content
+    assert [sid for _, sid in starter.woken] == [OLD]
+    assert "closed by Claude Code while idle" in out["resumed"]
+
+
 async def test_a_message_to_a_session_stopped_on_purpose_does_not_bring_it_back(tmp_path, world):
     async def known():
         return {OLD}
@@ -350,25 +382,47 @@ async def test_a_session_the_bridge_started_can_be_stopped_and_is_gone_after(tmp
     assert again["status"] == "not_running"
 
 
-async def test_only_a_session_the_bridge_started_itself_is_ever_stopped(tmp_path, world):
+def owners_session(live, cwd, name, sid, **extra):
+    """A session the owner opened themselves: in the registry, never in the bridge's record of starts."""
+    entry = {"pid": PID, "sessionId": sid, "cwd": str(cwd), "name": name, "status": "idle", **extra}
+    (live / f"{sid}.json").write_text(json.dumps(entry))
+
+
+async def test_any_session_in_a_folder_open_to_the_bridge_can_be_stopped_the_owner_s_own_too(tmp_path, world):
     root, live = world
-    (live / "term.json").write_text(
-        json.dumps(
-            {
-                "pid": PID,
-                "sessionId": "sid-term",
-                "cwd": str(root / "billing"),
-                "name": "my-terminal",
-                "kind": "interactive",
-            }
-        )
-    )
+    owners_session(live, root / "billing", "my-terminal", "sid-term", kind="interactive", entrypoint="cli")
+    owners_session(live, root / "billing", "my-background", "sid-bg", kind="bg")
     stopper, windows = Stopper(live), Windows(live)
     async with Client(bridge_with_stop(tmp_path, world, Starter(live), stopper, windows)) as c:
-        out = (await c.call_tool("stop_active_session", {"name": "my-terminal"})).structured_content
-    assert out == {"name": "my-terminal", "status": "not_started_here"}
+        # The background one first: the fake window closer drops every entry with this test's pid.
+        bg = (await c.call_tool("stop_active_session", {"name": "my-background"})).structured_content
+        term = (await c.call_tool("stop_active_session", {"name": "my-terminal"})).structured_content
+    assert term == {"name": "my-terminal", "status": "stopped"} and windows.closed == [PID]
+    assert bg == {"name": "my-background", "status": "stopped"} and stopper.calls == ["sid-bg"]
+
+
+async def test_a_session_in_a_folder_not_open_to_the_bridge_is_not_stopped(tmp_path, world):
+    root, live = world
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    owners_session(live, outside, "private", "sid-private", kind="bg")
+    stopper, windows = Stopper(live), Windows(live)
+    async with Client(bridge_with_stop(tmp_path, world, Starter(live), stopper, windows)) as c:
+        out = (await c.call_tool("stop_active_session", {"name": "private"})).structured_content
+    assert out == {"name": "private", "status": "folder_not_open"}
     assert stopper.calls == [] and windows.closed == []
-    assert (live / "term.json").exists()
+    assert (live / "sid-private.json").exists()
+
+
+async def test_only_a_terminal_or_background_session_is_stopped(tmp_path, world):
+    # A program's own session through Claude Code's SDK: ending its process would break that program.
+    root, live = world
+    owners_session(live, root / "billing", "sdk-agent", "sid-sdk", kind="interactive", entrypoint="sdk-py")
+    stopper, windows = Stopper(live), Windows(live)
+    async with Client(bridge_with_stop(tmp_path, world, Starter(live), stopper, windows)) as c:
+        out = (await c.call_tool("stop_active_session", {"name": "sdk-agent"})).structured_content
+    assert out["status"] == "not_stoppable" and "SDK" in out["why"]
+    assert stopper.calls == [] and windows.closed == []
 
 
 async def test_the_record_of_started_sessions_survives_a_restart_of_the_bridge(tmp_path, world):

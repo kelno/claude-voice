@@ -145,8 +145,8 @@ async def test_a_message_to_an_old_name_arrives_once_claude_code_has_the_new_one
     assert words(deliver.sent) == [("math-quest-curriculum", "old")]
 
 
-async def test_only_a_session_the_bridge_started_is_renamed_in_claude_code_itself(tmp_path, root, live, jobs):
-    write(live, os.getpid(), SID, "math-quest", root, kind="bg")  # running, but not started here
+async def test_only_a_background_session_is_renamed_in_claude_code_itself(tmp_path, root, live, jobs):
+    write(live, os.getpid(), SID, "math-quest", root, kind="interactive")  # in a terminal window
     record = job_record(jobs)
     async with Client(server(tmp_path, root, live, jobs)) as c:
         out = await call(c, "rename_session", session="math-quest", new_name="mq", owner_chose=True)
@@ -154,6 +154,15 @@ async def test_only_a_session_the_bridge_started_is_renamed_in_claude_code_itsel
     assert out["claude_code"] == "bridge_only"
     assert "bridge's only" in out["note"] and "desktop app" in out["note"] and "/rename mq" in out["note"]
     assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest"
+
+
+async def test_a_background_session_the_owner_started_is_renamed_in_claude_code_too(tmp_path, root, live, jobs):
+    write(live, os.getpid(), SID, "math-quest", root, kind="bg")  # running, but not started here
+    record = job_record(jobs)
+    async with Client(server(tmp_path, root, live, jobs)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="mq", owner_chose=True)
+    assert out["claude_code"] == "renamed"
+    assert json.loads(record.read_text(encoding="utf-8"))["name"] == "mq"
 
 
 async def test_a_session_name_may_be_any_text_on_one_line(tmp_path, root, live, jobs):

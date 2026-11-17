@@ -46,10 +46,10 @@ BUSY_MESSAGE = (
     "claude.ai connectors are missing and will return when this session is restarted at rest. Then carry on "
     "with what you can do without them."
 )
-NOT_STARTED_MESSAGE = (
+IN_A_WINDOW_MESSAGE = (
     "From the claude-voice bridge, not the owner: this session started without its claude.ai connectors "
     "(Claude Voice, Obsidian-MCP and the others are missing from your tools), and the bridge can't restart it, "
-    "since it didn't start this session. At the start of your next reply to the owner, say in one line that "
+    "since it runs in a window. At the start of your next reply to the owner, say in one line that "
     "your claude.ai connectors are missing and that stopping and resuming this session should bring them "
     "back. Then carry on with what you can do without them."
 )
@@ -161,7 +161,7 @@ class Mender:
         self,
         live: Callable[[], list[dict[str, Any]]],
         missing: Callable[[dict[str, Any]], bool | None],
-        started_here: Callable[[dict[str, Any]], bool],
+        restartable: Callable[[dict[str, Any]], bool],
         at_rest: Callable[[dict[str, Any]], bool],
         reachable: Callable[[], Awaitable[bool]],
         restart: Callable[[dict[str, Any]], Awaitable[None]],
@@ -169,7 +169,7 @@ class Mender:
         record: Callable[[str, str, str], None],
         clock: Callable[[], float] = time.time,
     ) -> None:
-        self.live, self.missing, self.started_here, self.at_rest = live, missing, started_here, at_rest
+        self.live, self.missing, self.restartable, self.at_rest = live, missing, restartable, at_rest
         self.reachable, self.restart, self.send, self.record, self.clock = reachable, restart, send, record, clock
         self.cases: dict[str, Case] = {}
 
@@ -199,13 +199,13 @@ class Mender:
                 self.record(name, "connectors_still_missing", f"{name}: the restart didn't bring its connectors back")
                 await self.send(d, RESTART_FAILED_MESSAGE)
             return
-        # RULE: a session the bridge did not start is told to warn the owner
-        if not self.started_here(d):
+        # RULE: a session the bridge cannot restart is told to warn the owner
+        if not self.restartable(d):
             if not case.told:
                 case.told = True
-                log.info("%s has no claude.ai connectors; the bridge didn't start it, so it is told", name)
-                self.record(name, "connectors_missing", f"{name}: no claude.ai connectors; not started by the bridge")
-                await self.send(d, NOT_STARTED_MESSAGE)
+                log.info("%s has no claude.ai connectors; it runs in a window, so it is told", name)
+                self.record(name, "connectors_missing", f"{name}: no claude.ai connectors; in a window, not restarted")
+                await self.send(d, IN_A_WINDOW_MESSAGE)
             return
         # RULE: a busy session is not restarted mid turn
         if not self.at_rest(d):

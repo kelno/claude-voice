@@ -1,0 +1,5 @@
+[[rule]]
+name = "only a terminal or background session is stopped"
+file = "src/claude_voice/every_session.py"
+find = 'if d.get\("kind"\) != "bg" and d.get\("entrypoint"\) not in TERMINAL_ENTRYPOINTS:'
+replace = 'if False:'

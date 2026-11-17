@@ -109,10 +109,10 @@ def test_a_desktop_app_session_tells_nothing(tmp_path):
 class World:
     """The bridge as the mender sees it: running sessions, and what it can do to them."""
 
-    def __init__(self, rows, missing, started_here=True, reachable=True):
+    def __init__(self, rows, missing, restartable=True, reachable=True):
         self.rows = rows
         self.missing_for = missing  # sessionId -> what missing() says
-        self.started_here = started_here
+        self.restartable = restartable
         self.up = reachable
         self.now = 1000.0
         self.restarted, self.sent, self.recorded = [], [], []
@@ -133,7 +133,7 @@ class World:
         return connectors.Mender(
             live=lambda: self.rows,
             missing=lambda d: self.missing_for(d),
-            started_here=lambda d: self.started_here,
+            restartable=lambda d: self.restartable,
             at_rest=lambda d: d["status"] == "idle",
             reachable=reachable,
             restart=restart,
@@ -192,13 +192,13 @@ async def test_a_session_is_not_restarted_while_claude_ai_cannot_be_reached():
     assert world.restarted == [SID]
 
 
-async def test_a_session_the_bridge_did_not_start_is_told_to_warn_the_owner():
-    world = World([row(WAKE)], missing=lambda d: True, started_here=False)
+async def test_a_session_the_bridge_cannot_restart_is_told_to_warn_the_owner():
+    world = World([row(WAKE)], missing=lambda d: True, restartable=False)
     mender = world.mender()
     await mender.step()
     await mender.step()
     assert world.restarted == []
-    assert world.sent == [(SID, connectors.NOT_STARTED_MESSAGE)]
+    assert world.sent == [(SID, connectors.IN_A_WINDOW_MESSAGE)]
 
 
 async def test_a_restart_that_comes_back_without_them_is_not_tried_again_and_the_session_is_told():
@@ -251,9 +251,9 @@ async def test_one_session_failing_does_not_stop_the_others():
 
 
 def test_the_messages_say_who_sends_them_and_what_to_tell_the_owner():
-    for text in (connectors.BUSY_MESSAGE, connectors.NOT_STARTED_MESSAGE, connectors.RESTART_FAILED_MESSAGE):
+    for text in (connectors.BUSY_MESSAGE, connectors.IN_A_WINDOW_MESSAGE, connectors.RESTART_FAILED_MESSAGE):
         assert text.startswith("From the claude-voice bridge, not the owner:")
         assert "next reply to the owner" in text
     assert "as soon as" in connectors.BUSY_MESSAGE
-    assert "can't restart" in connectors.NOT_STARTED_MESSAGE
+    assert "can't restart" in connectors.IN_A_WINDOW_MESSAGE
     assert "didn't bring them back" in connectors.RESTART_FAILED_MESSAGE

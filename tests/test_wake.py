@@ -1,8 +1,8 @@
 """Sessions a shutdown interrupted are woken when the bridge starts, so the owner finds them on the phone.
 
 A shutdown stops every background session, and Claude Code shows each as failed; nothing restarts
-them. The bridge stops with them and starts again at logon, so it wakes the ones it started or
-resumed that were running when it last looked. Windows' boot time can't tell: with Fast Startup a
+them. The bridge stops with them and starts again at logon, so it wakes the background ones,
+the owner's own too, that were running when it last looked. Windows' boot time can't tell: with Fast Startup a
 shutdown resumes the old kernel, and the boot time stays weeks old.
 """
 
@@ -45,7 +45,7 @@ async def test_a_session_the_bridge_started_that_a_shutdown_interrupted_is_woken
     assert any("Triplicate" in r.message and "woke" in r.message for r in caplog.records)
 
 
-async def test_only_sessions_the_shutdown_interrupted_and_the_bridge_ran_are_woken(tmp_path):
+async def test_only_sessions_the_shutdown_interrupted_are_woken(tmp_path):
     work, store = setup(tmp_path)
     for sid in ("s-stopped", "s-failed-earlier", "s-done-earlier", "s-running"):
         store.record_started(sid, sid, str(work))
@@ -57,11 +57,21 @@ async def test_only_sessions_the_shutdown_interrupted_and_the_bridge_ran_are_wok
             job("s-failed-earlier", work),  # failed while the bridge watched: gone from its last look
             job("s-done-earlier", work, state="done"),  # ended while the bridge watched
             job("s-running", work, state="working"),  # running again already
-            job("s-not-ours", work),  # the owner's own background session
         ]
 
-    assert await wake_interrupted(store, jobs, {"s-stopped", "s-running", "s-not-ours"}, starter.wake) == []
+    assert await wake_interrupted(store, jobs, {"s-stopped", "s-running"}, starter.wake) == []
     assert starter.calls == []
+
+
+async def test_a_background_session_the_owner_started_is_woken_too(tmp_path):
+    work, store = setup(tmp_path)  # nothing recorded as started by the bridge
+    starter = Starter(tmp_path, register=False)
+
+    async def jobs():
+        return [job("s-owners", work, name="Owner's own")]
+
+    assert await wake_interrupted(store, jobs, {"s-owners"}, starter.wake) == ["Owner's own"]
+    assert starter.woken == [(str(work), "s-owners")]
 
 
 async def test_a_session_that_will_not_wake_is_logged_and_the_others_still_are(tmp_path, caplog):

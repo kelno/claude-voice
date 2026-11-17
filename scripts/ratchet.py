@@ -115,6 +115,7 @@ LAYERS = {
             "roster",
             "following",
             "offline",
+            "every_session",
         ),
         1,
     ),  # parts, each about one thing

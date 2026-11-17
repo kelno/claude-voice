@@ -184,12 +184,21 @@ async def test_a_message_to_a_session_stopped_for_its_compaction_says_it_is_comi
     assert "attach_conversation" not in text
 
 
-async def test_only_a_background_session_the_bridge_started_is_stopped_to_be_compacted(bridge):
+async def test_only_a_background_session_is_stopped_to_be_compacted(bridge):
+    # One in a terminal window: Claude Code compacts and wakes only background sessions.
+    (bridge["live"] / "7.json").write_text(json.dumps({**bridge["entry"], "kind": "interactive"}), encoding="utf-8")
     async with reached(bridge["server"]) as app:
         refused = await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact")
     assert refused.get("isError")
     assert "/compact" in refused["content"][0]["text"]
     assert bridge["done"] == []
+
+
+async def test_a_background_session_the_owner_started_is_compacted_too(bridge):
+    # Never recorded as started by the bridge: the owner started it.
+    async with reached(bridge["server"]) as app:
+        asked = outcome(await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact"))
+    assert asked["status"] == "scheduled"
 
 
 async def test_a_compaction_given_up_is_told_to_the_session_with_why(bridge, monkeypatch, caplog):

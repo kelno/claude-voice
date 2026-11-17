@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session the bridge cannot restart is told to warn the owner"
+file = "src/claude_voice/connectors.py"
+find = 'if not self.restartable\(d\):'
+replace = 'if False:'

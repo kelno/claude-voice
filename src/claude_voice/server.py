@@ -50,6 +50,7 @@ from . import (
     doctor,
     envfile,
     events,
+    every_session,
     fleet,
     following,
     fork,
@@ -1080,7 +1081,7 @@ async def wake_interrupted(
     retry: float = 5.0,
     patience: float = 300.0,
 ) -> list[str]:
-    """Wake the sessions the bridge started or resumed that the last shutdown interrupted.
+    """Wake the background sessions the last shutdown interrupted, the owner's own too.
 
     A shutdown stops every background session, and nothing restarts them. Claude Code then shows
     one that was mid-turn as failed, one at rest as done, and one waiting on a permission prompt
@@ -1100,7 +1101,8 @@ async def wake_interrupted(
     for job in await background_jobs():
         sid, cwd = str(job.get("sessionId")), str(job.get("cwd") or "")
         # RULE: a session at rest when the PC shut down is woken too
-        if job.get("state") not in INTERRUPTED or not cwd or sid not in was_live or not store.was_started(sid):
+        # RULE: a background session the owner started is woken too
+        if job.get("state") not in INTERRUPTED or not cwd or sid not in was_live:
             continue
         # RULE: a session still running is never woken
         if job.get("pid") and procs.alive(int(job["pid"])):
@@ -1520,7 +1522,7 @@ def build_server(
             mender = connectors.Mender(
                 live=reachable,
                 missing=lambda d: connectors.missing(connector_logs, d),
-                started_here=lambda d: d.get("kind") == "bg" and store.was_started(str(d.get("sessionId"))),
+                restartable=lambda d: d.get("kind") == "bg",
                 at_rest=lambda d: session_state(d) == "idle",
                 reachable=connectors_reachable,
                 restart=restart_in_place,
@@ -2738,16 +2740,17 @@ def build_server(
             bool, Field(description="True stops it even though a relay hasn't read its reply yet.")
         ] = False,
     ) -> dict[str, Any]:
-        """Stop a session the bridge started; any other session is refused.
-        A refused one gets status not_started_here. One whose reply a relay hasn't read yet gets
+        """Stop a running session: one the bridge started, or one the owner opened.
+        With no window or in a terminal, in a folder open to the bridge; any other gets status
+        folder_not_open or not_stoppable (why says which). One whose reply a relay hasn't read yet gets
         status reply_unread, with read_from: read it first, or pass even_unread to stop it anyway."""
         target = named_for_voice(live_sessions(), name)
         if target is None:
             return {"name": name, "status": "not_running"}
         sid = str(target.get("sessionId"))
-        # RULE: only a session the bridge started itself is ever stopped
-        if not store.was_started(sid):
-            return {"name": name, "status": "not_started_here"}
+        refused = every_session.refusal(target, folder_open=under_root(target.get("cwd")) is not None)
+        if refused:
+            return {"name": name, **refused}
         waiting = unread_by(sid, target)
         # RULE: a session whose reply a relay has not read is not stopped
         if waiting and not even_unread:
@@ -2756,7 +2759,7 @@ def build_server(
         try:
             if target.get("kind") == "bg":
                 await stop_background(sid)
-            else:  # a window the bridge opened: ending its Claude Code closes it
+            else:  # in a terminal: ending its Claude Code closes a window the bridge opened
                 stop_window(int(target.get("pid") or 0))
         except Exception as exc:
             raise ToolError(f"Claude Code could not stop {name}: {exc}") from None
@@ -3007,7 +3010,7 @@ def build_server(
         return out
 
     async def restart_in_place(d: dict[str, Any]) -> None:
-        """Stop a background session the bridge started and resume it in place, its conversation,
+        """Stop a background session and resume it in place, its conversation,
         name and Remote Control kept: a fresh start loads its claude.ai connectors again."""
         sid = str(d.get("sessionId"))
         await stop_background(sid)
@@ -3034,7 +3037,7 @@ def build_server(
         try:
             return find_live(session), None
         except ToolError:
-            known = store.started_session(session)
+            known = every_session.known(store, session, jobs_dir)
             # RULE: a message to a session stopped for its compaction says it is coming back
             if known and str(known["claude_session_id"]) in compacting:
                 raise ToolError(
@@ -3080,7 +3083,7 @@ def build_server(
 
     def not_running(session: str) -> str:
         """Why `session` can't be reached, and how to bring it back when it ran before."""
-        known = store.started_session(session)
+        known = every_session.known(store, session, jobs_dir)
         if known is None:
             return (
                 f"No running session called {session!r}; see list_active_sessions. A conversation that ran"
@@ -3307,7 +3310,7 @@ def build_server(
         ] = None,
     ) -> dict[str, Any]:
         """Have your own conversation compacted once this turn ends, as /compact would.
-        For a session the bridge started, at a break you choose: first write down what must survive
+        For a session with no window, at a break you choose: first write down what must survive
         (your notes, a keep-file), then call this and end your turn. Once the turn has ended, the
         bridge stops you, runs /compact on the conversation and starts you again, usually within a
         minute, and you are off the owner's session list in the Claude app until then; your next
@@ -3316,10 +3319,10 @@ def build_server(
         as not ended), it gives up and sends you a message saying what it saw."""
         d = await asking_session()
         sid, cwd, name = str(d["sessionId"]), str(d.get("cwd")), str(d.get("name") or d["sessionId"])
-        # RULE: only a background session the bridge started is stopped to be compacted
-        if not store.was_started(sid) or d.get("kind") != "bg":
+        # RULE: only a background session is stopped to be compacted
+        if d.get("kind") != "bg":  # Claude Code compacts and wakes only those
             raise ToolError(
-                "The bridge compacts only a background session it started itself; this one isn't. Ask the"
+                "The bridge compacts only a background session; this one has a window. Ask the"
                 " owner to type /compact in it."
             )
         if sid in compacting:
@@ -3552,8 +3555,8 @@ def build_server(
         owner_chose: Annotated[bool, Field(description=OWNER_CHOSE_PARAM)] = False,
     ) -> dict[str, Any]:
         """Give a running session a new name; its old name still reaches it.
-        A session the bridge started is renamed in Claude Code too, and the phone and the desktop
-        app show it within seconds; for any other, only the bridge's lists know the new name.
+        A session with no window is renamed in Claude Code too, and the phone and the desktop app
+        show it within seconds; for one in a window, only the bridge's lists know the new name.
         claude_code: renamed, pending (mid-turn: the bridge renames it in Claude Code by itself
         once idle), bridge_only, or already (Claude Code had that name); note says more."""
         new_name = renames.clean(new_name)
@@ -3582,16 +3585,16 @@ def build_server(
         return {"name": new_name, "was": old, "claude_session_id": sid, "claude_code": claude_code, "note": note}
 
     def rename_in_claude(d: dict[str, Any], claude_name: str, new: str) -> tuple[str, str]:
-        """Write the new name into Claude Code's job record for a session the bridge started,
-        only while it waits idle. Claude Code renames a running background session from it at once,
-        and a wake reads it, so the name stays. Any other session keeps Claude Code's own name."""
+        """Write the new name into Claude Code's job record for a background session, only while
+        it waits idle. Claude Code renames a running background session from it at once, and a
+        wake reads it, so the name stays. Any other session keeps Claude Code's own name."""
         if claude_name == new:
             return "already", "Claude Code already has this name."
         sid = str(d.get("sessionId"))
-        # RULE: only a session the bridge started is renamed in Claude Code itself
-        if store.started_session(sid) is None:
+        # RULE: only a background session is renamed in Claude Code itself
+        if d.get("kind") != "bg":  # only a background session has a job record
             return "bridge_only", (
-                f"The new name is the bridge's only: the bridge didn't start this session, so Claude Code"
+                f"The new name is the bridge's only: this session has a window, so Claude Code"
                 f" and the desktop app keep the name {claude_name}. Type /rename {new} in it to rename it"
                 " there too; messages to either name reach it."
             )
@@ -3669,7 +3672,7 @@ def build_server(
         for d in reachable():
             sid, claude_name, new = str(d.get("sessionId")), d.get("deliver_to"), str(d.get("name"))
             # RULE: a name given mid-turn reaches Claude Code once the session is idle
-            if not claude_name or d.get("status") != "idle" or store.started_session(sid) is None:
+            if not claude_name or d.get("status") != "idle" or d.get("kind") != "bg":
                 continue
             tried = rename_tried.get(sid)
             if tried and tried[0] == new and manager.clock() - tried[1] < RENAME_RETRY_SECONDS:

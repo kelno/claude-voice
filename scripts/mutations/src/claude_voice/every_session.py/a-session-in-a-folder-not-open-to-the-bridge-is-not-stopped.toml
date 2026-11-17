@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session in a folder not open to the bridge is not stopped"
+file = "src/claude_voice/every_session.py"
+find = 'if not folder_open:'
+replace = 'if False:'
