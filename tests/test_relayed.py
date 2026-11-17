@@ -113,3 +113,33 @@ async def test_a_question_from_a_claude_code_session_is_answered_in_the_reply_te
     assert "planner is waiting for your reply text" in asked and "SendMessage" not in asked
     # The asker reads nothing else meanwhile: a question back would wait out both limits.
     assert "don't ask it anything first" in asked
+
+
+async def test_a_reply_to_a_claude_code_session_does_not_hold_its_stop(tmp_path, world):  # noqa: F811
+    # A Claude Code session gets its answer by direct message, as the note under its message says,
+    # so the reply in the text isn't one it still has to read: the Coordinator had to pass
+    # even_unread for every session it had messaged (owner, 2026-11-17, Agent paths decision 6).
+    root, live = world
+    desk = news.Desk(live, str(root / "billing"))
+    planner = news.Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
+    record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"type": "assistant", "id": "toolu_planner_1"}) + "\n", encoding="utf-8")
+    store = Store(tmp_path / "bridge.db")
+    store.record_started("sid-1", "billing-ab", desk.cwd)
+    stopped = []
+
+    def stop_window(pid):
+        stopped.append(pid)
+        desk.gone()
+
+    async with news.bridge(tmp_path, desk, store, planner, stop_window=stop_window) as url:
+        http, client = news.conversation(url)
+        async with http, client as c:
+            sent = await c.call_tool(
+                "message_active_session", {"session": "billing-ab", "message": "Go."}, meta=PLANNER
+            )
+            assert not sent.is_error, sent.content
+            desk.transcript.append(news.turn("assistant", "Done, and told planner by direct message."))
+            out = await news.stop_from_elsewhere(url, {"name": "billing-ab"})
+    assert out["status"] == "stopped" and stopped == [news.PID]

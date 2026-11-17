@@ -1,0 +1,5 @@
+[[rule]]
+name = "a reply to a claude code session does not hold its stop"
+file = "src/claude_voice/server.py"
+find = 'if record\.get\("session"\):'
+replace = 'if False:'

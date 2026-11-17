@@ -1972,9 +1972,13 @@ def build_server(
     def unread_by(sid: str, d: dict[str, Any]) -> dict[str, dict[str, Any]]:
         """The relays (by handle label) following session `sid` whose reply from it they haven't
         read, with their marks. Asked afresh, as the news would: the mark's last news may be stale.
-        No time limit: an unread reply stays so until it is read or no longer followed."""
+        No time limit: an unread reply stays so until it is read or no longer followed. A Claude
+        Code session isn't one: it gets its answer by direct message (ANSWER_BY_MESSAGE)."""
         waiting = {}
         for handle, record in relays.all.items():
+            # RULE: a reply to a claude code session does not hold its stop
+            if record.get("session"):
+                continue
             mark = record.get("sessions", {}).get(sid)
             if mark is None or following.stance(mark) != "followed":
                 continue
@@ -2753,6 +2757,7 @@ def build_server(
         With no window or in a terminal, in a folder open to the bridge; any other gets status
         folder_not_open or not_stoppable (why says which). One whose reply a relay hasn't read yet gets
         status reply_unread, with read_from: read it first, or pass even_unread to stop it anyway.
+        A reply to a Claude Code session never holds it: that session gets it by direct message.
         An idle session on Remote Control, with no window, is parked rather than stopped (status
         parked, and say for the owner): it stays at rest until Claude Code closes it itself, about
         8 hours after it last worked or sooner when memory runs low, and that close keeps it in
