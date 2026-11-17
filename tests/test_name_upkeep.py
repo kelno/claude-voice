@@ -101,6 +101,21 @@ async def test_an_agent_cannot_rename_a_session_the_owner_named(tmp_path, root, 
     assert "owner chose" in res.content[0].text and "propose_session_name" in res.content[0].text
 
 
+async def test_an_agent_may_add_and_drop_a_status_after_a_name_the_owner_chose(tmp_path, root, live):
+    session(live, root, "Billing", source="user")
+    async with Client(server(tmp_path, root, live)) as c:
+        added = await call(c, "rename_session", session="Billing", new_name="Billing (waiting)")
+        dropped = await call(c, "rename_session", session="Billing (waiting)", new_name="Billing")
+    assert added["name"] == "Billing (waiting)" and dropped["name"] == "Billing"
+
+
+async def test_a_status_cannot_replace_part_of_a_name_the_owner_chose(tmp_path, root, live):
+    session(live, root, "Billing (v2)", source="user")
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "Billing (v2)", "new_name": "Billing (waiting)"})
+    assert res.is_error and "owner chose" in res.content[0].text
+
+
 async def test_a_name_the_owner_marked_themselves_is_free_to_change(tmp_path, root, live):
     session(live, root, "{Billing}", source="user")  # the owner added the braces with /rename
     async with Client(server(tmp_path, root, live)) as c:

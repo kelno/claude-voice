@@ -1,0 +1,5 @@
+[[rule]]
+name = "an agent may add and drop a status after a name the owner chose"
+file = "src/claude_voice/renames.py"
+find = 'return drop\(new\) == old or drop\(old\) == new'
+replace = 'return False'

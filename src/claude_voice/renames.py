@@ -9,6 +9,7 @@ old one, dropped once Claude Code has the new one or someone renames it another 
 
 from __future__ import annotations
 
+import re
 import secrets
 import subprocess
 from collections.abc import Callable, Iterable
@@ -58,6 +59,23 @@ def owners(d: dict[str, Any]) -> bool:
         return False
     # RULE: claude code's own title may be renamed by an agent
     return d.get("deliver_to") is not None or d.get("nameSource") not in AUTOMATIC
+
+
+# A status in round brackets at the end of a name, such as " (waiting)".
+STATUS = re.compile(r"\s+\([^()]*\)$")
+
+
+def only_status(old: str, new: str) -> bool:
+    """Whether `new` is `old` with a status in round brackets added at its end, or `old` with one
+    dropped: the one change an agent may make to a name the owner chose, so a session can show its
+    state on it (owner, 2026-11-17). Replacing part of the name, brackets included, isn't one."""
+
+    def drop(name: str) -> str | None:
+        found = STATUS.search(name)
+        return name[: found.start()] if found else None
+
+    # RULE: an agent may add and drop a status after a name the owner chose
+    return drop(new) == old or drop(old) == new
 
 
 def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], aliases: dict[str, list[str]]):

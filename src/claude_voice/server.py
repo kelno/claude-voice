@@ -157,7 +157,7 @@ NAME_CHECK_OWNERS = (
 OWNERS_NAME_REFUSAL = (
     'The owner chose the name "{name}", so only the owner renames it: propose the new name with '
     "propose_session_name instead. The relay puts it to the owner, and renames with owner_chose true once "
-    "they agree."
+    'they agree. Adding or dropping a status in round brackets at its end, such as "{name} (busy)", needs no one.'
 )
 # A name proposal is shown for this long, or until the session is renamed.
 NAME_PROPOSAL_SECONDS = 24 * 3600.0
@@ -3567,9 +3567,11 @@ def build_server(
         if not owner_chose:
             # RULE: an agent cannot rename a session the owner named
             if renames.owners(target):
-                raise ToolError(OWNERS_NAME_REFUSAL.format(name=old))
-            # RULE: a name an agent gives gets the marker
-            new_name = renames.marked(new_name)
+                if not renames.only_status(old, new_name):
+                    raise ToolError(OWNERS_NAME_REFUSAL.format(name=old))
+            else:
+                # RULE: a name an agent gives gets the marker
+                new_name = renames.marked(new_name)
         # RULE: a new name already in use is refused
         if renames.in_use(new_name, rows, but=sid):
             raise ToolError(f"{new_name!r} is already in use by another session")
