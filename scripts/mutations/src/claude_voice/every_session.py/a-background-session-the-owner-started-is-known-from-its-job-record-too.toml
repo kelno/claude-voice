@@ -1,5 +1,5 @@
 [[rule]]
 name = "a background session the owner started is known from its job record too"
 file = "src/claude_voice/every_session.py"
-find = 'return from_job_records\(session, jobs_dir\)'
-replace = 'return None'
+find = 'records = job_records\(jobs_dir\)'
+replace = 'records = []'

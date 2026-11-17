@@ -220,6 +220,37 @@ async def test_a_message_to_a_session_claude_code_closed_for_low_memory_resumes_
     assert "low memory" in out["resumed"]
 
 
+async def test_a_session_not_running_is_found_by_its_name_the_way_a_running_one_is(tmp_path, world):
+    # Seen 2026-11-14 (ledger F88): a session named {bridge stop keeps session listed}, closed for low
+    # memory, messaged by its name said without the braces as the guide says, got "No running
+    # session"; its id resumed it. Said aloud, the capitals may differ too.
+    async def known():
+        return {OLD}
+
+    delivered = []
+
+    async def deliver(name, text):
+        delivered.append(name)
+        return {"delivered": True, "detail": ""}
+
+    root, live = world
+    log = tmp_path / "daemon.log"
+    log.write_text(f"[2026-11-14T09:39:50.365Z] [bg] bg retire {OLD[:8]}: settled, idle 2h [low memory]\n")
+    starter = Starter(live)
+    jobs = tmp_path / "jobs"  # not this PC's own
+    jobs.mkdir()
+    server = resuming(
+        tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=log, jobs_dir=jobs
+    )
+    Store(tmp_path / "b.db").record_started(OLD, "{Prompt test}", str(root / "billing"))
+    async with Client(server) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "prompt test", "message": "Hi"})
+        ).structured_content
+    assert [sid for _, sid in starter.woken] == [OLD]
+    assert len(delivered) == 1 and out["delivered"] is True and "low memory" in out["resumed"]
+
+
 async def test_a_message_to_a_session_claude_code_closed_while_idle_resumes_it_too(tmp_path, world):
     # Seen 2026-11-14: Claude Code closes a Remote Control session 8 hours after it last worked,
     # memory or not, and the log line then has no "[low memory]".

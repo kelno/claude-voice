@@ -55,21 +55,57 @@ def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
     if found is not None:
         return found
     # RULE: a background session the owner started is known from its job record too
-    return from_job_records(session, jobs_dir)
+    records = job_records(jobs_dir)
+    found = from_job_records(session, records)
+    if found is not None:
+        return found
+    # RULE: a session not running is found by its name the way a running one is
+    return by_spoken_name(store, session, records)
 
 
-def from_job_records(session: str, jobs_dir: Path) -> dict[str, Any] | None:
-    """The newest background session Claude Code has a job record for under that name or id."""
-    best: tuple[str, dict[str, Any]] | None = None
+def by_spoken_name(store: Store, session: str, records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """A session that isn't running, by its name as a relay says it: without the braces of a name an
+    agent chose, in other capitals, or a name it had before (renames.find, as for a running one).
+    None when it names none, or several that differ only by capitals."""
+    from . import renames  # a part beside this one: imported when needed, not when loaded
+
+    old = store.old_names()
+    rows: dict[str, dict[str, Any]] = {}  # newest last, so a name used twice finds the newest
+    for found in [*records, *started(store)]:
+        sid = found["claude_session_id"]
+        rows.pop(sid, None)
+        rows[sid] = {"sessionId": sid, "name": found["name"], "aliases": old.get(sid, []), "known": found}
+    try:
+        d = renames.find(list(reversed(rows.values())), session)
+    except renames.Ambiguous:
+        return None
+    return None if d is None else dict(d["known"])
+
+
+def started(store: Store) -> list[dict[str, Any]]:
+    """Every session the bridge started, oldest first, as Store.started_session gives one."""
+    rows = store.db.execute("SELECT claude_session_id, name, cwd FROM started ORDER BY rowid").fetchall()
+    return [{"claude_session_id": str(r[0]), "name": str(r[1]), "cwd": str(r[2])} for r in rows]
+
+
+def from_job_records(session: str, records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The newest background session of `records` (job_records) under that name or id."""
+    found = [k for k in records if session in (k["claude_session_id"], k["name"])]
+    return found[-1] if found else None
+
+
+def job_records(jobs_dir: Path) -> list[dict[str, Any]]:
+    """The background sessions Claude Code has a job record for, oldest first, as
+    Store.started_session gives one."""
+    out: list[tuple[str, dict[str, Any]]] = []
     for path in jobs_dir.glob("*/state.json"):
         try:
             record = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         sid, name, cwd = record.get("sessionId"), record.get("name"), record.get("cwd")
-        if not sid or not cwd or session not in (sid, name):
+        if not sid or not cwd:
             continue
         when = str(record.get("updatedAt") or "")
-        if best is None or when > best[0]:
-            best = (when, {"claude_session_id": str(sid), "name": str(name or sid), "cwd": str(cwd)})
-    return best[1] if best else None
+        out.append((when, {"claude_session_id": str(sid), "name": str(name or sid), "cwd": str(cwd)}))
+    return [k for _, k in sorted(out, key=lambda pair: pair[0])]
