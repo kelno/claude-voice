@@ -63,6 +63,7 @@ from . import (
     metrics,
     offline,
     org,
+    parking,
     passkeys,
     plugin_desk,
     plugins,
@@ -2330,7 +2331,7 @@ def build_server(
             "minutes_since_update": row["minutes_since_update"],
             "sending": list(sending.get(str(row["claude_session_id"]), [])),
         }
-        for key in ("waiting_for", "question", "moved_to", "side_chat"):
+        for key in ("waiting_for", "question", "moved_to", "side_chat", "parked"):
             if key in row:
                 item[key] = row[key]
         return item
@@ -2339,7 +2340,8 @@ def build_server(
     def fleet_recap() -> dict[str, Any]:
         """Every running session with its status and one line on what it is doing.
         Answers "what are my sessions up to?" without reading each one; kind is "desktop",
-        "terminal" or "background" (no window), and side_chat marks a desktop aside."""
+        "terminal" or "background" (no window), side_chat marks a desktop aside, and parked marks
+        one that stop_active_session parked."""
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         live_rows = running()
         numbers = local_numbers([str(r["claude_session_id"]) for r in live_rows])
@@ -2739,11 +2741,24 @@ def build_server(
         even_unread: Annotated[
             bool, Field(description="True stops it even though a relay hasn't read its reply yet.")
         ] = False,
+        now: Annotated[
+            bool,
+            Field(
+                description="True stops it at once even when idle, which takes it off the owner's session list in"
+                " the Claude app."
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Stop a running session: one the bridge started, or one the owner opened.
         With no window or in a terminal, in a folder open to the bridge; any other gets status
         folder_not_open or not_stoppable (why says which). One whose reply a relay hasn't read yet gets
-        status reply_unread, with read_from: read it first, or pass even_unread to stop it anyway."""
+        status reply_unread, with read_from: read it first, or pass even_unread to stop it anyway.
+        An idle session on Remote Control, with no window, is parked rather than stopped (status
+        parked, and say for the owner): it stays at rest until Claude Code closes it itself, about
+        8 hours after it last worked or sooner when memory runs low, and that close keeps it in
+        the owner's session list in the Claude app, where they can wake it. Stopped at once
+        (status stopped: with now, or for any other session), a session on Remote Control leaves
+        that list."""
         target = named_for_voice(live_sessions(), name)
         if target is None:
             return {"name": name, "status": "not_running"}
@@ -2756,6 +2771,16 @@ def build_server(
         if waiting and not even_unread:
             read_from = min(max(m["sent"], m["seen"]) for m in waiting.values())
             return {"name": name, "status": "reply_unread", "unread_by": list(waiting), "read_from": read_from}
+        # Claude Code's own close of a session at rest keeps its claude.ai session; `claude stop`
+        # archives it, so the app no longer lists it (ADR-CV-107).
+        remote = target.get("kind") == "bg" and bool(target.get("bridgeSessionId"))
+        # RULE: an idle background session with Remote Control is parked, not stopped
+        if remote and session_state(target) == "idle":
+            # RULE: a session stopped now is stopped at once, even when idle
+            if not now:
+                parking.park(store, sid, manager.clock() * 1000)
+                return {"name": name, "status": "parked", "say": parking.SAY.format(name=name)}
+        parking.park(store, sid, None)
         try:
             if target.get("kind") == "bg":
                 await stop_background(sid)
@@ -2840,7 +2865,8 @@ def build_server(
         """Every session running now, with status; a waiting one carries its prompt.
         Claude Code sessions on this machine: status busy, idle or waiting (prompt says what it
         asks); kind "desktop", "terminal" or "background" (no window); side_chat marks a desktop
-        aside; number is the short number any tool taking a session also takes. A session outside
+        aside, and parked marks one that stop_active_session parked; number is the short number any
+        tool taking a session also takes. A session outside
         the folders open to the bridge (the root and what's under it, and those opened with
         request_access; open in an app doesn't count) shows only its name, folder and status, with
         access "folder_not_open" (request_access opens it once the owner confirms) or
@@ -2882,7 +2908,9 @@ def build_server(
     def running() -> list[dict[str, Any]]:
         now_ms = manager.clock() * 1000
         sessions = []
-        for d in live_sessions():
+        live = live_sessions()
+        parking.prune(store, (str(d.get("sessionId")) for d in live))
+        for d in live:
             if is_courier(d):
                 continue
             name = under_root(d.get("cwd"))
@@ -2910,6 +2938,8 @@ def build_server(
             }
             if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
                 row["side_chat"] = True
+            if parking.parked(store, d):
+                row["parked"] = True
             proposal = name_proposal(d)
             if proposal:
                 row["name_proposal"] = {"name": proposal["name"], "why": proposal["why"]}

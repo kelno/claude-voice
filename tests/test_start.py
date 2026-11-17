@@ -2,6 +2,7 @@
 
 import json
 import os
+from types import SimpleNamespace
 
 import pytest
 from fakes import FakeClaude
@@ -17,11 +18,12 @@ PID = os.getpid()
 class Starter:
     """Stands in for `claude --bg`: records the call and registers the session like Claude Code does."""
 
-    def __init__(self, live, register=True, copies=False, note=None):
+    def __init__(self, live, register=True, copies=False, note=None, entry=None):
         self.live = live
         self.register = register
         self.copies = copies  # Claude Code couldn't continue the conversation in place
         self.note = note  # what Claude Code prints, e.g. a "note:" line
+        self.entry = entry or {}  # more of the registry entry, e.g. a Remote Control link or a status
         self.calls = []
         self.options = []
         self.woken = []
@@ -39,9 +41,8 @@ class Starter:
 
     def registered(self, cwd, name, sid):
         if self.register:
-            (self.live / f"{name}.json").write_text(
-                json.dumps({"pid": PID, "sessionId": sid, "cwd": cwd, "name": name, "kind": "bg", "status": "idle"})
-            )
+            entry = {"pid": PID, "sessionId": sid, "cwd": cwd, "name": name, "kind": "bg", "status": "idle"}
+            (self.live / f"{name}.json").write_text(json.dumps({**entry, **self.entry}))
         return self.note
 
 
@@ -354,7 +355,7 @@ class Stopper:
                 f.unlink()
 
 
-def bridge_with_stop(tmp_path, world, starter, stopper, windows=None):
+def bridge_with_stop(tmp_path, world, starter, stopper, windows=None, transcript=None):
     root, live = world
     m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
     return build_server(
@@ -366,6 +367,7 @@ def bridge_with_stop(tmp_path, world, starter, stopper, windows=None):
         stop_background=stopper,
         stop_window=windows or Windows(live),  # never the real one: it would end this test's process
         start_seconds=1.0,
+        read_transcript=(lambda sid, cwd: transcript) if transcript is not None else None,
     )
 
 
@@ -380,6 +382,84 @@ async def test_a_session_the_bridge_started_can_be_stopped_and_is_gone_after(tmp
     assert stopper.calls == ["sid-{invoices}"]
     assert "invoices" not in {r["name"] for r in listed["sessions"]}
     assert again["status"] == "not_running"
+
+
+REMOTE = {"bridgeSessionId": "session_017invoices"}  # Claude Code's registry names the session's Remote Control link
+
+
+async def test_an_idle_background_session_with_remote_control_is_parked_not_stopped(tmp_path, world):
+    # Stopped, Claude Code would archive it in claude.ai and it would leave the owner's list in the app;
+    # closed by Claude Code itself once at rest, it stays there and can be woken (ADR-CV-107).
+    stopper = Stopper(world[1])
+    async with Client(bridge_with_stop(tmp_path, world, Starter(world[1], entry=REMOTE), stopper)) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
+        listed = (await c.call_tool("list_active_sessions", {})).structured_content
+    assert out["status"] == "parked" and stopper.calls == []
+    # Said for the owner, who asked to stop it and will still see it in the app.
+    assert "about 8 hours after it last worked" in out["say"] and "now=true" in out["say"]
+    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-{invoices}")
+    assert row["parked"] is True and row["status"] == "idle"
+
+
+async def test_a_session_stopped_now_is_stopped_at_once_even_when_idle(tmp_path, world):
+    stopper = Stopper(world[1])
+    async with Client(bridge_with_stop(tmp_path, world, Starter(world[1], entry=REMOTE), stopper)) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        parked = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
+        out = (await c.call_tool("stop_active_session", {"name": "invoices", "now": True})).structured_content
+        listed = (await c.call_tool("list_active_sessions", {})).structured_content
+    assert parked["status"] == "parked"
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
+    assert "sid-{invoices}" not in {r["claude_session_id"] for r in listed["sessions"]}
+
+
+async def test_a_session_at_work_is_stopped_at_once_even_with_remote_control(tmp_path, world):
+    # Claude Code never closes a busy session, so parking one would leave it running.
+    stopper = Stopper(world[1])
+    busy = Starter(world[1], entry={**REMOTE, "status": "busy"})
+    async with Client(bridge_with_stop(tmp_path, world, busy, stopper)) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
+
+
+async def test_an_idle_session_with_a_background_task_still_running_is_stopped_at_once(tmp_path, world):
+    # Its turn ended, but the task it left running will start another: Claude Code holds back
+    # its close while the task runs, so parked, it would go on working.
+    stopper = Stopper(world[1])
+    task = SimpleNamespace(task="bcw", at=None)  # a task started in the background, not ended
+    bridge = bridge_with_stop(tmp_path, world, Starter(world[1], entry=REMOTE), stopper, transcript=[task])
+    async with Client(bridge) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
+
+
+async def test_a_parked_mark_goes_once_its_session_is_no_longer_running(tmp_path, world):
+    live = world[1]
+    async with Client(bridge_with_stop(tmp_path, world, Starter(live, entry=REMOTE), Stopper(live))) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        await c.call_tool("stop_active_session", {"name": "invoices"})
+        parked = Store(tmp_path / "b.db").get_setting("parked")
+        (live / "{invoices}.json").unlink()  # Claude Code closed it
+        await c.call_tool("list_active_sessions", {})
+    assert set(parked) == {"sid-{invoices}"}
+    assert Store(tmp_path / "b.db").get_setting("parked") == {}
+
+
+async def test_a_session_shows_as_parked_only_until_it_works_again(tmp_path, world):
+    live = world[1]
+    async with Client(bridge_with_stop(tmp_path, world, Starter(live, entry=REMOTE), Stopper(live))) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        await c.call_tool("stop_active_session", {"name": "invoices"})
+        entry = live / "{invoices}.json"
+        # The owner wrote to it from the app: it worked, and is at rest again.
+        worked = {**json.loads(entry.read_text(encoding="utf-8")), "statusUpdatedAt": 4_102_444_800_000}
+        entry.write_text(json.dumps(worked))
+        listed = (await c.call_tool("list_active_sessions", {})).structured_content
+    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-{invoices}")
+    assert "parked" not in row
 
 
 def owners_session(live, cwd, name, sid, **extra):

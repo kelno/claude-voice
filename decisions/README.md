@@ -57,6 +57,7 @@ decision nobody writes down.
 | [ADR-CV-104](ADR-CV-104-the-side-session-works-on-past-the-callers-time-budget.md) | The side session works on past the caller's time budget | Accepted |
 | [ADR-CV-105](ADR-CV-105-the-owner-confirms-on-the-apps-card-in-voice.md) | The owner confirms a session's request on the app's card, in a voice chat | Accepted, amended by ADR-CV-106 |
 | [ADR-CV-106](ADR-CV-106-the-owner-confirms-with-a-passkey-on-the-bridges-page.md) | The owner confirms with a passkey on the bridge's own page | Accepted |
+| [ADR-CV-107](ADR-CV-107-an-idle-session-is-parked-rather-than-stopped.md) | An idle session with Remote Control is parked for Claude Code to close, so it stays in the app's list | Accepted, as a trial |
 | [ADR-CV-108](ADR-CV-108-the-bridge-handles-every-session-not-only-those-it-started.md) | The bridge handles every session, not only those it started | Accepted |
 
 What is deliberately left undone, and what would make each worth doing, is

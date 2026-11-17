@@ -1,0 +1,5 @@
+[[rule]]
+name = "a parked mark goes once its session is no longer running"
+file = "src/claude_voice/parking.py"
+find = 'if marks.keys\(\) - running:'
+replace = 'if False:'

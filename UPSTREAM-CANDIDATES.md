@@ -215,6 +215,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: it reads Claude Code's own log files, not a documented interface (anything unexpected tells nothing, and nothing is done); the cache folder's place is the Windows one (`%LOCALAPPDATA%`), so other systems need theirs; and upstream runs sessions in tmux, where the respawn may not happen at all.
 - Test first: `tests/test_connectors.py` and `tests/test_wake.py`, the tests named after the rules.
 
+### 6z''''. An idle session parked, not stopped, so the app keeps it listed — fork "Park an idle session so the Claude app keeps it listed" (ADR-CV-107)
+
+- Status: an idea; on trial in the fork since 2026-11-17; nothing prepared for upstream.
+- What: `stop_active_session` parks an idle session on Remote Control with no window: it answers status `parked`, with a `say` for the user, and leaves the session at rest, for Claude Code's own close (counted from when the session last worked: an hour, 8 hours with Remote Control, a minute when memory runs low). `now=true`, or any other session, is stopped at once with `claude stop`, as upstream does. The session lists mark a parked session `parked` until it works again. The marks live in the fork's own module `parking.py`, hooked into `server.py`.
+- Why upstream should want it: `claude stop` makes Claude Code archive the session's claude.ai session, so a session stopped by voice disappears from the user's session list in the Claude app and can't be woken there; Claude Code's own close keeps it listed and wakeable, and Claude Code has no command for that close.
+- Expect pushback: "stop" that doesn't stop; a parked session keeps its memory for up to 8 hours after it last worked; Claude Code's close and its thresholds are read from its code, not a documented contract. A `claude stop` option that keeps the session listed, asked of Anthropic, would make all of this unnecessary.
+- Test first: `tests/test_start.py`, the tests named after the rules.
+
 ### 6y. Updating the bridge on Windows — fork "Update the bridge on Windows, where there is no systemd"
 
 - What: `update_bridge` works without systemd. On Windows the bridge starts the updater as a detached process, and the updater restarts the bridge by ending it with exit code 75 (`RESTART_EXIT`), which the script that runs the bridge takes as "start me again"; a rollback does the same. The updater also checks health on the address the bridge listens on (`--host`), not always 127.0.0.1, which helps a Linux bridge bound to a Tailscale or WireGuard address too.

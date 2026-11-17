@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session shows as parked only until it works again"
+file = "src/claude_voice/parking.py"
+find = 'if d.get\("status"\) != "idle" or \(d.get\("statusUpdatedAt"\) or 0\) > parked_at:'
+replace = 'if False:'
