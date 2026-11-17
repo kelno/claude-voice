@@ -3,7 +3,7 @@
 How this fork, [kelno/claude-voice](https://github.com/kelno/claude-voice), differs from [claude-voice](https://github.com/roykollensvendsen/claude-voice) by Roy Kollen Svendsen and why, upstream's rules for a pull request, and how one is checked here. What could go back upstream is in `UPSTREAM-CANDIDATES.md`. Written to be picked up cold, by people and agents.
 
 - "The owner" is kelno, who maintains this fork; "the relay" is the voice assistant in the Claude app that talks to the bridge for them; "agents" are the Claude sessions that do the work.
-- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (kelno's rules for forks say how), so fork commits keep their hashes; the last merge took upstream's `78d0d42`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
+- The fork split from upstream at `21d1d96` (2026-10-29). It follows upstream by merging upstream's `main` into its own (kelno's rules for forks say how), so fork commits keep their hashes; the last merge took upstream's `3fbe04e`. The history from before 2026-11-06, when the fork was once rebuilt on upstream with every commit replayed, is on the fork's branch `main-before-resync`, so older commits are named by their subject (find one with `git log --grep`), not their hash. Upstream moves fast; check what it has taken before offering anything.
 
 ## Upstream's rules
 
@@ -20,7 +20,7 @@ The full ratchet switches every rule off in turn, one test run per rule in `scri
 
 ## Differences from upstream
 
-Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `78d0d42`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
+Every way the fork differs from upstream's `main`, by what an agent calling the tools or the owner sees, with why and the fork commits. Kept current with each fork commit and each resync; last checked against upstream's `3fbe04e`. Nothing here is a guess unless marked so. What could go back upstream, and why, is in `UPSTREAM-CANDIDATES.md`.
 
 ### Decision records
 
@@ -89,6 +89,9 @@ All of upstream's code is in; what is on or off here (owner):
 - The sessions file (`roster.py`, ADR-CV-019, 2026-11-16 resync): in, off (owner, 2026-11-16). Upstream's bridge writes each running session's programme, role and conversation id to `~/.config/claude-voice/sessions.toml` at each look, so sessions kept in tmux can be found again after a crash; the `cv` command reads it and shows a role's tmux pane. Here `serve_forever` passes no file, so nothing is written; sessions here run on Remote Control, not in tmux, and the bridge already records the sessions it started. Upstream's tests of it run with a file given.
 - `claude-voice setup --check` and `claude-voice repos sync --check` (2026-11-16 resync): in, as upstream; both only report and change nothing. The repos check turns git's file-system monitor off for each call, where upstream's doesn't: Git for Windows turns it on in its own settings, and `git status` then started a daemon writing into the clone's `.git` folder (fork "Keep the repos check from starting a file-system monitor").
 - Installing a plugin from its checkout (`claude-voice plugins install`, `plugins revoke`, the plugin template in `templates/plugin/`), the shared home position (`claude-voice home`), and the paired machine's power helper (ADR-CV-016 to 018, 2026-11-16 resync): in, inert here, since no plugin runs and nothing is paired.
+- The session hook (`session_hook.py`, the `personal_terms_file` setting, 2026-11-17 resync): in, off (owner to decide). Upstream's hook runs before every shell command in the bridge's repositories and lets a session remove things inside its own scratchpad, and file an issue in its own programme's repositories, without asking; every other recursive remove, and every other issue, asks. It is written into a repository's settings only by `claude-voice permissions`, which isn't run here (see above), so it never runs. As written it fits only POSIX systems: its tests skip on Windows, since Claude Code's scratchpad is a POSIX path there. The setup check (`check_dependencies`) gains a line that the hook starts and answers, which passes here though the hook isn't installed.
+- Upstream's stricter permission rules (2026-11-17 resync): in upstream's table, not applied here, like the rest of that table (see above): a push that deletes a branch asks, a pull request approval is refused whether through `gh` or GitHub's API, and a recursive remove asks however it is spelled.
+- Each plugin run by `uv run` started from its own environment, and a stuck plugin sync stopped whole with the reason a start failed told to the voice (`plugin_venv.py`, `uvlock.py`, 2026-11-17 resync): in, inert here, since no plugin runs.
 - An update's test run (2026-11-16 resync): when an update runs the tests (only when asked, here), all they printed is kept in `update-test.log` beside the update's log, and the log names the failing tests, as upstream.
 
 ### Same tools, different behaviour
