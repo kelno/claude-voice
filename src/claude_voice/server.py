@@ -2738,7 +2738,7 @@ def build_server(
 
     # Not destructive, on purpose: marked so, the Claude app asked the owner before every stop. A
     # stopped session keeps its conversation and can be resumed, and the owner trusts an agent that
-    # stops one to have a reason; request_access is the one grant the owner approves each time.
+    # stops one to have a reason; open_folder is the one grant the owner approves each time.
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def stop_active_session(
         name: Annotated[str, Field(description=SESSION_PARAM)],
@@ -2874,8 +2874,8 @@ def build_server(
         aside, and parked marks one that stop_active_session parked; number is the short number any
         tool taking a session also takes. A session outside
         the folders open to the bridge (the root and what's under it, and those opened with
-        request_access; open in an app doesn't count) shows only its name, folder and status, with
-        access "folder_not_open" (request_access opens it once the owner confirms) or
+        open_folder; open in an app doesn't count) shows only its name, folder and status, with
+        access "folder_not_open" (open_folder opens it once the owner confirms) or
         "folder_closed" (inside or holding a secret or system folder; never opened).
         offline_in_app, when there are any: sessions Claude Code closed on its own in the last 3
         days that the Claude app still lists, shown offline. A message the owner types to one
@@ -3140,7 +3140,7 @@ def build_server(
                 raise ToolError(f"{session!r}: {manager.access.explain(cwd)}")
             raise ToolError(
                 f"{session!r} is in {Path(cwd).resolve()}, a folder not open to the bridge;"
-                " open it with request_access (the owner approves it in their app)"
+                " open it with open_folder (the owner approves it in their app)"
             )
         return d
 
@@ -3154,7 +3154,7 @@ def build_server(
         d = find_any_live(str(session))
         return str(d.get("cwd")), d
 
-    def open_folder(target: str, by_path: bool, session_name: str | None) -> dict[str, Any]:
+    def grant_folder(target: str, by_path: bool, session_name: str | None) -> dict[str, Any]:
         """Open a folder the owner confirmed with a passkey; a folder by path is trusted too."""
         try:
             opened = manager.access.grant(target)
@@ -3180,7 +3180,7 @@ def build_server(
         return f"{page_url}/confirm/r/{req['link']}"
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def request_access(
+    def open_folder(
         session: Annotated[str | None, Field(description=SESSION_PARAM)] = None,
         folder: Annotated[
             str | None,
@@ -3189,7 +3189,7 @@ def build_server(
     ) -> dict[str, Any]:
         """Open a folder to the bridge, once the owner confirms with a passkey.
         Give `session`, to open the folder it runs in, or `folder`. It stays open, with everything
-        under it, until revoke_access takes it back. Send the owner
+        under it, until close_folder takes it back. Send the owner
         the returned link in the chat: the page shows the code and the folder, and they confirm
         there with their passkey."""
         target, d = folder_to_open(session, folder)
@@ -3454,7 +3454,7 @@ def build_server(
         """Carry out what the owner confirmed: open the folder, or tell the session."""
         if req["kind"] == "folder":
             p = req["payload"]
-            opened = open_folder(p["target"], bool(p["by_path"]), p.get("session"))
+            opened = grant_folder(p["target"], bool(p["by_path"]), p.get("session"))
             log.info("owner confirmed %s: %s", req["code"], opened)
             return {"folder": opened}
         target = next((d for d in live_sessions() if str(d.get("sessionId")) == req["session_id"]), None)
@@ -3555,10 +3555,10 @@ def build_server(
         return JSONResponse({"status": "added"})
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def revoke_access(
-        folder: Annotated[str, Field(description="A folder opened with request_access, as health lists it.")],
+    def close_folder(
+        folder: Annotated[str, Field(description="A folder opened with open_folder, as health lists it.")],
     ) -> dict[str, Any]:
-        """Take back a folder opened with request_access: it is folder_not_open again."""
+        """Take back a folder opened with open_folder: it is folder_not_open again."""
         try:
             closed = manager.access.revoke(folder)
         except ValueError as exc:

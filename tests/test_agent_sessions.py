@@ -70,7 +70,7 @@ async def test_an_agent_offers_only_the_session_tools_on_its_list(tmp_path):
     has = await tool_names(bridge)  # the fork's bridge lacks some of the list's tools (UPSTREAM.md)
     offered = await tool_names(agent.build_agent("hjemme", agent.Pairing(tmp_path / "agent"), bridge=bridge))
     assert offered == {*agent.SESSION_TOOLS, "agent_info"} & {*has, "agent_info"}
-    assert not {"update_bridge", "health", "request_access", "hand_to_desktop"} & offered
+    assert not {"update_bridge", "health", "open_folder", "hand_to_desktop"} & offered
 
 
 async def test_the_hub_lists_and_messages_a_session_on_the_other_machine(tmp_path):

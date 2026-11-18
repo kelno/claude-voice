@@ -59,7 +59,7 @@ class SessionManager:
         path = path.resolve()
         # RULE: a folder outside the root is refused
         if self.access.state(path) != "open":
-            raise ValueError(f"folder must be under {self.root} or opened with request_access")
+            raise ValueError(f"folder must be under {self.root} or opened with open_folder")
         if not path.is_dir():
             raise ValueError(f"not a directory: {path}")
         return path

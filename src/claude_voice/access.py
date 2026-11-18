@@ -2,7 +2,7 @@
 
 See decisions/ADR-CV-101. A folder is "open" when it is the root or a granted folder, or
 under one; "closed" when it is inside a closed folder, or holds one; otherwise it is
-"not_open", and the owner can open it with request_access. One exception: a scratch folder
+"not_open", and the owner can open it with open_folder. One exception: a scratch folder
 the Claude desktop app makes for a session opens even though it sits inside AppData.
 """
 
@@ -160,7 +160,7 @@ class Access:
         with self.db:
             gone = self.db.execute("DELETE FROM access_grants WHERE folder=?", (str(p),)).rowcount
         if not gone:
-            raise ValueError(f"{p} was not opened with request_access; health lists the opened folders")
+            raise ValueError(f"{p} was not opened with open_folder; health lists the opened folders")
         return p
 
 

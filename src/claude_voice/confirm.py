@@ -1,6 +1,6 @@
 """The owner's confirmation: a request waits until the owner confirms it with a passkey on the bridge's page.
 
-A session asks with its exact summary (or request_access asks to open a folder); the relay hands the
+A session asks with its exact summary (or open_folder asks to open a folder); the relay hands the
 owner the request's link; the owner confirms it on the page with a passkey the bridge verifies itself;
 a session then checks the result. The flow, what each party can observe, why a confirmed result
 stands for the owner's OK, and its limits: docs/owner-confirmation.md.
@@ -130,7 +130,7 @@ class Confirmations:
 
     def ask_folder(self, summary: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Opening a folder: done by the bridge itself once the owner confirms."""
-        return self._add("folder", "", "request_access", summary, payload)
+        return self._add("folder", "", "open_folder", summary, payload)
 
     def _get(self, where: str, value: str) -> dict[str, Any] | None:
         row = self.db.execute(f"SELECT {COLUMNS} FROM owner_requests WHERE {where}=?", (value,)).fetchone()

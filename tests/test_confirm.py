@@ -281,7 +281,7 @@ async def test_a_folder_opens_only_once_the_owner_confirms_it(bridge, tmp_path):
     folder.mkdir()
     async with reached(bridge["server"]) as app:
         key = await owner_registers(app, bridge["store"])
-        asked = outcome(await call(app, "request_access", {"folder": str(folder)}))
+        asked = outcome(await call(app, "open_folder", {"folder": str(folder)}))
         assert asked["status"] == "waiting_for_owner"
         assert bridge["m"].access.state(folder) == "not_open"
         done = await owner_confirms(app, asked["link"], key)

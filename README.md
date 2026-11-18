@@ -105,7 +105,7 @@ the bridge says which are missing, with the exact fix, through its
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher, and whether developer mode is on |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
-| `request_access`, `revoke_access` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |
+| `open_folder`, `close_folder` | open a folder to the bridge for good, a listed session's or one given by its full path, once you confirm it with your passkey; close it again |
 | `confirm_ask`, `confirm_link`, `confirm_check` | the owner's own OK for a session: the session asks with its exact summary and passes on the link to the bridge's page where you confirm it with your passkey (`confirm_link` gets that link from a bare code), and the session checks the result itself; how and why: [docs/owner-confirmation.md](docs/owner-confirmation.md) |
 | `compact_after_turn` | for a background session, called by the session itself: once its current turn ends, the bridge stops it, compacts its conversation as `/compact` would (with the session's instructions, if given) and wakes it again, so a session compacts at a break it chooses with no one typing `/compact`; with Remote Control, it is off the Claude app's session list until it wakes |
 | `start_active_session` | start a new Claude Code session on Remote Control, ready to talk to at once, on Opus unless another model is chosen, optionally with an effort; with `create_folder`, a new folder by a plain name under the root, only when asked |
@@ -192,7 +192,7 @@ and `/api/v1/doctor` say whether such a port is there.
   - Every running session is listed, but one outside those folders shows only
     its name, folder and status, marked `access: "folder_not_open"`: it cannot be
     read or messaged.
-  - `request_access` opens that session's folder and everything under it, for
+  - `open_folder` opens that session's folder and everything under it, for
     good; given a full path instead, it opens a folder no session runs in yet,
     and marks it trusted in Claude Code, which won't start a session in a folder
     it never trusted. It opens nothing itself: it returns a link to the bridge's

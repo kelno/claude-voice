@@ -64,8 +64,8 @@ async def call(client, name, **args):
 
 
 async def owner_grants(c, srv, world, **args):
-    """request_access, then the owner's passkey on the bridge's page: what the bridge did."""
-    asked = await call(c, "request_access", **args)
+    """open_folder, then the owner's passkey on the bridge's page: what the bridge did."""
+    asked = await call(c, "open_folder", **args)
     assert asked["status"] == "waiting_for_owner"
     book = passkeys.for_url(Store(world["tmp"] / "bridge.db"), "http://localhost")
     key = SoftKey("localhost", "http://localhost")
@@ -112,8 +112,8 @@ async def test_a_session_needing_approval_cannot_be_read_or_messaged(world):
     running(world, 2, "Notes", world["elsewhere"])
     _, srv = server(world)
     async with Client(srv) as c:
-        assert "request_access" in await refused(c, "read_session_output", session="Notes")
-        assert "request_access" in await refused(c, "message_active_session", session="Notes", message="hi")
+        assert "open_folder" in await refused(c, "read_session_output", session="Notes")
+        assert "open_folder" in await refused(c, "message_active_session", session="Notes", message="hi")
 
 
 async def test_granting_opens_a_sessions_folder_and_everything_under_it_for_good(world):
@@ -142,15 +142,15 @@ async def test_a_folder_holding_or_inside_a_denied_folder_is_never_granted(world
     async with Client(srv) as c:
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Home"]["access"] == "folder_closed" and listed["Keys"]["access"] == "folder_closed"
-        holds = await refused(c, "request_access", session="Home")
-        inside = await refused(c, "request_access", session="Keys")
+        holds = await refused(c, "open_folder", session="Home")
+        inside = await refused(c, "open_folder", session="Keys")
         unreadable = await refused(c, "read_session_output", session="Keys")
     ssh = str((world["home"] / ".ssh").resolve())
     # The refusal names the closed folder and how the session's folder relates to it.
     assert "holds" in holds and ssh in holds
     assert "inside" in inside and ssh in inside
     assert "inside" in unreadable and ssh in unreadable
-    # request_access refuses first; the grant made once the owner confirms refuses too, should a
+    # open_folder refuses first; the grant made once the owner confirms refuses too, should a
     # closed folder reach it another way.
     for folder, how in ((world["home"], "holds"), (world["home"] / ".ssh" / "keys", "inside")):
         with pytest.raises(ValueError, match=how):
@@ -190,7 +190,7 @@ async def test_a_folder_no_session_runs_in_is_opened_by_its_path(world):
 
 async def test_a_folder_opened_by_path_is_trusted_by_claude_code_too(world):
     # Claude Code won't start a background session in a folder it was never trusted in, so the
-    # owner's passkey confirmation of request_access covers its trust too, as its docs say to set it.
+    # owner's passkey confirmation of open_folder covers its trust too, as its docs say to set it.
     (world["tmp"] / ".claude.json").write_text(
         json.dumps({"numStartups": 7, "projects": {"C:/elsewhere": {"hasTrustDialogAccepted": True, "x": 1}}}),
         encoding="utf-8",
@@ -242,11 +242,11 @@ async def test_a_folder_by_path_is_refused_when_closed_relative_missing_or_doubl
     running(world, 2, "Notes", world["elsewhere"])
     _, srv = server(world)
     async with Client(srv) as c:
-        closed = await refused(c, "request_access", folder=str(world["home"]))
-        relative = await refused(c, "request_access", folder="notes")
-        missing = await refused(c, "request_access", folder=str(world["tmp"] / "nowhere"))
-        both = await refused(c, "request_access", session="Notes", folder=str(world["elsewhere"]))
-        neither = await refused(c, "request_access")
+        closed = await refused(c, "open_folder", folder=str(world["home"]))
+        relative = await refused(c, "open_folder", folder="notes")
+        missing = await refused(c, "open_folder", folder=str(world["tmp"] / "nowhere"))
+        both = await refused(c, "open_folder", session="Notes", folder=str(world["elsewhere"]))
+        neither = await refused(c, "open_folder")
     assert "holds" in closed
     assert "full path" in relative
     assert "not a directory" in missing
@@ -258,10 +258,10 @@ async def test_revoking_a_grant_closes_the_folder_again(world):
     _, srv = server(world)
     async with Client(srv) as c:
         await owner_grants(c, srv, world, session="Notes")
-        await call(c, "revoke_access", folder=str(world["elsewhere"]))
+        await call(c, "close_folder", folder=str(world["elsewhere"]))
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert listed["Notes"]["access"] == "folder_not_open"
-        await refused(c, "revoke_access", folder=str(world["elsewhere"]))
+        await refused(c, "close_folder", folder=str(world["elsewhere"]))
 
 
 def scratch_world(world):
@@ -289,7 +289,7 @@ async def test_only_a_desktop_scratch_folder_is_opened_inside_a_denied_folder(wo
         assert granted["folder"] == str(scratch.resolve())
         listed = {s["name"]: s for s in (await call(c, "list_active_sessions"))["sessions"]}
         assert "access" not in listed["Scratch"] and "access" not in listed["Scratch, deeper"]
-        await refused(c, "request_access", session="Workspaces")
+        await refused(c, "open_folder", session="Workspaces")
 
 
 async def test_the_bridges_own_messengers_are_not_listed(world):

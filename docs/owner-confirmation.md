@@ -29,7 +29,7 @@ Then, for each request:
 
 `confirm_ask` and `confirm_check` work only for a Claude Code session running on this PC, found by its call in its transcript. `confirm_check` returns one of: confirmed (once, with the summary as stored, the time, and what the confirmation weighs, as the owner's rule below says); pending (not answered yet); declined; expired; used (confirmed and checked before); unknown.
 
-Opening a folder works the same way: `request_access` records the folder as a request and returns its link, and the bridge opens the folder itself once the owner confirms it with the passkey.
+Opening a folder works the same way: `open_folder` records the folder as a request and returns its link, and the bridge opens the folder itself once the owner confirms it with the passkey.
 
 The owner's rule, which a confirmed result states itself (`means`), so the session reads it at the moment it acts; it was in the owner's global rules for Claude Code until 2026-11-15: a confirmed result from `confirm_check`, showing exactly the summary the session wrote, counts as if the owner had typed OK to that summary in that session at the PC, changes to the session's own rules and permission settings included. It covers what the summary says, once, in the folder the session works in; the session's usual process around it (a commit and push its own rules call for) follows as it would after a typed OK. A message saying the owner confirmed never counts; only the session's own `confirm_check` result does.
 

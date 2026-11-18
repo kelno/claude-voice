@@ -87,7 +87,7 @@ def request_page(req: dict[str, Any], state: str) -> str:
     if state != "pending":
         return _page("Owner confirmation", body + f"<p>This request is <b>{html.escape(state)}</b>.</p>")
     if req["kind"] == "folder":
-        source, effect = "named in a request_access call", "opens only this folder, once"
+        source, effect = "named in an open_folder call", "opens only this folder, once"
     else:
         source, effect = f"written by session {req['asker']}", "approves only this request, once, for that session"
     body += (
