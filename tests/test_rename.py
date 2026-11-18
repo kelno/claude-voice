@@ -211,6 +211,17 @@ async def test_the_job_record_of_a_busy_session_is_never_written(tmp_path, root,
     assert out["claude_code"] == "pending" and "by itself" in out["note"] and "again" not in out["note"]
 
 
+async def test_a_session_whose_turn_ended_with_a_task_running_is_renamed_in_claude_code_at_once(
+    tmp_path, root, live, jobs
+):
+    # Claude Code says "shell" then and leaves the job record alone until the task ends (2026-11-18).
+    record = started(tmp_path, live, root, jobs, status="shell")
+    async with Client(server(tmp_path, root, live, jobs)) as c:
+        out = await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum", owner_chose=True)
+    assert out["claude_code"] == "renamed"
+    assert json.loads(record.read_text(encoding="utf-8"))["name"] == "math-quest-curriculum"
+
+
 def watching(tmp_path, root, live, jobs):
     """The bridge as served: its watcher looks at the running sessions every few hundredths of a second."""
     m = SessionManager(Store(tmp_path / "b.db"), project_root=root)
@@ -245,6 +256,16 @@ async def test_a_name_given_mid_turn_reaches_claude_code_once_the_session_is_idl
         assert await named_in_job(record, "math-quest-curriculum")
     saved = json.loads(record.read_text(encoding="utf-8"))
     assert saved["respawnFlags"][:2] == ["--name", "math-quest-curriculum"] and saved["nameSource"] == "user"
+
+
+async def test_a_name_given_mid_turn_reaches_claude_code_while_a_task_runs_on_after_the_turn(
+    tmp_path, root, live, jobs
+):
+    record = started(tmp_path, live, root, jobs, status="busy")
+    async with Client(watching(tmp_path, root, live, jobs)) as c:
+        await call(c, "rename_session", session="math-quest", new_name="math-quest-curriculum", owner_chose=True)
+        write(live, os.getpid(), SID, "math-quest", root, status="shell", kind="bg")  # turn over, task on
+        assert await named_in_job(record, "math-quest-curriculum")
 
 
 async def test_the_last_name_given_mid_turn_is_the_one_claude_code_gets(tmp_path, root, live, jobs):

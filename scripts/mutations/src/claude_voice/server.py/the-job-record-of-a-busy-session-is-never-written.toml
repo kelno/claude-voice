@@ -1,5 +1,5 @@
 [[rule]]
 name = "the job record of a busy session is never written"
 file = "src/claude_voice/server.py"
-find = 'if d.get\("status"\) != "idle":'
+find = 'if d.get\("status"\) not in RENAMEABLE:'
 replace = 'if False:'

@@ -273,6 +273,10 @@ STARTING_TOOLS = ("start_active_session", "attach_conversation")
 # A pending rename written into a job record is not written again for this long, while Claude Code
 # takes the name and its lists catch up (seen within 15 s, 2026-11-05).
 RENAME_RETRY_SECONDS = 60.0
+# When a background session's job record may be written: idle, or its turn over with a task it
+# started still running ("shell"), when Claude Code leaves the record alone until the task ends
+# (seen for two minutes, 2026-11-18). Mid-turn, Claude Code rewrites it often.
+RENAMEABLE = ("idle", "shell")
 # Once a followed session's reply is read, it stays in a quiet follow: named only when it has a new
 # finished turn the relay hasn't read, such as one the owner typed or another session asked for,
 # until stopped, until it ends, or after this long with nothing new (owner, 2026-11-13).
@@ -3635,7 +3639,7 @@ def build_server(
                 " there too; messages to either name reach it."
             )
         # RULE: the job record of a busy session is never written
-        if d.get("status") != "idle":
+        if d.get("status") not in RENAMEABLE:
             return "pending", (
                 "Renamed in the bridge; Claude Code is mid-turn, so the bridge gives it the new name by itself"
                 " once it is idle, even after a stop or a bridge restart. Nothing to do; a later rename replaces it."
@@ -3708,7 +3712,7 @@ def build_server(
         for d in reachable():
             sid, claude_name, new = str(d.get("sessionId")), d.get("deliver_to"), str(d.get("name"))
             # RULE: a name given mid-turn reaches Claude Code once the session is idle
-            if not claude_name or d.get("status") != "idle" or d.get("kind") != "bg":
+            if not claude_name or d.get("status") not in RENAMEABLE or d.get("kind") != "bg":
                 continue
             tried = rename_tried.get(sid)
             if tried and tried[0] == new and manager.clock() - tried[1] < RENAME_RETRY_SECONDS:
