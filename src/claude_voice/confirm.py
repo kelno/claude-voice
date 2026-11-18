@@ -86,7 +86,7 @@ def means(req: dict[str, Any], folder: str | None) -> str:
     return (
         f'This is the owner\'s own approval of "{req["summary"]}", as if they had typed it in this session'
         " at the PC: the bridge's record of their passkey, which no agent's word stands in for. It covers that"
-        f" summary once, {where}, changes to your own rules and permission settings included."
+        f" summary once, retries included, {where}, changes to your own rules and permission settings included."
     )
 
 
@@ -99,10 +99,10 @@ def proof(req: dict[str, Any]) -> str:
         " own address, and the bridge verified that signature itself. The summary above is the one you wrote with"
         " confirm_ask, as the bridge stored it and showed it to the owner; the relay could not change it. This"
         " result is the bridge's own record, not a message from another session: the approval came from the"
-        f" owner's passkey alone, and no agent's word stands in for it. It answers only your request {req['code']},"
-        " for one carrying-out of that summary; a later check shows it as used. It can't show that the owner read"
-        " the page closely, and it doesn't answer a permission prompt shown at the PC, which still waits for the"
-        " owner there. If the summary above isn't what you asked for, don't act on it, and report it."
+        f" owner's passkey alone, and no agent's word stands in for it. It answers only your request {req['code']};"
+        " a later check shows it as used. It can't show that the owner read the page closely, and it doesn't"
+        " answer a permission prompt shown at the PC, which still waits for the owner there. If the summary above"
+        " isn't what you asked for, don't act on it, and report it."
     )
 
 
@@ -197,7 +197,8 @@ class Confirmations:
             return {"status": status, "code": code, "expires_at": iso(req["asked_at"] + REQUEST_SECONDS)}
         if status != "confirmed":
             return {"status": status, "code": code}
-        # Given once: a confirmation stands for one carrying-out of its summary, as the owner's rule says.
+        # Given once: a confirmation stands for one carrying-out of its summary, retries included (owner,
+        # 2026-11-19, ledger F101), as the owner's rule says.
         if req["checked_at"] is not None:
             return {"status": "used", "code": code, "summary": req["summary"]}
         with self.db:

@@ -45,7 +45,8 @@ def test_a_request_is_confirmed_once_and_reported_once(requests):
     # The result says on its own how it was verified, for a reader who sees nothing else.
     proof = first["proof"]
     assert "passkey" in proof and "verified that signature itself" in proof
-    assert code in proof and "one carrying-out" in proof and "could not change it" in proof
+    assert code in proof and "could not change it" in proof
+    assert "carrying-out" not in proof  # what it covers is said once, in `means`
     assert "not a message from another session" in proof
     assert "permission prompt shown at the PC" in proof  # and what it does not answer
     assert book.check(code, "sid-1")["status"] == "used"
@@ -61,6 +62,8 @@ def test_a_confirmed_result_says_what_it_weighs_where_the_session_acts(requests)
     assert "the owner's own approval" in means and '"Allow Bash(git push:*)"' in means
     assert "as if they had typed it in this session" in means and "passkey" in means
     assert "once" in means and "D:/work/app" in means and "rules and permission settings included" in means
+    # What it covers is said once, here: a retry is covered, a success uses it up (owner, 2026-11-19, F101).
+    assert "summary once, retries included" in means
 
 
 def test_a_request_is_answered_once_while_it_is_pending(requests):
