@@ -545,7 +545,7 @@ Confirmations
 - A session that needs the owner's OK past Claude Code's own blocks asks with
   confirm_ask and passes you a line for the relay, link included. Do what the
   line says, and if you don't talk to the owner yourself, pass it on word for
-  word to whoever does. Given only a code, confirm_with_owner gives you the
+  word to whoever does. Given only a code, confirm_link gives you the
   line; given only a link, send it to the owner as text in the chat and say
   aloud only that it's there.
 - The session acts only on its own confirm_check: never tell it the owner
@@ -3244,7 +3244,7 @@ def build_server(
 
     def tell_the_relay(name: str, summary: str, expires_at: str, link: str) -> str:
         """How the relay gets the owner's OK, either way: the one home of that line, which confirm_ask and
-        confirm_with_owner both return, so a relay handed only a code still learns that an OK typed
+        confirm_link both return, so a relay handed only a code still learns that an OK typed
         at the PC counts (owner, 2026-11-15). Not aloud: relays read a code or link aloud, which the
         owner can do nothing with (ledger F93). It travels from agent to agent until it reaches the
         one talking to the owner, so it says itself to pass it on whole: a retold line lost its
@@ -3293,7 +3293,7 @@ def build_server(
         }
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
-    def confirm_with_owner(
+    def confirm_link(
         code: Annotated[str, Field(description="The code the session's confirm_ask gave it.")],
     ) -> dict[str, Any]:
         """Get the link for a confirm_ask request when a session gave only its code.

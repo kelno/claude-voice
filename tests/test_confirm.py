@@ -235,10 +235,10 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         assert asked["running"]["design"].endswith("/docs/owner-confirmation.md")
         assert 'at the PC, ask them to type their OK in the session "desk"' in asked["tell_the_relay"]
         # The session hands the relay the link itself, so no relay has to turn a code into one.
-        assert asked["link"] in asked["tell_the_relay"] and "confirm_with_owner" not in asked["tell_the_relay"]
+        assert asked["link"] in asked["tell_the_relay"] and "confirm_link" not in asked["tell_the_relay"]
         assert '"Allow Bash(git push:*)"' in asked["tell_the_relay"]  # so the relay can say what it asks
 
-        handed = outcome(await call(app, "confirm_with_owner", {"code": code}))
+        handed = outcome(await call(app, "confirm_link", {"code": code}))
         assert handed["link"] == asked["link"]
         assert handed["tell_the_relay"] == asked["tell_the_relay"]
         assert handed["summary"] == "Allow Bash(git push:*)" and handed["from"] == "desk"
@@ -271,7 +271,7 @@ async def test_the_page_refuses_whoever_reaches_it_from_the_internet(bridge):
         key = await owner_registers(app, bridge["store"])
         transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
         code = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))["code"]
-        link = outcome(await call(app, "confirm_with_owner", {"code": code}))["link"]
+        link = outcome(await call(app, "confirm_link", {"code": code}))["link"]
         assert (await app.get(path_of(link), headers={"x-forwarded-for": ANTHROPIC})).status_code == 403
         assert (await owner_confirms(app, link, key, address=ANTHROPIC)).status_code == 403
 
@@ -301,5 +301,5 @@ async def test_the_relay_gets_one_confirmation_line_from_either_tool(bridge):
     async with reached(bridge["server"]) as app:
         transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
         asked = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))
-        handed = outcome(await call(app, "confirm_with_owner", {"code": asked["code"]}))
+        handed = outcome(await call(app, "confirm_link", {"code": asked["code"]}))
     assert "at the PC" in handed["tell_the_relay"] and handed["tell_the_relay"] == asked["tell_the_relay"]
