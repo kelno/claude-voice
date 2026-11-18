@@ -2761,7 +2761,8 @@ def build_server(
         An idle session on Remote Control, with no window, is parked rather than stopped (status
         parked, and say for the owner): it stays at rest until Claude Code closes it itself, about
         8 hours after it last worked or sooner when memory runs low, and that close keeps it in
-        the owner's session list in the Claude app, where they can wake it. Stopped at once
+        the owner's session list in the Claude app, shown offline, like any session Claude Code
+        closed (list_active_sessions, offline_in_app). Stopped at once
         (status stopped: with now, or for any other session), a session on Remote Control leaves
         that list."""
         target = named_for_voice(live_sessions(), name)

@@ -1,7 +1,7 @@
 """Sessions stop_active_session parked rather than stopped, so the Claude app keeps them listed.
 
 `claude stop` archives a session's claude.ai session, and the Claude app stops listing it. Claude
-Code's own close of a session at rest keeps it listed, where the owner can wake it; nothing outside
+Code's own close of a session at rest keeps it listed, shown offline; nothing outside
 Claude Code can ask for that close (Claude Code 2.1.325; ADR-CV-107). So stop_active_session leaves
 an idle session on Remote Control at rest, "parked", for Claude Code to close, and this module keeps
 the mark that lists it as parked until it works again.
@@ -22,9 +22,10 @@ if TYPE_CHECKING:
 # may have read only the start of stop_active_session's description.
 SAY = (
     "{name} is parked, not stopped: it stays in the owner's session list in the Claude app, at rest, "
-    "until Claude Code closes it about 8 hours after it last worked (sooner when memory runs low), "
-    "and the owner can wake it there. stop_active_session with now=true stops it at once and takes "
-    "it off that list."
+    "until Claude Code closes it about 8 hours after it last worked (sooner when memory runs low). "
+    "Once closed, the app still lists it, shown offline, but a message typed to it there waits "
+    "unseen until the bridge resumes it. stop_active_session with now=true stops it at once and "
+    "takes it off that list."
 )
 SETTING = "parked"  # session id -> when it was parked, in milliseconds
 
