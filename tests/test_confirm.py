@@ -6,6 +6,7 @@ Design and reasoning: docs/owner-confirmation.md, ADR-CV-106.
 import asyncio
 import contextlib
 import json
+import time
 
 import httpx
 import pytest
@@ -86,6 +87,16 @@ def test_a_request_expires_after_fifteen_minutes(requests):
     assert book.check(asked["code"], "sid-1")["status"] == "expired"
     with pytest.raises(ValueError, match="expired"):
         book.decide(asked["link"], confirmed=True)
+
+
+def test_a_link_shows_its_code_and_end_time_after_the_page(requests):
+    # The end on this PC's clock, readable in the link itself, in the fragment the page never reads
+    # (owner, 2026-11-19; obsidian-mcp's ledger links do the same).
+    book, now = requests
+    asked = book.ask("sid-1", "desk", "Allow it")
+    end = time.strftime("%H:%M", time.localtime(now[0] + 15 * 60))
+    assert confirm.link_path(asked) == f"/confirm/r/{asked['link']}#{asked['code']}/until-{end}"
+    assert confirm.link_path(book.by_code(asked["code"])) == confirm.link_path(asked)
 
 
 def test_an_empty_or_long_summary_is_refused(requests):
@@ -202,7 +213,8 @@ def outcome(result):
 
 
 def path_of(link):
-    return link.removeprefix(PUBLIC)
+    # As the browser does: the fragment (the code and end time, for reading) is never sent.
+    return link.removeprefix(PUBLIC).split("#", 1)[0]
 
 
 async def owner_registers(app, store):
@@ -237,6 +249,9 @@ async def test_a_session_asks_the_owner_confirms_with_a_passkey_and_the_session_
         # The session hands the relay the link itself, so no relay has to turn a code into one.
         assert asked["link"] in asked["tell_the_relay"] and "confirm_link" not in asked["tell_the_relay"]
         assert '"Allow Bash(git push:*)"' in asked["tell_the_relay"]  # so the relay can say what it asks
+        # The link shows its own end; no text tells an agent to announce it (owner, 2026-11-19).
+        assert f"#{code}/until-" in asked["link"]
+        assert "expire" not in asked["tell_the_relay"] and "expires_at" not in asked
 
         handed = outcome(await call(app, "confirm_link", {"code": code}))
         assert handed["link"] == asked["link"]

@@ -71,7 +71,7 @@ async def owner_grants(c, srv, world, **args):
     key = SoftKey("localhost", "http://localhost")
     token = book.new_registration()
     book.register(token, key.register(book.registration_options(token)), "test")
-    page = asked["link"].removeprefix("http://localhost")
+    page = asked["link"].removeprefix("http://localhost").split("#", 1)[0]  # the browser never sends the fragment
     transport = httpx.ASGITransport(app=build_app(srv), client=("127.0.0.1", 4321))
     async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as h:
         options = (await h.post(page + "/challenge")).json()

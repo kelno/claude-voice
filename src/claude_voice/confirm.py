@@ -67,6 +67,18 @@ def iso(ts: float | None) -> str | None:
     return None if ts is None else time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
 
+def link_path(req: dict[str, Any]) -> str:
+    """`/confirm/r/<link>#K4Q2/until-23:45`: the request's page, then its code and end time, readable.
+
+    The end time is in the link itself, on this PC's clock (the owner's), so whoever sees the link sees
+    it ends, and no text tells an agent to say so (owner, 2026-11-19; the obsidian-mcp ledger links do
+    the same). It sits in the fragment, which the browser never sends: the page and its routes read
+    only the path.
+    """
+    end = time.strftime("%H:%M", time.localtime(req["asked_at"] + REQUEST_SECONDS))
+    return f"/confirm/r/{req['link']}#{req['code']}/until-{end}"
+
+
 def means(req: dict[str, Any], folder: str | None) -> str:
     """What a confirmation weighs, said where the session acts on it. The owner's rule, which their
     own global rules held until the bridge said it itself (ledger P159; from P14 and P75)."""
@@ -122,7 +134,7 @@ class Confirmations:
                 " VALUES(?,?,?,?,?,?,?,?)",
                 (code, link, kind, session_id, asker, summary, json.dumps(payload), now),
             )
-        return {"code": code, "link": link, "summary": summary, "expires_at": iso(now + REQUEST_SECONDS)}
+        return {"code": code, "link": link, "summary": summary, "asked_at": now}
 
     def ask(self, session_id: str, asker: str, summary: str) -> dict[str, Any]:
         """A session's request: confirmed on the page, then checked by that session."""

@@ -3181,7 +3181,7 @@ def build_server(
         return out
 
     def link_to(req: dict[str, Any]) -> str:
-        return f"{page_url}/confirm/r/{req['link']}"
+        return f"{page_url}{confirm.link_path(req)}"
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     def open_folder(
@@ -3214,7 +3214,6 @@ def build_server(
             "folder": str(resolved),
             "code": asked["code"],
             "link": link_to(asked),
-            "expires_at": asked["expires_at"],
         }
 
     def running_code() -> dict[str, Any]:
@@ -3246,7 +3245,7 @@ def build_server(
             await asyncio.sleep(0.25)
         raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
 
-    def tell_the_relay(name: str, summary: str, expires_at: str, link: str) -> str:
+    def tell_the_relay(name: str, summary: str, link: str) -> str:
         """How the relay gets the owner's OK, either way: the one home of that line, which confirm_ask and
         confirm_link both return, so a relay handed only a code still learns that an OK typed
         at the PC counts (owner, 2026-11-15). Not aloud: relays read a code or link aloud, which the
@@ -3259,7 +3258,7 @@ def build_server(
             " they're at the PC, ask them to"
             f' type their OK in the session "{name}" there, and don\'t mention a link unless they say they'
             " can't; otherwise send the owner the link below as text in the chat, and aloud say only that it's"
-            f' there and, in a few words, what it asks them to confirm: "{summary}". It expires at {expires_at}.'
+            f' there and, in a few words, what it asks them to confirm: "{summary}".'
             f" Link: {link}"
         )
 
@@ -3286,12 +3285,11 @@ def build_server(
         except ValueError as exc:
             raise ToolError(str(exc)) from None
         name = str(d.get("name") or d["sessionId"])
-        relay = tell_the_relay(name, asked["summary"], asked["expires_at"], link_to(asked))
+        relay = tell_the_relay(name, asked["summary"], link_to(asked))
         return {
             "code": asked["code"],
             "link": link_to(asked),
             "summary": asked["summary"],
-            "expires_at": asked["expires_at"],
             "tell_the_relay": relay,
             "running": running_code(),
         }
@@ -3311,15 +3309,13 @@ def build_server(
         state = confirmations.state(req)
         if state != "pending":
             raise ToolError(f"Request {req['code']} is {state}; the session asks again if it still needs it.")
-        expires_at = str(confirm.iso(req["asked_at"] + confirm.REQUEST_SECONDS))
         return {
             "code": req["code"],
             "link": link_to(req),
             "summary": req["summary"],
             "from": req["asker"],
-            "expires_at": expires_at,
             # RULE: the relay gets one confirmation line from either tool
-            "tell_the_relay": tell_the_relay(req["asker"], req["summary"], expires_at, link_to(req)),
+            "tell_the_relay": tell_the_relay(req["asker"], req["summary"], link_to(req)),
             "note": "If carrying it out raises a permission prompt shown at the PC, that still waits for the owner"
             " there.",
         }
