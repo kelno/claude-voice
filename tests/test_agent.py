@@ -356,11 +356,12 @@ def test_the_running_commit_is_asked_of_git_once_per_process(monkeypatch, fresh_
     asked = []
 
     def git(args, **k):
-        asked.append(args[1])
+        # Through safe_git: its switches come first, and a settings check runs before each call.
+        asked.append(next(a for a in args[1:] if a in ("config", "rev-parse", "status")))
         return subprocess.CompletedProcess(args, 0, "abc1234\n", "")
 
     monkeypatch.setattr(subprocess, "run", git)
     for _ in range(3):
         assert metrics.version() == "abc1234"
         assert metrics.uncommitted() is True
-    assert sorted(asked) == ["rev-parse", "status"]
+    assert sorted(asked) == ["config", "config", "rev-parse", "status"]

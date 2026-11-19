@@ -130,9 +130,13 @@ def uncommitted() -> bool | None:
     import subprocess
     from pathlib import Path
 
+    from claude_voice import safe_git
+
     try:
-        out = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=no"],
+        out = safe_git.run(
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
             cwd=Path(__file__).resolve().parent,
             capture_output=True,
             text=True,
