@@ -116,10 +116,10 @@ def test_a_reply_to_the_courier_is_news_the_voice_reads(store, live, root, monke
     from claude_voice import transcripts
 
     monkeypatch.setattr(transcripts._courier, "on_reply", None)
-    # The fork has no whats_new: the watcher's events reach the companion API through event_feed.
+    # The fork has no whats_new: the watcher's events reach the companion API through feed_news.
     srv = server(store, live, root)
-    first = srv.event_feed()
+    first = srv.feed_news()
     transcripts._courier.on_reply("billing", "Pong. The build is green.")
-    out = srv.event_feed(first["cursor"])
+    out = srv.feed_news(first["cursor"])
     assert kinds(out["events"]) == [("billing", "reply")]
     assert out["events"][0]["text"] == "Reply from billing: Pong. The build is green."

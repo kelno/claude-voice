@@ -315,7 +315,7 @@ def kept_rows(path):
 
 async def test_the_bridge_writes_each_running_session_under_its_programme(tmp_path, world):
     server, kept = keeper(tmp_path, world)
-    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    server.feed_news()  # the fork has no whats_new; the companion API's feed looks the same way
     assert kept_rows(kept) == {
         ("acme", "acme-robots"): "acme-id",
         ("acme", "fix-gripper"): "gripper-id",
@@ -326,20 +326,20 @@ async def test_the_bridge_writes_each_running_session_under_its_programme(tmp_pa
 
 async def test_a_session_the_bridge_renames_moves_to_its_new_row(tmp_path, world):
     server, kept = keeper(tmp_path, world)
-    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    server.feed_news()  # the fork has no whats_new; the companion API's feed looks the same way
     renamed = await call(server, "rename_session", session="loose", new_name="tidy", owner_chose=True)
     assert not renamed.is_error, renamed.content
-    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    server.feed_news()  # the fork has no whats_new; the companion API's feed looks the same way
     rows = kept_rows(kept)
     assert rows[("solo", "tidy")] == "loose-id" and ("solo", "loose") not in rows
 
 
 async def test_a_session_that_ends_keeps_its_row(tmp_path, world):
     server, kept = keeper(tmp_path, world)
-    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    server.feed_news()  # the fork has no whats_new; the companion API's feed looks the same way
     _, live = world
     for f in live.glob("*.json"):
         if json.loads(f.read_text())["name"] == "loose":
             f.unlink()
-    server.event_feed()  # the fork has no whats_new; the companion API's feed looks the same way
+    server.feed_news()  # the fork has no whats_new; the companion API's feed looks the same way
     assert kept_rows(kept)[("solo", "loose")] == "loose-id"

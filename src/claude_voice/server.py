@@ -4573,7 +4573,7 @@ def build_server(
         lines = org.overview(chart, reachable(), chart.placer())
         return {"lines": lines or ["No programme has an org chart file."]}
 
-    def event_feed(cursor: str | None = None) -> dict[str, Any]:
+    def feed_news(cursor: str | None = None) -> dict[str, Any]:
         """The watcher's events since `cursor`, and the cursor to pass next time; for the
         companion API's event stream, no longer a tool since every result carries the news. It
         only reads: the mailbox's offered and read marks belong to the voice."""
@@ -4867,7 +4867,7 @@ def build_server(
             pending=lambda s: across.pending(s) if across.split(s) else api_pending(s),
             prs=lambda s: _no_prs() if across.split(s) else api_prs(s),
             # RULE: the phone pages stream never marks a reply heard
-            news=event_feed,
+            news=feed_news,
             roles=roles_now,
             doctor=doctor_report,
             update_state=update_state,
@@ -4896,7 +4896,7 @@ def build_server(
             activity=activity_view,
         ).routes(mcp)
 
-    mcp.event_feed = event_feed  # type: ignore[attr-defined]  # for tests
+    mcp.feed_news = feed_news  # type: ignore[attr-defined]  # for tests
     mcp.prompt_book = prompt_book  # type: ignore[attr-defined]  # for tests
     mcp.sweep_prompts = sweep_prompts  # type: ignore[attr-defined]  # for tests
 

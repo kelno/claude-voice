@@ -169,16 +169,16 @@ async def test_an_answered_question_is_not_listed_again(server):
 
 
 async def test_a_question_is_news_once_a_hook_waits_on_it(server):
-    # The fork has no whats_new: the watcher's events reach the companion API through event_feed.
+    # The fork has no whats_new: the watcher's events reach the companion API through feed_news.
     async with http(server) as h, Client(server) as c:
-        cursor = server.event_feed()["cursor"]
+        cursor = server.feed_news()["cursor"]
         made = (await h.post("/api/v1/prompts", json=question(), headers=BEARER)).json()
-        before = server.event_feed(cursor)["events"]
+        before = server.feed_news(cursor)["events"]
         wait = asyncio.create_task(h.get(f"/api/v1/prompts/{made['id']}/wait?seconds=5", headers=BEARER))
         await asyncio.sleep(0.1)
-        after = server.event_feed(cursor)["events"]
+        after = server.feed_news(cursor)["events"]
         await h.get(f"/api/v1/prompts/{made['id']}/wait?seconds=0", headers=BEARER)  # a second wait is no news
-        again = server.event_feed(cursor)["events"]
+        again = server.feed_news(cursor)["events"]
         await call(c, "answer_question", question_id=made["id"], choice="1")
         await wait
     assert [e for e in before if e["kind"] == "needs_answer"] == []
