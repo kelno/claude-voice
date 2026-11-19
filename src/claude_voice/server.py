@@ -139,6 +139,15 @@ ANSWER_IN_TEXT = (
     "reads nothing else until your turn ends, so don't ask it anything first: if something is "
     "missing, say so in your answer."
 )
+
+
+def session_note(sender: str, waits: bool) -> str:
+    """The note under a message from the Claude Code session `sender`: answer by direct message,
+    or in the reply text when it waits for the reply."""
+    answer = (ANSWER_IN_TEXT if waits else ANSWER_BY_MESSAGE).format(name=sender)
+    return relayed_note(f"{sender}, a Claude Code session", answer)
+
+
 # Added after the note above at most once in this long per session, so names keep up with the work
 # (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
 NAME_CHECK_SECONDS = 3600.0
@@ -3776,8 +3785,7 @@ def build_server(
         # RULE: a message from a claude code session says to answer it by direct message
         if sender is None:
             return RELAYED_MESSAGE_NOTE
-        answer = (ANSWER_IN_TEXT if waits else ANSWER_BY_MESSAGE).format(name=sender)
-        return relayed_note(f"{sender}, a Claude Code session", answer)
+        return session_note(sender, waits)
 
     def relayed(target: dict[str, Any], message: str, note: str = RELAYED_MESSAGE_NOTE) -> str:
         """A relayed message as the session gets it: the bridge's note after it, and about once an hour

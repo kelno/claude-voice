@@ -30,6 +30,17 @@ Everything the bridge says to an assistant is text the assistant has to understa
 
 ## Checking new wording
 
+- To read the text as clients get it, `claude-voice texts` prints it as JSON, without serving anything: the server's instructions, each tool's name and description as `tools/list` serves them, the guide as the `guide` tool returns it, the notes under a relayed message (values the bridge fills in shown as `<sender>` or `<session name>`), and the files the settings name as notes for relays. It builds the bridge the way `serve` does, from the settings file, so it shows what the running bridge says once restarted on the same code. It leaves out what results say, which depends on each call.
+
+```console
+$ claude-voice texts --help
+usage: claude-voice texts [-h]
+
+options:
+  -h, --help  show this help message and exit
+```
+
+
 - A cold reader is an assistant that reads the text with only what a client would have: not the code, not the discussion that led to the wording, not what it was meant to say. A cold read is what it reports back: what it understands the text to say, and what it would do.
 - By default, when an assistant the text applies to (one that uses the bridge) is in the conversation, ask it how it reads a change before committing, when that's possible. It acts as a cold reader: its reading shapes the wording and is never an approval, which stays with the person you work for.
 - A big change (a new or reworked tool, a reworked rule in the manual, several descriptions at once) ends with a cold read by fresh assistants given only what a client sees, or a session that uses the tools on real cases. Fix what they misread or trip on before calling the change done. Small wording changes don't need one.

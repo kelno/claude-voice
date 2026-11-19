@@ -317,6 +317,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: little; it only matters on Windows and macOS, where git has the daemon. It may wait for candidate 8 (Windows in CI).
 - Test first: `tests/test_reposync.py`, the test named after the rule "a repos check starts no file system monitor" (it sets `core.fsmonitor` in the clone and checks no daemon folder appears).
 
+### 18. Printing what the bridge says to agents — fork "Print the texts the bridge serves to agents"
+
+- Status: an idea; nothing prepared, no branch.
+- What: `claude-voice texts` prints the server's instructions, every tool's name and description as `tools/list` serves them, and the guide, as JSON, from a bridge built as `serve` builds it but never started (`texts.py`). The fork's version adds its own pieces (the notes under a relayed message, the relay notes' files); upstream's would print its instructions and tools.
+- Why upstream should want it: upstream's `AGENTS.md` treats the client-facing text as an interface; one command that prints all of it lets a reviewer read the whole surface at once and diff it between commits, without connecting a client.
+- Expect pushback: building a whole server to read its texts; the build takes a few seconds and starts nothing, and the alternative, a second list of the texts, would drift.
+- Test first: `tests/test_texts.py`, which compares the printout with what an MCP client of the same bridge gets from `tools/list` and `guide`.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.

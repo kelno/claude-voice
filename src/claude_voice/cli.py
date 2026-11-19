@@ -34,6 +34,7 @@ COMMANDS: tuple[str, ...] = (
     "restart",
     "setup",
     "repos",
+    "texts",
 )
 
 SIGN_IN = (
@@ -192,11 +193,13 @@ def main(
     repos_cmd = sub.add_parser("repos", help="the profile's repositories: where each one stands")
     repos_cmd.add_argument("action", choices=["sync"])
     repos_cmd.add_argument("--check", action="store_true", help="say what a sync would do, from local refs only")
+    sub.add_parser("texts", help="print what the bridge says to agents, as JSON, without serving it")
     parsed = parser.parse_args(args)
 
     verbs: dict[str, Callable[[], int]] = {
         "setup": lambda: setup_command(parsed.check, parsed.json, env, login),
         "repos": lambda: repos_command(parsed.check, env),
+        "texts": texts_command,
         "restart": lambda: restart_command(parsed.why, parsed.dry_run, systemctl),
         "permissions": lambda: (
             hook_check_command(parsed.folders, env)
@@ -727,6 +730,22 @@ def org_command(action: str, env: Mapping[str, str]) -> int:
     for line in org.check(chart, running):
         sys.stdout.write(line + "\n")
     return 1 if chart.problems else 0
+
+
+def texts_command() -> int:
+    """Print the texts the bridge serves to agents, as JSON (texts.py)."""
+    import asyncio
+
+    from . import config as settings
+    from . import texts
+
+    try:
+        found = asyncio.run(texts.collect())
+    except settings.ConfigError as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    sys.stdout.write(json.dumps(found, indent=2, ensure_ascii=False) + "\n")
+    return 0
 
 
 def _systemctl(command: list[str]) -> None:
