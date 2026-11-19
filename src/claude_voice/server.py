@@ -1477,7 +1477,9 @@ def build_server(
     def heard(sender: str, body: str) -> None:
         """A reply is news for the phone page's stream, and waits in the mailbox for the voice."""
         watcher.record(sender, "reply", f"Reply from {sender}: {transcripts.clip(body, mailbox.CHARS)}")
-        replies.put(sender, body)
+        # RULE: the mailbox keeps no reply while list_replies is switched off
+        if "list_replies" not in switched_off:  # the fork: nothing would ever read or delete it
+            replies.put(sender, body)
 
     def with_replies(answer: dict[str, Any], sender: str, ack: list[int] | None = None) -> dict[str, Any]:
         """The answer, with that session's replies not yet heard, after marking heard those in `ack`.
