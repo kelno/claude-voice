@@ -547,7 +547,10 @@ Sessions
   worked or sooner when memory runs low; a message you send one through the
   bridge resumes it by itself. One the owner types to it in the Claude app
   doesn't: the app shows the session offline, and the message waits unseen
-  until the session is resumed (list_active_sessions, offline_in_app). A "project" the owner names is a folder to
+  until the session is resumed (list_active_sessions, offline_in_app). A
+  session that compacts itself (compact_after_turn) is off the list for about
+  a minute, then carries on by itself, since the bridge tells it to: don't
+  resume it or nudge it. A "project" the owner names is a folder to
   the bridge; claude.ai Projects, the chat workspaces, are out of its reach. A
   session the bridge started can start one itself with the bridge's tools. A
   desktop session (one the owner opened in the desktop app) can't: the app
