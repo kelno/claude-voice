@@ -15,6 +15,7 @@ dependencies = [
     "psutil>=7",
     "webauthn>=3.0.1",
     "tomli-w>=1.2",
+    "tomlkit>=0.13",
 ]
 
 [project.scripts]

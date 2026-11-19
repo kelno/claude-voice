@@ -16,7 +16,7 @@ def env(tmp_path, **extra):
     return {"CLAUDE_VOICE_ROOT": str(tmp_path), **extra}
 
 
-def test_the_command_has_serve_check_plugins_passkey_home_agent_machines_permissions_org_restart_setup_repos_texts():
+def test_the_command_lists_its_subcommands_the_forks_passkey_and_texts_included():
     assert COMMANDS == (
         "serve",
         "check",
@@ -31,6 +31,8 @@ def test_the_command_has_serve_check_plugins_passkey_home_agent_machines_permiss
         "setup",
         "repos",
         "texts",
+        "roles",
+        "set",
     )
 
 
@@ -237,3 +239,27 @@ def test_a_passkey_link_is_never_made_for_an_address_nobody_set(tmp_path, capsys
     local = {**settings, "CLAUDE_VOICE_PUBLIC_URL": "http://127.0.0.1:8811"}
     assert main(["passkey", "add"], env=local) == 0  # set on purpose, for confirming at the PC
     assert "http://127.0.0.1:8811/confirm/passkey/" in capsys.readouterr().out
+
+
+def test_the_typed_answer_is_read_from_a_real_terminal(monkeypatch):
+    """A terminal can't seek, so it is opened once to read and once to write. The test uses a
+    real pseudo-terminal, not a stand-in, because a stand-in hid exactly this."""
+    import os
+    import sys
+
+    import pytest
+
+    if sys.platform == "win32":
+        pytest.skip("no pseudo-terminals on Windows")
+    import pty
+
+    main_end, terminal_end = pty.openpty()
+    try:
+        monkeypatch.setattr(cli, "TERMINAL", os.ttyname(terminal_end))
+        os.write(main_end, b"accept 3\n")
+        assert cli._read_from_terminal("Type accept 3: ").strip() == "accept 3"
+        shown = os.read(main_end, 1024).decode()
+        assert "Type accept 3: " in shown
+    finally:
+        os.close(main_end)
+        os.close(terminal_end)

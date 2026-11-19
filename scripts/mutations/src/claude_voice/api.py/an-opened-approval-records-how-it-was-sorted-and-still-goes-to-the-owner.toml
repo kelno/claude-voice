@@ -1,0 +1,5 @@
+[[rule]]
+name = "an opened approval records how it was sorted and still goes to the owner"
+file = "src/claude_voice/api.py"
+find = 'prompt\["routed"\] = routed'
+replace = 'pass'

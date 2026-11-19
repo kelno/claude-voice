@@ -112,9 +112,22 @@ def test_the_general_rules_read_a_question_out_and_answer_only_a_clear_choice():
 
 def test_the_default_rules_are_named_and_each_reaches_the_voice_on_a_line_of_its_own():
     """A later setting switches each one by name, so the names are part of the design."""
-    assert set(DEFAULT_RULES) == {"read_next_step", "plain_terminal", "delegate_unable", "answer_questions"}
+    assert set(DEFAULT_RULES) == {
+        "read_next_step",
+        "follow_next",
+        "plain_terminal",
+        "delegate_unable",
+        "answer_questions",
+    }
     assert ALL_RULES.startswith(BASE_INSTRUCTIONS)
     lines = ALL_RULES[len(BASE_INSTRUCTIONS) :].splitlines()
     assert lines == list(DEFAULT_RULES.values())
     # The guide holds only the rules switched on here.
     assert INSTRUCTIONS == general_instructions({k: v for k, v in DEFAULT_RULES.items() if k in VOICE_RULES_ON})
+
+
+def test_the_voice_follows_a_next_at_once_and_stops_without_one():
+    said = ALL_RULES  # switched off here (VOICE_RULES_ON); upstream's rule, checked as upstream has it
+    assert "When an answer carries `next`, call that tool with its args at once, without asking" in said
+    assert "read each answer's say; stop when there is no `next`." in said
+    assert DEFAULT_RULES["read_next_step"] in said  # a step in plain words is still read out

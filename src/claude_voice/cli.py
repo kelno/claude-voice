@@ -35,6 +35,8 @@ COMMANDS: tuple[str, ...] = (
     "setup",
     "repos",
     "texts",
+    "roles",
+    "set",
 )
 
 SIGN_IN = (
@@ -155,11 +157,14 @@ def main(
     plugin_cmd = sub.add_parser(
         "plugins", help="list plugins, install one from its checkout, approve one by typing its name, or revoke one"
     )
-    plugin_cmd.add_argument("action", nargs="?", choices=["list", "install", "approve", "revoke"], default="list")
+    plugin_cmd.add_argument(
+        "action", nargs="?", choices=["list", "install", "approve", "revoke", "set"], default="list"
+    )
     plugin_cmd.add_argument("name", nargs="?")
     key_cmd = sub.add_parser("passkey", help="add the owner's passkey from a one-time link, list or remove them")
     key_cmd.add_argument("action", nargs="?", choices=["add", "list", "remove"], default="list")
     key_cmd.add_argument("id", nargs="?")
+    plugin_cmd.add_argument("values", nargs="*", help="with set: the key and its new value")
     plugin_cmd.add_argument("--from", dest="source", help="with install: the plugin's checkout (default ~/<its repo>)")
     plugin_cmd.add_argument("--dry-run", action="store_true", help="with install: show each change, write nothing")
     plugin_cmd.add_argument("--anywhere", action="store_true", help="with install: allow a home outside Norway")
@@ -176,12 +181,33 @@ def main(
     )
     agent_cmd.add_argument("--sessions", action="store_true", help="with install: offer this machine's sessions")
     machine_cmd = sub.add_parser("machines", help="list other machines, or pair with one by typing its code")
-    machine_cmd.add_argument("action", nargs="?", choices=["list", "approve"], default="list")
+    machine_cmd.add_argument("action", nargs="?", choices=["list", "approve", "add"], default="list")
     machine_cmd.add_argument("name", nargs="?")
+    machine_cmd.add_argument("values", nargs="*", help="with add: the machine's address")
+    roles_cmd = sub.add_parser("roles", help="add one of your own roles, change one field of a role, or take one out")
+    roles_cmd.add_argument("action", choices=["add", "set", "remove"])
+    roles_cmd.add_argument("name")
+    roles_cmd.add_argument(
+        "fields", nargs="*", help="with add: key=value, such as folder=~/demo; with set: the key and its value"
+    )
+    set_cmd = sub.add_parser("set", help="set one of the settings that are not run, such as voice_instructions_file")
+    set_cmd.add_argument("key")
+    set_cmd.add_argument("value")
     permission_cmd = sub.add_parser("permissions", help="give Claude Code the voice repositories' permission rules")
     permission_cmd.add_argument("folders", nargs="*", type=Path, help="default: the clones in the settings file")
     permission_cmd.add_argument("--dry-run", action="store_true", help="say what would be added, and write nothing")
     permission_cmd.add_argument("--check", action="store_true", help="run each repository's session hook once")
+    permission_cmd.add_argument(
+        "--accept", action="store_true", help="show the repositories' rights files, and accept them by typing once"
+    )
+    permission_cmd.add_argument(
+        "--all", action="store_true", help="with --accept: every repository of the bridge's own programme"
+    )
+    permission_cmd.add_argument(
+        "--shipped",
+        action="store_true",
+        help="after an update: write the shipped rules where that only takes rights away, and say what waits",
+    )
     org_cmd = sub.add_parser("org", help="print the org chart, or check its files")
     org_cmd.add_argument("action", nargs="?", choices=["show", "check"], default="show")
     restart_cmd = sub.add_parser("restart", help="restart the bridge's service, noting why for its health answer")
@@ -201,13 +227,11 @@ def main(
         "repos": lambda: repos_command(parsed.check, env),
         "texts": texts_command,
         "restart": lambda: restart_command(parsed.why, parsed.dry_run, systemctl),
-        "permissions": lambda: (
-            hook_check_command(parsed.folders, env)
-            if parsed.check
-            else permissions_command(parsed.folders, parsed.dry_run, env)
-        ),
+        "permissions": lambda: permissions_verb(parsed, env),
         "org": lambda: org_command(parsed.action, env),
-        "machines": lambda: machines_command(parsed.action, parsed.name, env),
+        "machines": lambda: _machines(parsed, env),
+        "roles": lambda: _settings_edit(f"roles {parsed.action}", [parsed.name, *parsed.fields], env),
+        "set": lambda: _settings_edit("set", [parsed.key, parsed.value], env),
         "agent": lambda: agent_command(parsed.action, env, parsed.sessions),
         "passkey": lambda: passkey_command(parsed.action, parsed.id, env),
         "plugins": lambda: plugins_command(parsed.action, parsed.name, env, parsed),
@@ -224,6 +248,12 @@ def main(
         return 1
     serve(cfg)
     return 0
+
+
+def _settings_edit(verb: str, words: list[str | None], env: Mapping[str, str]) -> int:
+    from . import settings_edit
+
+    return settings_edit.command(verb, [w for w in words if w], env)
 
 
 def restart_command(why: str, dry_run: bool, systemctl: Callable[[list[str]], int]) -> int:
@@ -423,6 +453,10 @@ def plugins_command(action: str, name: str | None, env: Mapping[str, str], optio
 
     if action == "revoke":
         return _revoke(name)
+    if action == "set":
+        from . import settings_edit
+
+        return settings_edit.command("plugins set", [w for w in (name, *options.values) if w], env)
     if action == "install":
         return install_command(name, options, env)
     try:
@@ -585,7 +619,8 @@ def agent_command(action: str, env: Mapping[str, str], sessions: bool = False) -
     pairing = agent.Pairing(home / ".config/claude-voice/agent")
     machine = socket.gethostname().split(".")[0]
     if action == "install":
-        command = [sys.executable, "-m", "claude_voice.cli", "agent"]
+        # RULE: the agent runs isolated from the folder systemd starts it in
+        command = [sys.executable, "-I", "-m", "claude_voice.cli", "agent"]
         return agent.install(home, command, sessions, run=_systemctl, login=claude_code_login, machine=machine)
     if action == "pair":
         code = pairing.start()
@@ -600,6 +635,13 @@ def agent_command(action: str, env: Mapping[str, str], sessions: bool = False) -
         sys.stderr.write(f"claude-voice: {exc}\n")
         return 1
     return 0
+
+
+def _machines(parsed: Any, env: Mapping[str, str]) -> int:
+    """machines add writes the settings file; every other machines action is machines_command."""
+    if parsed.action == "add":
+        return _settings_edit("machines add", [parsed.name, *parsed.values], env)
+    return machines_command(parsed.action, parsed.name, env)
 
 
 def machines_command(action: str, name: str | None, env: Mapping[str, str]) -> int:
@@ -706,6 +748,180 @@ def hook_check_command(folders: list[Path], env: Mapping[str, str]) -> int:
         sys.stdout.write(f"{folder}: {detail}. Fix: run `claude-voice permissions` to write it again.\n")
         code = 1
     return code
+
+
+def permissions_verb(parsed: argparse.Namespace, env: Mapping[str, str]) -> int:
+    if parsed.check:
+        return hook_check_command(parsed.folders, env)
+    if parsed.shipped:
+        return shipped_command(parsed.folders, env)
+    if parsed.accept:
+        return accept_command(parsed.folders, env, parsed.all, parsed.dry_run)
+    return permissions_command(parsed.folders, parsed.dry_run, env)
+
+
+def shipped_command(folders: list[Path], env: Mapping[str, str]) -> int:
+    """Bring the shipped rules to the repositories where that only takes rights away, and say
+    for each what was written, what waits for the owner's accept, and what was left alone."""
+    from . import config as settings
+    from . import org, permissions, roles, shipped
+
+    own = roles.own_clone()
+    if not folders:
+        try:
+            folders = permissions.folders(settings.load(settings.FILE, own_clone=own, env=env))
+        except settings.ConfigError as exc:
+            sys.stderr.write(f"claude-voice: {exc}\n")
+            return 1
+    root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
+    chart = org.load(org.known_folders(root, [own, *folders]))
+    backups = permissions.backup_root(Path(env.get("HOME") or Path.home()))
+    # RULE: the shipped rules are recorded under the commit that is installed
+    sha = shipped.installed_commit(own)
+    done = shipped.sync(folders, chart, own, permissions.load(), sha, backup_root=backups)
+    for line in shipped.report(done):
+        sys.stdout.write(line + "\n")
+    return 0
+
+
+#: The terminal itself, which a pipe into stdin can't stand in for.
+TERMINAL = "/dev/tty"
+
+
+def _read_from_terminal(prompt: str) -> str:
+    """One line typed at the terminal itself, never from a pipe into stdin. A terminal can't
+    seek, and a file opened "r+" in text mode needs to, so it is opened once each way."""
+    # RULE: the typed answer is read from a real terminal
+    with open(TERMINAL, "w", encoding="utf-8") as out, open(TERMINAL, encoding="utf-8") as typed:
+        out.write(prompt)
+        out.flush()
+        return typed.readline()
+
+
+def _own_programme_repos(env: Mapping[str, str]) -> list[Path]:
+    """The repositories in the settings that the org chart places in the bridge's own
+    programme; none when the chart cannot be read. Never guessed from a folder's name."""
+    from . import config as settings
+    from . import org, permissions, roles
+
+    own = roles.own_clone()
+    folders = permissions.folders(settings.load(settings.FILE, own_clone=own, env=env))
+    root = Path(env.get("CLAUDE_VOICE_ROOT", "~/src")).expanduser()
+    chart = org.load(org.known_folders(root, [own, *folders]))
+    mine = next((p for p in chart.programmes if own and p.repo == own.resolve()), None)
+    # RULE: accept all says so when the chart cannot name the bridges own programme
+    if mine is None:
+        raise settings.ConfigError("the org chart names no programme for the bridge's own clone, so --all finds none")
+    return [f for f in folders if chart.place(str(f.resolve()), ()).programme is mine]
+
+
+def _accept_summary(repo: Path, shown: list[Any]) -> str:
+    from . import accepted
+
+    lines = [line for item in shown for line in item.lines]
+    widen = sum(1 for line in lines if line.kind == accepted.WIDENS)
+    files = f"{len(shown)} file{'' if len(shown) == 1 else 's'}"
+    return f"{repo}: {files}, {widen} WIDENS, {len(lines) - widen} narrows"
+
+
+def _accept_folders(folders: list[Path], env: Mapping[str, str], every: bool) -> list[Path] | None:
+    """The repositories to accept, or None after saying why there are none or why not here."""
+    from . import config as settings
+
+    if every:
+        try:
+            folders = _own_programme_repos(env)
+        except settings.ConfigError as exc:
+            sys.stderr.write(f"claude-voice: {exc}\n")
+            return None
+    if not folders:
+        sys.stderr.write("claude-voice: name the repositories to accept, or add --all\n")
+        return None
+    if sys.platform == "win32":
+        sys.stderr.write("claude-voice: the accept reads a terminal of its own; run it inside WSL\n")
+        return None
+    # RULE: an accept is typed in a terminal never piped
+    if _refuse_outside_a_terminal("permissions --accept", env):
+        return None
+    return folders
+
+
+def _show_for_accept(found: list[tuple[Path, list[Any]]]) -> None:
+    """One line per repository, then every widening repository's lines in full."""
+    from . import accepted
+
+    for repo, shown in found:
+        sys.stdout.write(_accept_summary(repo, shown) + "\n")
+    for _repo, shown in found:
+        # RULE: every line that widens a sessions rights is shown before the owner types
+        if any(line.kind == accepted.WIDENS for item in shown for line in item.lines):
+            sys.stdout.write(accepted.text(shown))
+
+
+def _typed_yes(found: list[tuple[Path, list[Any]]]) -> bool:
+    """Whether the owner typed the one answer that accepts everything shown."""
+    answer = found[0][0].name if len(found) == 1 else f"accept {len(found)}"
+    typed = _read_from_terminal(
+        f"Read the WIDENS lines first. Type {answer} to accept all of this, anything else to stop: "
+    )
+    # RULE: the owner accepts a repositorys rights by typing its name
+    return typed.strip() == answer
+
+
+def _record_accept(every_file: list[Any]) -> int:
+    """Record the files shown, unless any of them moved since."""
+    from . import accepted
+
+    # RULE: one file changed after it was shown refuses the whole accept
+    moved = [str(item.path) for item in every_file if not item.path.is_file() or item.path.read_bytes() != item.body]
+    if moved:
+        sys.stderr.write(
+            f"claude-voice: {', '.join(moved)} changed after it was shown; nothing was accepted. Run it again.\n"
+        )
+        return 1
+    try:
+        accepted.accept(every_file)
+    except accepted.Changed as exc:
+        sys.stderr.write(f"claude-voice: {exc}\n")
+        return 1
+    return 0
+
+
+def accept_command(folders: list[Path], env: Mapping[str, str], every: bool = False, only_show: bool = False) -> int:
+    """Show what changed in the repositories' rights files since the owner last accepted them,
+    and record them all once the owner types one answer. Every line that widens a session's
+    rights is shown in full; a repository that only narrows gets one line. A dry run shows
+    the same and records nothing."""
+    from . import accepted
+
+    chosen = _accept_folders(folders, env, every)
+    if chosen is None:
+        return 1
+    found = [(repo.resolve(), accepted.show(repo.resolve())) for repo in chosen]
+    found = [(repo, shown) for repo, shown in found if shown]
+    if not found:
+        sys.stdout.write("Nothing to accept; every rights file is as last accepted.\n")
+        return 0
+    _show_for_accept(found)
+    # RULE: a dry run accept shows everything and records nothing
+    if only_show:
+        sys.stdout.write("Dry run: nothing was accepted. Run it again without --dry-run to accept.\n")
+        return 0
+    return _accept_shown(found)
+
+
+def _accept_shown(found: list[tuple[Path, list[Any]]]) -> int:
+    """Record what was shown once the owner types the answer; 1 when it isn't accepted."""
+    if not _typed_yes(found):
+        sys.stdout.write("Not accepted.\n")
+        return 1
+    every_file = [item for _, shown in found for item in shown]
+    if _record_accept(every_file):
+        return 1
+    files = f"{len(every_file)} file{'' if len(every_file) == 1 else 's'}"
+    repos = f"{len(found)} repositor{'y' if len(found) == 1 else 'ies'}"
+    sys.stdout.write(f"Accepted {files} in {repos}.\n")
+    return 0
 
 
 def org_command(action: str, env: Mapping[str, str]) -> int:

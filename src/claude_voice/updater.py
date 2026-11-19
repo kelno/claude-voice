@@ -41,7 +41,7 @@ from typing import Any
 
 import psutil
 
-from . import procs, restarts, safefile
+from . import procs, restarts, safe_git, safefile
 from .config import STATE_DIR
 
 LOG = Path("~/.local/state/claude-voice/update.json")
@@ -66,14 +66,17 @@ def _now() -> str:
 # updater's own git commands read GitHub's ssh addresses over HTTPS: a public repository needs
 # no key at all. Only these commands; the owner's remotes and terminals keep using ssh.
 OVER_HTTPS = ("-c", "url.https://github.com/.insteadOf=git@github.com:")
+#: Every other way of reaching a remote is switched off, so no remote the clone's own settings
+#: name can make the updater start a program (ssh, or a remote helper). A local clone stays allowed.
+HTTPS_ONLY = ("-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.file.allow=always")
 
 
 def _git(repo: Path, *args: str) -> tuple[bool, str]:
     git = procs.find("git") or "git"
     try:
         # RULE: the updater reaches github over https not the owners ssh key
-        command = [git, *OVER_HTTPS, "-C", str(repo), *args]
-        out = subprocess.run(command, capture_output=True, text=True, timeout=120, check=False)
+        leading = (*OVER_HTTPS, *HTTPS_ONLY, "-C", str(repo))
+        out = safe_git.run(*leading, *args, git=git, capture_output=True, text=True, timeout=120, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     return out.returncode == 0, (out.stdout or out.stderr).strip()
@@ -119,6 +122,7 @@ def run(
     restart: Callable[[], None],
     healthy: Callable[[], bool],
     note: Callable[[str, str, str], object] = lambda reason, frm, to: None,
+    rules: Callable[[str], str] = lambda sha: "",
 ) -> dict[str, Any]:
     """Update the clone, and say why before each restart through `note(reason, from, to)`."""
     log = Log(log_path)
@@ -179,6 +183,8 @@ def run(
         log.step("verify", False, "the bridge did not answer after the restart")
         return roll_back("The new version did not start; the old one is back.", restarted=True)
     log.step("verify", True, "the bridge answers")
+    # RULE: an update brings the shipped rules to the repositories once the bridge answers
+    log.step("rules", True, rules(after))
     log.step("done", True, f"now on {after[:7]}")
     return log.finish("updated", f"Updated to {after[:7]}.")
 
@@ -276,6 +282,45 @@ def launch(
     subprocess.run(command, check=True, capture_output=True, timeout=30)
 
 
+SHIPPED_SECONDS = 300.0
+
+
+def shipped_rules(repo: Path) -> str:
+    """Run the new version's `permissions --shipped` and say what it did, briefly. It runs as
+    its own process, so the rules and the code that judges them are the new version's."""
+    uv = procs.find("uv")
+    if not uv:
+        return "uv is not installed, so the shipped rules were not brought to the repositories"
+    command = [uv, "run", "--locked", "claude-voice", "permissions", "--shipped"]
+    try:
+        run = subprocess.Popen(
+            command,
+            cwd=repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=sys.platform != "win32",
+        )
+    except OSError as exc:
+        return f"the shipped rules were not brought to the repositories: {exc}"
+    try:
+        said, _ = run.communicate(timeout=SHIPPED_SECONDS)
+    except subprocess.TimeoutExpired:
+        # RULE: a shipped rules step that runs too long is stopped with everything it started
+        if sys.platform == "win32":
+            run.kill()
+        else:
+            import signal  # here, as SIGKILL exists only off Windows
+
+            os.killpg(run.pid, signal.SIGKILL)
+        try:
+            run.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        return f"the shipped rules step ran past {SHIPPED_SECONDS:.0f} s and was stopped"
+    return (said or "").strip()[-2000:]
+
+
 def _restart() -> None:
     subprocess.run(["systemctl", "--user", "restart", SERVICE], capture_output=True, timeout=120, check=False)
 
@@ -330,6 +375,7 @@ def main() -> int:
         restart=(lambda: restart_on_windows(args.port)) if sys.platform == "win32" else _restart,
         healthy=_healthy(args.port, health_host(args.host)),
         note=lambda reason, frm, to: restarts.note(STATE_DIR, reason, "update_bridge", frm=frm, to=to),
+        rules=lambda sha: shipped_rules(args.repo),
     )
     return 0 if outcome["result"] in ("updated", "up_to_date") else 1
 

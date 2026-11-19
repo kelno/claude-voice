@@ -9,9 +9,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+# A newer push or edit to a pull request stops that pull request's stale run. Every other
+# run is its own group and always runs to the end.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

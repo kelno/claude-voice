@@ -1,0 +1,5 @@
+[[rule]]
+name = "a reply is read only once a later call acknowledges it"
+file = "src/claude_voice/mailbox.py"
+find = 'f" OR \(delivered_at IS NOT NULL AND seq IN \(\{marks\}\)\)\)",'
+replace = 'f" OR seq IN ({marks}))",'

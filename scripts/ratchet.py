@@ -56,6 +56,8 @@ NEW_MODULE_CEILING = 15  # the most tangled function a new module may have
 BLOCK = 6  # lines in a row that count as a copied block
 # Each module's layer: a module may use, when it loads, only modules in the layers below it.
 LAYERS = {
+    # below the foundations: how the bridge runs git, which some of them use
+    "safe_git": -1,
     # foundations
     **dict.fromkeys(
         (
@@ -78,8 +80,11 @@ LAYERS = {
             "relay_notes",
             "beads",
             "app_links",
+            "owner_rules",
             "uvlock",
             "session_hook",
+            "literal_gh",
+            "org_rules",
         ),
         0,
     ),
@@ -98,6 +103,7 @@ LAYERS = {
             "work",
             "plugins",
             "plugin_venv",
+            "accepted",
             "detail",
             "oauth",
             "fork",
@@ -119,6 +125,9 @@ LAYERS = {
             "offline",
             "every_session",
             "parking",
+            "routing",
+            "calllog",
+            "activity",
         ),
         1,
     ),  # parts, each about one thing
@@ -126,7 +135,9 @@ LAYERS = {
     **dict.fromkeys(
         (
             "events",
+            "mailbox",
             "tree",
+            "approvals",
             "session_modes",
             "machines",
             "plugin_desk",
@@ -137,6 +148,8 @@ LAYERS = {
             "handles",
             "install",
             "setup",
+            "shipped",
+            "settings_edit",
         ),
         2,
     ),

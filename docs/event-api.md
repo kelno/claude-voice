@@ -321,11 +321,11 @@ approval is ignored.
 
 | Call | Answer |
 | --- | --- |
-| `GET /api/v1/work` | `{"as_of", "waiting_on_owner": [{"id", "text", "command"\|null, "since", "repo"\|null, "session"\|null}], "open_prs": [{"repo", "number", "title", "url", "checks": "pass"\|"fail"\|"pending", "draft"}], "unreadable": ["<repo>"], "developer_mode": {"on", "until"\|null}}` |
+| `GET /api/v1/work` | `{"as_of", "waiting_on_owner": [{"id", "text", "command"\|null, "since", "repo"\|null, "session"\|null, "prompt"\|null}], "open_prs": [{"repo", "number", "title", "url", "checks": "pass"\|"fail"\|"pending", "draft"}], "unreadable": ["<repo>"], "developer_mode": {"on", "until"\|null}}` |
 
 What waits on the owner is the manager session's own list, read fresh on every
 call from `~/.local/state/claude-voice/waiting.json`; an item with no `id` or
-`text` is left out. Three days before Claude Code's sign-in runs out, the bridge
+`text` is left out, and `prompt`, the id of the phone prompt an item stands for, is passed on as the manager wrote it. Three days before Claude Code's sign-in runs out, the bridge
 puts an item of its own first, with the `id` `claude-login`, saying to run
 `claude` and type `/login`. It asks `claude auth status` for the date at most once
 an hour, and reads no secret to do it. The open pull requests are those of claude-voice,
@@ -459,6 +459,11 @@ as pinned cards above the sessions.
 | --- | --- |
 | `GET /api/v1/roles` | `{"roles": [{"name", "title", "description", "session": {"name", "id", "status"} or null}]}`; `session` is the running session last started for the role |
 | `POST /api/v1/roles/{name}/start` | with `{"task": "what to change"}` or `{}`: starts a session for the role and answers `{"role", "name", "claude_session_id", "status"}`. `404` for an unknown role, `502` when Claude Code could not start it. A change: with the cookie it needs an allowed `Origin` |
+
+## The activity view
+
+Where sessions wait, use tokens or get stuck, off until the owner switches it on.
+Its endpoints are in [activity.md](activity.md).
 
 ## The org chart
 

@@ -213,6 +213,13 @@ def test_config_refuses_an_unknown_permission_mode(tmp_path):
         load_config(env, transport="stdio")
 
 
+def test_an_access_token_lifetime_written_with_a_superscript_stops_the_bridge(tmp_path):
+    """isdigit() takes "²", which int() cannot read: a plain refusal, not a crash."""
+    env = {"CLAUDE_VOICE_ROOT": str(tmp_path), "CLAUDE_VOICE_ACCESS_TOKEN_SECONDS": "3600²"}
+    with pytest.raises(ConfigError, match="CLAUDE_VOICE_ACCESS_TOKEN_SECONDS"):
+        load_config(env, transport="stdio")
+
+
 def test_config_allows_an_api_key_when_explicitly_wanted(tmp_path):
     env = {
         "CLAUDE_VOICE_ROOT": str(tmp_path),

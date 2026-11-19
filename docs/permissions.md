@@ -30,6 +30,71 @@ $ claude-voice permissions --dry-run no-such-folder
 claude-voice: no-such-folder is not a folder, so it was left alone
 ```
 
+## Accepting a repository's rights
+
+A session's rights come from its repository's `.claude/settings.json` and
+`.claude/settings.local.json`. A session can write those files too, so a change
+on disk is not a change the owner wanted. The owner accepts a version by typing:
+
+<!-- not run: it waits for a name typed at a terminal -->
+```sh
+claude-voice permissions --accept ~/src/garage-door
+```
+
+It shows each file's changes since the version last accepted. The lines that
+widen a session's rights come first, marked `WIDENS`: a new allow rule, a removed
+ask or deny rule, or any other changed setting, such as a hook. A file never
+accepted before is shown whole, as widening. Then it asks for the repository's
+name, read from the terminal itself, so a pipe cannot answer.
+
+Several repositories can be accepted at once: name them all, or use `--all` for
+every repository the org chart places in the bridge's own programme. It prints one
+line per repository, with how many lines widen and how many narrow. Then it prints
+every widening line in full, and asks once: type `accept <n>`, where n is the number
+of repositories. A repository that only narrows gets its one line.
+
+Only the files it showed are recorded, and only as they were shown. A file that
+changes before the name is typed refuses the accept; run it again and read it
+anew. The record is `accepted.json` in the bridge's state folder, with a private
+copy of each accepted file beside it, so the next accept is compared with the
+real contents.
+
+With `--dry-run`, the accept shows everything the same way and records nothing.
+It asks for no answer, and its last line says that nothing was accepted.
+
+The shipped rules refuse the usual ways a session would run it. That is not a wall:
+a session can still call the same code another way, or type into a terminal it
+started itself. Until the bridge runs under a system user of its own, the record is
+the owner's file, and a session that can write it could forge it. A forged record can
+only restart sessions sooner; it never widens what is on disk.
+
+### After an update
+
+An update brings the shipped rules to the repositories by itself, once the new
+bridge answers. For each repository it works out what `claude-voice permissions`
+would write, and compares that with the file on disk:
+
+- **A change that only takes rights away is written,** and recorded as accepted
+  from the shipped rules: a new deny or ask rule, or a removed allow rule.
+- **Everything else waits for the owner's accept,** and the update's log says so,
+  with the command to run:
+  - a change that widens rights, or any change outside the rule lists;
+  - a broad new rule, marked `BROAD`, such as `Bash(*)`, a whole tool like `Edit`,
+    or a pattern that starts with `*`, which could lock a session out of its own work;
+  - a file the owner never accepted, or has edited since, even while the new
+    rules are being written: only the exact bytes that were checked are replaced;
+  - the manager's own repository, so a bad rule never cuts off the session that
+    relays the owner's answers.
+- **Only the bridge's own programme is touched.** A folder is written only when
+  the org chart places it in the programme whose file is in the bridge's own clone.
+  A folder in another programme or in none, or a chart that cannot be read, is
+  left exactly as it is.
+
+To run the same step by hand: `claude-voice permissions --shipped`. It records
+the commit the bridge runs from.
+
+Rolling sessions onto accepted rights builds on this record.
+
 ## What it changes, and what it leaves alone
 
 It writes `.claude/settings.local.json` in each repository. That file stays out
@@ -251,3 +316,111 @@ environment cannot stop it. If it cannot start at all, a recursive remove inside
 a repository would run unasked. So `claude-voice permissions --check` runs each
 repository's hook once, and the bridge's health shows a hook that does not
 answer as an error, with the fix.
+
+## Who answers a prompt
+
+When a session asks to run a tool, the phone hook hands the prompt to the bridge.
+The plan is for a manager session to answer the routine ones for the sessions
+under it, so the owner is asked less. For now, every prompt still goes to the
+owner. The bridge only sorts each one and records how, so the sorting can be
+checked before anyone relies on it.
+
+The sorting (`routing.py`) looks at the tool and its input, never at what a
+session says about it.
+
+- **The fixed list** names what only the owner may ever answer. A match goes to
+  the owner, whatever else is true. It has 19 lines: secrets, force pushes,
+  money, writes in another account, the rules and configuration, plugin
+  approval, the owner's own list, the standing rules, anything that can't be
+  read safely, main and admin, typing into another terminal, device tools, the
+  bridge's state, start-up and identity files, merges at night, the sandbox,
+  making something public, installs, and stopping processes.
+- **The shapes** say what a manager may answer at all: reading and editing
+  inside the session's own repo, everyday git and test commands, the read
+  tools with only the options on their list, and three bridge tools by name.
+  Anything of no shape goes to the owner.
+
+A secret is found by its realpath, so a link, `~` or `$HOME` doesn't hide it.
+The table covers the usual credential files under the home folder, key files,
+and `.env` files anywhere. A tracked `.env.example` that is a plain file in the
+repo is not secret. A hard link to one of the secret files is caught too, by
+comparing the file's device and inode with theirs.
+
+The hard-link search covers only the table's own paths under the home folder,
+looked up at most once a minute and bounded like the walk below. When it runs
+past that bound, any hard-linked file goes to the owner. It doesn't cover a
+secret found by name elsewhere, such as another repo's `.env`. Planting such a
+link takes a command that already goes to the owner. Files under `.venv`,
+`node_modules` and `.git` are skipped only when the search ran past its bound,
+as their tools link files on purpose. A known set is always checked.
+The sorting runs in a thread, so it never holds up the bridge. `routed` appears
+on the prompt a moment after it opens.
+
+A read that walks a tree, such as `grep -r`, `rg`, `find`, `ls -R` or the Grep
+tool on a folder, is walked first, the way grep does it: no links followed, and
+`.git` skipped. A secret found there goes to the owner, and the reason names the
+file. So does a tree of over 20 000 entries, or one that takes over a second to
+walk.
+
+Where the data to judge a prompt doesn't exist yet, the answer is the owner.
+That covers a session's own branch and pull request, a plugin's money or
+read-only mark, and its scratchpad. Each such case has a test, so the change
+that fills it in has to change the test on purpose.
+
+Each opened approval carries `routed`: `to` (always `roy` for now), the
+fixed-list `lines` it matched, the first as `line`, and `shape`.
+
+## What later runs as the owner
+
+Some files run later as the owner, with no session watching: at login, on a
+timer, from the shell, from git on the owner's own commits, or from Claude Code
+at its next start. A session can read them, but never write them. That covers
+the user's systemd units, autostart files, the shell's start files, `~/.local/bin`
+and `~/bin`, git's hooks and code-running settings, ssh and tmux settings,
+Claude Code's own settings, hooks and plugins, and the bridge's settings. The
+whole list is the group "what later runs as the owner" in `permissions.json`.
+
+Each path is refused to the Edit and Write tools, and to each command that
+writes a file there: `tee`, `cp`, `mv`, `install`, `ln`, `rsync`, `sed -i`,
+`dd`, `truncate`, `chmod` and `touch`. Moving into one of these folders with
+`cd`, `pushd` or a `-C` option is refused too. Every form of `crontab` is
+refused. Two gaps are not caught here, and the command gate will close both:
+
+- a move to a folder above them, such as `cd ~`;
+- a copy into such a folder that names only the folder, such as `cp x/.bashrc ~/`,
+  `rsync -a d/ ~/` or `cp -t ~ .profile`.
+
+A repository's own `.claude/settings.json` and `.claude/settings.local.json` are
+refused too, in every clone. The owner changes them by hand, or through
+`claude-voice permissions`.
+
+git settings that run code are refused in the settings file for the global
+forms. The session hook refuses them in every form, including `git -c` and
+`git --config-env`. The one
+value it lets through is `git config core.hooksPath .githooks`, the setup line
+in CONTRIBUTING.
+
+The bridge runs git itself too, in folders a session can write to: to sort a
+prompt, for the live view's git status, for the work cards, in the session hook
+and in the updater. Every such git runs with `core.fsmonitor` and hooks switched
+off, and reads no system-wide settings file. In a repository whose own settings
+name a program anyway, such as a filter or diff driver, git is skipped. The log
+says which repository and which setting, and the live view shows no git status
+for it. A test fails if a module runs git any other way.
+
+That check runs just before git does, so a session that changes its settings in
+between is not caught. It is a known limit until sessions run as their own user.
+
+These paths are written the POSIX way, so they don't cover a session running on
+native Windows yet. The session hook's git checks are tested on Windows too.
+
+The bridge's settings change only through its own commands. A key that changes
+what a plugin runs is set only back to what the owner approved by typing. The
+commands change only the lines they name, so comments and order are kept.
+
+```console
+$ claude-voice set profile /tmp/x.toml
+claude-voice: set: profile can't be set by command; these can: voice_instructions_file
+$ claude-voice roles add demo terminal_command=sh
+claude-voice: roles add: a role's start line comes only from the template; leave out terminal_command
+```

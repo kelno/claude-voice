@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib.util
 import json
 import os
 import re
@@ -28,9 +29,29 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
-ALLOW, ASK = "allow", "ask"
+
+def _beside(name: str) -> ModuleType:
+    """A module of the bridge's that sits beside this file and uses the standard library only,
+    loaded by its path: run as a script, this file has no package to import from."""
+    spec = importlib.util.spec_from_file_location(f"_session_hook_{name}", Path(__file__).with_name(f"{name}.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError(f"{name}.py is not beside the session hook")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Claude Code runs this file with the system's python3, where the bridge's package isn't installed.
+# RULE: the session hook runs with the standard library only
+if __package__:
+    from . import safe_git
+else:
+    safe_git = _beside("safe_git")
+
+ALLOW, ASK, DENY = "allow", "ask", "deny"
 
 #: Anything that chains, pipes, redirects or substitutes: such a command is never let through.
 CONTROL = re.compile(r"[;&|<>`\n\r]|\$\(")
@@ -192,8 +213,13 @@ def _names_a_term(terms: Path | None, texts: Sequence[str], files: Sequence[Path
 def _tracked(file: Path) -> bool:
     """Whether git tracks this file in the repository around it: never an ignored or loose one."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(file.parent), "ls-files", "--error-unmatch", "--", file.name],
+        out = safe_git.run(
+            "-C",
+            str(file.parent),
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            file.name,
             capture_output=True,
             timeout=10,
             check=False,
@@ -270,14 +296,88 @@ def _issue_text(found: dict[str, str], files: list[Path], terms: Path | None, se
     return ALLOW
 
 
+#: git settings whose value git runs as code, set from any command (runs-as-owner v1.4 §3).
+RUNS_CODE = re.compile(
+    r"(core\.(hookspath|fsmonitor|sshcommand|pager|editor|askpass|gitproxy)|sequence\.editor"
+    r"|gpg\.program|gpg\..+\.program|(credential|alias|include|includeif|filter)\..+"
+    r"|diff\.external|diff\..+\.(textconv|command)|(difftool|mergetool)\..+\.cmd|merge\..+\.driver"
+    r"|remote\..+\.(uploadpack|receivepack))",
+    re.IGNORECASE,
+)
+#: The one hooks folder a session may point git at: the tracked, reviewed one.
+TRACKED_HOOKS = ".githooks"
+#: git config options that read rather than set.
+CONFIG_READS = frozenset({"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l", "--unset"})
+
+
+def _sets_code(key: str, value: str | None) -> bool:
+    if not RUNS_CODE.fullmatch(key) or value is None:
+        return False
+    # RULE: the session hook lets the contributing setup line through
+    return not (key.lower() == "core.hookspath" and value == TRACKED_HOOKS)
+
+
+def _config_sets_code(words: list[str]) -> bool:
+    """Whether `git config ...` sets a key whose value runs."""
+    rest = words[words.index("config") + 1 :]
+    if CONFIG_READS.intersection(rest):
+        return False
+    plain, i = [], 0
+    while i < len(rest):
+        if rest[i] in ("-f", "--file", "--blob"):
+            i += 2
+            continue
+        if not rest[i].startswith("-"):
+            plain.append(rest[i])
+        i += 1
+    return bool(plain) and _sets_code(plain[0], plain[1] if len(plain) > 1 else None)
+
+
+def _from_environment(words: list[str]) -> list[str]:
+    """The keys `git --config-env=KEY=VAR` sets. Their value is unknown here, so even the
+    tracked hooks folder can't be told apart from any other."""
+    given = [w.removeprefix("--config-env=") for w in words if w.startswith("--config-env=")]
+    given += [words[i + 1] for i, w in enumerate(words[:-1]) if w == "--config-env"]
+    return [g.partition("=")[0] for g in given]
+
+
+def _git_sets_code(words: list[str]) -> bool:
+    """Whether one git command sets a setting git runs: with -c, from the environment, or by config."""
+    overrides = [words[i + 1] for i, w in enumerate(words[:-1]) if w == "-c"]
+    if any(_sets_code(*o.partition("=")[::2]) for o in overrides if "=" in o):
+        return True
+    # RULE: a setting taken from the environment is refused for every key that runs code
+    if any(RUNS_CODE.fullmatch(key) for key in _from_environment(words)):
+        return True
+    return "config" in words and _config_sets_code(words)
+
+
+def runs_code(command: str) -> bool:
+    """Whether any git command in `command` sets, for good or for one run, a setting git runs."""
+    for part in SEPARATORS.split(command):
+        try:
+            words = shlex.split(part)
+        except ValueError:  # unbalanced quotes: judged on the raw text, never asked about
+            words = part.split()
+        if words and os.path.basename(words[0]) == "git" and _git_sets_code(words):
+            return True
+    return False
+
+
+def _code_setting(command: str) -> str | None:
+    # RULE: the session hook refuses any hooks path but the tracked folder
+    return DENY if runs_code(command) else None
+
+
 def decision(hook_input: dict[str, Any], *, tmp_root: Path, repos: Sequence[str], terms: Path | None) -> str | None:
-    """allow, ask, or None to leave the command to Claude Code's own rules."""
+    """allow, ask, deny, or None to leave the command to Claude Code's own rules."""
     if hook_input.get("tool_name") != "Bash":
         return None
     command = str((hook_input.get("tool_input") or {}).get("command", ""))
     cwd = str(hook_input.get("cwd") or "/")
     session_id = str(hook_input.get("session_id") or "")
     for judge in (
+        lambda: _code_setting(command),
         lambda: _removal(command, cwd, session_id, tmp_root),
         lambda: _issue(command, cwd, repos, terms, session_id, tmp_root),
     ):
@@ -293,6 +393,7 @@ def decision(hook_input: dict[str, Any], *, tmp_root: Path, repos: Sequence[str]
 REASONS = {
     ALLOW: "a routine step the owner allowed: inside this session's own scratchpad, or an issue in its own programme",
     ASK: "only a remove inside this session's own scratchpad, or a clean issue in its own programme, runs unasked",
+    DENY: "a git setting whose value runs as the owner later; only core.hooksPath .githooks may be set",
 }
 
 

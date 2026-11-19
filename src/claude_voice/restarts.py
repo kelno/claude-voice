@@ -23,6 +23,8 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any
 
+from claude_voice import safe_git
+
 UNIT = "claude-voice"
 REASON_FILE = "restart-reason.json"
 COUNT_FILE = "restarts"  # systemd's NRestarts as last seen
@@ -96,7 +98,8 @@ def decide(planned: dict[str, Any] | None, now: float, restarted: bool, uptime: 
 def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8").strip() or None
-    except OSError:
+    # RULE: a count file that isn't text is as good as none
+    except (OSError, UnicodeDecodeError):
         return None
 
 
@@ -161,7 +164,8 @@ def _counted(state: Path, total: int | None) -> bool:
     if total is None:
         return False
     _write(state / COUNT_FILE, str(total))
-    return seen is not None and seen.isdigit() and total > int(seen)
+    # RULE: a kept restart count that is not a plain number is ignored
+    return seen is not None and seen.isascii() and seen.isdigit() and total > int(seen)
 
 
 def _started_on(state: Path, git: Callable[..., str | None]) -> tuple[str | None, str | None]:
@@ -204,7 +208,7 @@ def _uptime() -> float | None:
 def _git(*args: str) -> str | None:
     here = Path(__file__).resolve().parent  # the bridge's own checkout
     try:
-        out = subprocess.run(["git", *args], cwd=here, capture_output=True, text=True, timeout=5, check=True)
+        out = safe_git.run(*args, cwd=here, capture_output=True, text=True, timeout=5, check=True)
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip() or None

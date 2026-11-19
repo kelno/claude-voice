@@ -7,7 +7,7 @@ that a new plugin starts at the level the best of them reached, and so that one
 plugin's lesson becomes all of theirs.
 
 It was put together on 2026-11-10 from the three plugins' own reviews of
-themselves, and accepted by the owner the same day. The [`write-plugin`](../.claude/skills/write-plugin/SKILL.md) skill
+themselves, and accepted by the owner the same day. The [`plugin`](../.claude/skills/plugin/SKILL.md) skill
 says how to build one; this page says what it must do once built.
 
 ## A. How a plugin behaves towards the voice
@@ -23,14 +23,33 @@ new or changed tool, as [voice-feedback.md](voice-feedback.md) describes.
    that the Claude app shows before it loads the tool, about 26 characters. The
    figure is kept in one place, in the bridge, rather than copied into each
    plugin.
-3. **An answer within the voice's time.** The Claude app gives up on a call
-   after about 15 seconds, and the voice app after about 30. Every tool's
-   longest path stays inside the limit. Work that takes longer keeps running and
-   is said to be on its way. A test adds up each tool's real waits.
+3. **An answer within the plugin's time.** The limit for a call is the plugin's
+   own `timeout` in its `[plugins.<name>]` settings, 30 seconds unless set
+   otherwise. The bridge cuts a call off there. The voice app waits longer than
+   that, a minute or two for the bridge's own tools, so it is not the limit.
+   The typed Claude app still drops a call after about 30 seconds. So a
+   timeout above 30 serves the voice only, and the "on its way" answer comes
+   within about 30 seconds. Every tool's longest path stays inside the timeout.
+   Work that takes longer keeps running and is said to be on its way. A plugin
+   that needs more asks for a higher `timeout` in its join notes. A test adds up
+   each tool's real waits. Each client's own budget is in the
+   [README](../README.md), under `[budgets]`.
 4. **Something to say, and what to do next.** Every answer has a `say` text,
    read aloud as it is, and one result field that a program can read (`success`
    or `outcome`, chosen once per plugin and documented). When it fails, `say`
    tells the user what to do next, never a bare "failed".
+
+   4a. **Following something up without asking.** An answer may carry
+   `next: {"tool": "<name>", "args": {...}}` when the plugin wants the voice to
+   look again at once, for example while a door is still moving. The voice makes
+   that call straight away without asking the owner, says each answer's `say`,
+   and stops when an answer has no `next`. The tool `next` names must be one of
+   the same plugin's tools marked read-only (rule 9). The bridge refuses any
+   other, and refuses an unknown tool. A plugin bounds its own chain from a
+   record it keeps on its side, such as the time of the press, never from the
+   arguments the voice sends back. The bridge also stops a chain after six calls,
+   whatever the plugin says. Use it only to follow up on something already
+   happening, never to start an action. The test is named after the rule.
 5. **Say what actually happened.** After an action, read the device's state back
    and say that: "Started. The vacuum is cleaning", or "I sent the start; the
    vacuum says it is docked". Never "OK".

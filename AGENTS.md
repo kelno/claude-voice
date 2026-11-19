@@ -63,8 +63,8 @@ what to add on the hub. Then:
 
 - **When a tool's answer says what to do next, say that step.** Read it out or
   pass it on as it is; never swallow it into "it failed". The same holds for
-  errors you write: name what is wrong and the next step (the `write-plugin`
-  skill, through [the plugin standard](docs/plugin-standard.md), A.4).
+  errors you write: name what is wrong and the next step (the `plugin`
+  skill's [rules](.claude/skills/plugin/rules.md#r1), and [the plugin standard](docs/plugin-standard.md), A.4).
 - **A command that asks for input is the person's to type.** Give it to them to
   run in a plain terminal, such as `claude-voice plugins approve <name>`. Never
   run it for them, and never pipe an answer into it.
@@ -95,6 +95,35 @@ This holds for every session that works under a manager.
   refused whole, even when the rest is allowed.
 - When the work does not flow, tell the manager in one message what stopped you,
   how often, and what you propose.
+
+## What may ask the owner
+
+The owner's rule, said by voice on 19.11, for every role and the base rule pack:
+
+> A box may reach the owner only for a real decision he can judge in one
+> sentence: merging, marking a PR ready, pushing to main, real hardware,
+> secrets, deleting unmerged work. Routine, harmless steps must never ask him,
+> such as a session writing its own scratch files or doing a read-only ls.
+> Treat any such box as friction, fix its cause, and record it with the reason.
+
+A box is a permission question on the owner's screen. When a harmless step
+asks, don't route round it: tell the manager the exact command and the box.
+
+Most boxes come from how a command is written, not from what it does.
+
+How to write a command: base pack line 7. Until the base pack is installed,
+here is that line in full (rule-packs v1 notes, 4a51663e38be):
+
+> **Commands the gate can read.** Run each command on its own and plain, with every
+> value written out. Use no `&&`, `;`, `|`, loops, `$VAR`, `$(…)` or backticks,
+> and no `$` inside an awk or jq program. Never feed one command's output into the
+> next: run the first, read its result, and write the value into the second. Read
+> files and logs with the Read tool, and search them with Grep where the session
+> has it, not cat, head, tail or grep. Put a text body or a script in a file and
+> run it by path, never in the command itself. Temporary files go only in your own
+> scratchpad, never in another session's. Never `rm -r` or `rm -rf`: reuse one
+> folder per job. *Why: the gate and the permission rules judge one plain command;
+> anything else, and any rule word inside a body, stops at the owner's box.*
 
 ## When you are changing claude-voice itself
 

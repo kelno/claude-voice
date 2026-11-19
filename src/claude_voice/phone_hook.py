@@ -62,7 +62,14 @@ def _prompt(hook_input: dict[str, Any], spoken_to: str) -> dict[str, Any] | None
         return _question(session, tool_input, spoken_to)
     # RULE: a question never opens a second prompt as an approval
     if event == "PermissionRequest" and tool != "AskUserQuestion":
-        return {"session_id": session, "kind": "approval", "tool": tool, "input": tool_input}
+        # The folder the session works in, so the bridge can sort the prompt.
+        return {
+            "session_id": session,
+            "kind": "approval",
+            "tool": tool,
+            "input": tool_input,
+            "cwd": hook_input.get("cwd"),
+        }
     return None
 
 
@@ -199,11 +206,28 @@ def _token() -> str:
 
 def settings_entries(python: str) -> dict[str, list[dict[str, Any]]]:
     """The hook entries for the owner's Claude Code settings, run with the bridge's Python."""
-    hook = {"type": "command", "command": f"{python} -m claude_voice.phone_hook", "timeout": TIMEOUT + 30}
+    # RULE: the phone hook runs isolated from the sessions folder
+    hook = {"type": "command", "command": f"{python} -I -m claude_voice.phone_hook", "timeout": TIMEOUT + 30}
     return {
         "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [hook]}],
         "PermissionRequest": [{"matcher": "*", "hooks": [dict(hook)]}],
     }
+
+
+def _ours(hook: dict[str, Any]) -> bool:
+    """Whether a settings hook entry is a phone hook line, with any Python and any flags."""
+    words = str(hook.get("command") or "").split()
+    return words[-2:] == ["-m", "claude_voice.phone_hook"]
+
+
+def _without_ours(matchers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """An event's matcher groups with every phone hook line taken out, and any group left empty.
+
+    An earlier phone hook line, from another venv or an older version, gives way to the new one.
+    """
+    # RULE: installing the hook again replaces an older phone hook line
+    kept = [{**m, "hooks": [h for h in m.get("hooks", []) if not _ours(h)]} for m in matchers]
+    return [m for m in kept if m["hooks"]]
 
 
 def install(settings: Path, python: str) -> None:
@@ -217,10 +241,7 @@ def install(settings: Path, python: str) -> None:
         settings.with_name(settings.name + ".bak").write_text(settings.read_text())
     hooks = current.setdefault("hooks", {})
     for event, entries in settings_entries(python).items():
-        existing = hooks.setdefault(event, [])
-        mine = entries[0]["hooks"][0]["command"]
-        if not any(mine == h.get("command") for m in existing for h in m.get("hooks", [])):
-            existing.extend(entries)
+        hooks[event] = _without_ours(hooks.get(event, [])) + entries
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(json.dumps(current, indent=2) + "\n")
 

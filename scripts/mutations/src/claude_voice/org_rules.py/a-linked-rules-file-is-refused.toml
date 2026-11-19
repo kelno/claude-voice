@@ -1,0 +1,5 @@
+[[rule]]
+name = "a linked rules file is refused"
+file = "src/claude_voice/org_rules.py"
+find = 'no_link = getattr\(os, "O_NOFOLLOW", 0\)'
+replace = 'no_link = 0'

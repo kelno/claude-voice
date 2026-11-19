@@ -14,7 +14,25 @@ until the owner approves version 2.
   location trigger (claude-voice-mobile, `docs/design-location-triggers.md`)
   needs it: an event naming the trigger and nothing else, never a position.
   Without it, the hub would have to ask the phone every few seconds.
-- **A yes from the phone's own screen.** Version 1 lets only the voice confirm
+- **An agent that cannot ask Tailscale who is calling.** Version 1 has the
+  agent ask Tailscale which node a request comes from. On Android, Tailscale's
+  app answers no other app, so the phone cannot ask. Instead it keeps the
+  tailnet address the hub paired from, and checks that address and the key on
+  every request. A changed address means pairing again (claude-voice-mobile,
+  ADR-CVM-009). Version 2 should allow that as a second way to meet the
+  machine check, and say what the hub must do: pair from the address it will
+  call from, and expect "pair again" after it moves.
+- **A private thing named `messages`: "reads or sends the owner's text
+  messages".** The phone's `sms` and `sms_send` plugins need it. Version 1's
+  `uses` is open, so the name already travels, but its examples name only
+  nine things. A hub that shows the owner what a plugin reaches should be
+  able to name this one too. Text messages hold other people's words and
+  one-time codes, so the owner should see this name before approving either
+  plugin. The phone app accepts only the names the protocol lists, so it
+  waits for this line.
+- **Not wanted for now: a yes from the phone's own screen.** The owner chose a
+  spoken yes only for location triggers on 2026-11-15, so this waits for the
+  owner to ask again. Version 1 lets only the voice confirm
   a spoken yes. A location trigger may ask in a notification as well, for when
   the voice is not running, so a tap by the owner on the phone itself would
   count as a yes, under a caller name of its own. A notification can be tapped
