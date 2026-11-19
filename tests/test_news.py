@@ -285,7 +285,12 @@ async def test_a_question_answered_in_its_own_result_leaves_its_session_unfollow
     async with http, client as c:
         desk.set("busy")
         asking = asyncio.create_task(call(c, "ask_active_session", session="billing-ab", message="Is it done?"))
-        await asyncio.sleep(0.05)
+        # The answer comes after the question has landed, not after a fixed time: under a loaded
+        # suite the delivery can take longer than any short sleep.
+        deadline = asyncio.get_running_loop().time() + 10
+        while not any("Is it done?" in str(t.message["content"]) for t in desk.transcript):
+            assert asyncio.get_running_loop().time() < deadline, "the question never landed"
+            await asyncio.sleep(0.01)
         desk.transcript.append(turn("assistant", "Yes, it is."))
         desk.set("idle")
         asked = await asking
