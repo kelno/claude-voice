@@ -744,7 +744,8 @@ def texts_command() -> int:
     except settings.ConfigError as exc:
         sys.stderr.write(f"claude-voice: {exc}\n")
         return 1
-    sys.stdout.write(json.dumps(found, indent=2, ensure_ascii=False) + "\n")
+    # RULE: the texts print in ascii so a pipe in any code page carries them
+    sys.stdout.write(json.dumps(found, indent=2) + "\n")
     return 0
 
 

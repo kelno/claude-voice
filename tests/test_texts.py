@@ -1,7 +1,9 @@
 """`claude-voice texts`: what the bridge says to agents, printed without serving it."""
 
+import io
 import json
 import re
+import sys
 
 import pytest
 from fakes import FakeClaude
@@ -77,3 +79,19 @@ def test_the_command_prints_them_as_json(monkeypatch, capsys):
 
     assert cli.main(["texts"], env={}) == 0
     assert json.loads(capsys.readouterr().out)["tools"][0]["name"] == "guide"
+
+
+def test_the_texts_print_in_ascii_so_a_pipe_in_any_code_page_carries_them(monkeypatch):
+    """Windows writes a pipe in its own code page unless Python is told otherwise, and the guide
+    holds characters such as an arrow that cp1252 lacks: seen in the owner's snapshot hook."""
+
+    async def fake(repos=None):
+        return {"tools": [], "guide": "send → wait", "notes": []}
+
+    monkeypatch.setattr(texts, "collect", fake)
+    pipe = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", pipe)
+
+    assert cli.main(["texts"], env={}) == 0
+    pipe.flush()
+    assert json.loads(pipe.buffer.getvalue().decode("cp1252"))["guide"] == "send → wait"

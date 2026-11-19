@@ -1,0 +1,5 @@
+[[rule]]
+name = "the texts print in ascii so a pipe in any code page carries them"
+file = "src/claude_voice/cli.py"
+find = 'sys\.stdout\.write\(json\.dumps\(found, indent=2\) \+ "\\n"\)'
+replace = 'sys.stdout.write(json.dumps(found, indent=2, ensure_ascii=False) + "\n")'
