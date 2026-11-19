@@ -24,8 +24,6 @@ if TYPE_CHECKING:
 
 # RULE: a repos check takes no git lock
 LOCKLESS = ("--no-optional-locks",)  # a plain `git status` writes a refreshed index back
-# RULE: a repos check starts no file system monitor
-NO_MONITOR = ("-c", "core.fsmonitor=false")  # Git for Windows turns one on in its own settings
 #: What git leaves in its folder while an operation waits for the person to finish it.
 OPERATIONS = (
     ("rebase-merge", "rebase"),

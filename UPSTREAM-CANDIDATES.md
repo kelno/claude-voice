@@ -309,14 +309,6 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: little; the helpers must be safe to call from a thread, which they already are for the sync tools that call them.
 - Test first: `tests/test_api.py`, the test named after the rule "the page reads sessions off the event loop" (a reader that notes whether a loop is running in its thread).
 
-### 17. The repos check without git's file-system monitor — fork "Keep the repos check from starting a file-system monitor"
-
-- Status: an idea; nothing prepared, no branch.
-- What: `reposync._git` passes `-c core.fsmonitor=false` with each git call, next to `--no-optional-locks`.
-- Why upstream should want it: Git for Windows turns `core.fsmonitor` on in its system settings, so the `git status` of `repos sync --check` started a daemon that writes into the clone's `.git` folder; upstream's own test that the check changes nothing fails there.
-- Expect pushback: little; it only matters on Windows and macOS, where git has the daemon. It may wait for candidate 8 (Windows in CI).
-- Test first: `tests/test_reposync.py`, the test named after the rule "a repos check starts no file system monitor" (it sets `core.fsmonitor` in the clone and checks no daemon folder appears).
-
 ### 18. Printing what the bridge says to agents — fork "Print the texts the bridge serves to agents"
 
 - Status: an idea; nothing prepared, no branch.

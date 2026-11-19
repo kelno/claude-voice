@@ -165,15 +165,6 @@ def test_a_repos_check_takes_no_git_lock(tmp_path):
     assert hashlib.sha256(index.read_bytes()).hexdigest() == before
 
 
-def test_a_repos_check_starts_no_file_system_monitor(tmp_path):
-    """Git for Windows turns its file-system monitor on in its own settings; `git status` would
-    then start a daemon that writes into the clone's .git folder."""
-    bare, clone = origin_and_clone(tmp_path)
-    git(clone, "config", "core.fsmonitor", "true")
-    check(tmp_path, bare)
-    assert not (clone / ".git" / "fsmonitor--daemon").exists()
-
-
 def test_the_commit_hook_setting_is_read(tmp_path):
     bare, clone = origin_and_clone(tmp_path)
     (clone / ".githooks").mkdir()
