@@ -115,3 +115,12 @@ def no_real_claude_sign_in(monkeypatch):
     from claude_voice import work
 
     monkeypatch.setattr(work, "read_login_expiry", lambda: None)
+
+
+@pytest.fixture(autouse=True)
+def no_wait_for_a_remote_control_id(monkeypatch):
+    """The suite's fake starts never get a Remote Control id unless a test gives one, so a start
+    doesn't wait for one; a test of that wait sets its own time."""
+    from claude_voice import app_links
+
+    monkeypatch.setattr(app_links, "WAIT_SECONDS", 0.0)

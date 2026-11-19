@@ -77,6 +77,7 @@ LAYERS = {
             "channel_hub",
             "relay_notes",
             "beads",
+            "app_links",
             "uvlock",
             "session_hook",
         ),

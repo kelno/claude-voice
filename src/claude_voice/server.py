@@ -40,6 +40,7 @@ from . import (
     access,
     answers,
     api,
+    app_links,
     channel,
     config,
     confirm,
@@ -546,7 +547,12 @@ Sessions
   owner, so never ask one to.
 - Sessions the bridge starts or resumes are on Remote Control and in the
   desktop app's sidebar, so the owner can open them on the phone or at the PC
-  and take over.
+  and take over. A session on Remote Control carries app_url, the link that
+  opens it in the Claude app in one tap (list_active_sessions,
+  start_active_session, attach_conversation). When you name a session to the
+  owner, give that link as text in the chat; in voice, say aloud only that
+  it's there. Never build one yourself: a session without app_url has no
+  link yet, or none at all when it isn't on Remote Control.
 - side_chat marks a "btw: ..." aside the owner opened from a desktop session:
   give it no work unless asked.
 - A session name in curly braces, such as {billing export}, was chosen by an
@@ -2440,7 +2446,9 @@ def build_server(
     ) -> dict[str, Any]:
         """Start new work: a session in a folder, on Remote Control on phone and PC.
         It is listed at once, so ask_active_session reaches it, and has no window unless the
-        settings say otherwise."""
+        settings say otherwise. app_url is the link that opens it in the Claude app; when Remote
+        Control is slow to give it one, it is missing here and list_active_sessions has it a few
+        seconds later."""
         checked_model_and_effort(model, effort)
         folder_created = made_folder(folder) if create_folder else False
         try:
@@ -2460,8 +2468,11 @@ def build_server(
                 "status": same.get("status") or "idle",
                 "already_running": True,
                 "folder_created": folder_created,
+                **app_links.field(app_url(same.get("bridgeSessionId"))),
             }
         out = await start_listed(path, name, start_in, remote_control, model=model or DEFAULT_MODEL, effort=effort)
+        remote = start_settings.get()["remote_control"] if remote_control is None else remote_control
+        out = await with_link(out, expected=bool(remote))
         # Claude Code accepts any model name at start and refuses an unknown one only
         # in its first reply, so a start alone does not prove the model works.
         model_note = "Claude Code checks the model only at the first reply; rely on the session after it."
@@ -2527,6 +2538,15 @@ def build_server(
                 }
             await asyncio.sleep(0.2)
         raise ToolError(f"{wanted} was started but did not appear among the running sessions")
+
+    async def with_link(out: dict[str, Any], expected: bool) -> dict[str, Any]:
+        """A start's or resume's result with the session's app_url, once Remote Control has given
+        it one; when `expected`, it waits a moment for that."""
+        sid = out["claude_session_id"]
+        rid = await app_links.remote_id(
+            lambda: next((d for d in live_sessions() if d.get("sessionId") == sid), None), expected
+        )
+        return {**out, **app_links.field(app_url(rid))}
 
     def unused_name(wanted: str) -> str:
         taken = renames.taken(live_sessions())
@@ -2898,9 +2918,10 @@ def build_server(
         Claude Code sessions on this machine: status busy, idle or waiting (prompt says what it
         asks); kind "desktop", "terminal" or "background" (no window); side_chat marks a desktop
         aside, and parked marks one that stop_active_session parked; number is the short number any
-        tool taking a session also takes. A session outside
+        tool taking a session also takes; app_url, on a session on Remote Control (offline_in_app
+        ones too), is the link that opens it in the Claude app. A session outside
         the folders open to the bridge (the root and what's under it, and those opened with
-        open_folder; open in an app doesn't count) shows only its name, folder and status, with
+        open_folder; open in an app doesn't count) shows only its name, folder, status and app_url, with
         access "folder_not_open" (open_folder opens it once the owner confirms) or
         "folder_closed" (inside or holding a secret or system folder; never opened).
         offline_in_app, when there are any: sessions Claude Code closed on its own in the last 3
@@ -2912,7 +2933,7 @@ def build_server(
         numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
         # RULE: every list of sessions shows the number the page shows
         sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
-        offline_now = offline.shown_offline(jobs.closed_by_claude_code(daemon_log), jobs_dir)
+        offline_now = offline.shown_offline(jobs.closed_by_claude_code(daemon_log), jobs_dir, link=app_url)
         return {"sessions": sessions, **({"offline_in_app": offline_now} if offline_now else {})}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
@@ -2957,6 +2978,7 @@ def build_server(
                         "kind": session_kind(d),
                         "access": f"folder_{manager.access.state(str(d.get('cwd')))}",
                         "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
+                        **app_links.field(app_url(d.get("bridgeSessionId"))),
                     }
                 )
                 continue
@@ -2967,6 +2989,7 @@ def build_server(
                 "status": d.get("status"),
                 "kind": session_kind(d),
                 "minutes_since_update": round((now_ms - d.get("updatedAt", now_ms)) / 60000),
+                **app_links.field(app_url(d.get("bridgeSessionId"))),
             }
             if str(d.get("name") or "").startswith(SIDE_CHAT_PREFIX):
                 row["side_chat"] = True
@@ -3042,7 +3065,8 @@ def build_server(
         It continues in place with its whole history, its own permission mode and folders: the way
         back to a session that stopped or that Claude Code closed; one still running is left as it
         is (already_running), so message it. Should Claude Code start a copy under a new id instead,
-        copied_from names the original (say so); claude_code_note is Claude Code's own remark."""
+        copied_from names the original (say so); claude_code_note is Claude Code's own remark;
+        app_url is the link that opens it in the Claude app."""
         live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
         # RULE: a conversation still running is not started again
         if live is not None:
@@ -3053,6 +3077,7 @@ def build_server(
                 "folder": under_root(str(live.get("cwd") or "")),
                 "status": live.get("status") or "idle",
                 "already_running": True,
+                **app_links.field(app_url(live.get("bridgeSessionId"))),
             }
         if folder is None:
             match = next((c for c in conversations(limit=1000) if c.session_id == claude_session_id), None)
@@ -3069,7 +3094,7 @@ def build_server(
         out = await resume_in(path, label, claude_session_id)
         if out["claude_session_id"] != claude_session_id:
             out["copied_from"] = claude_session_id
-        return out
+        return await with_link(out, expected=True)  # a resume is on Remote Control
 
     async def restart_in_place(d: dict[str, Any]) -> None:
         """Stop a background session and resume it in place, its conversation,

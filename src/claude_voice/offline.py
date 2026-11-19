@@ -12,9 +12,12 @@ The fork's own; it lives apart from upstream's files so a merge from upstream do
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from . import app_links
 
 if TYPE_CHECKING:
     from .jobs import Closed
@@ -30,10 +33,15 @@ def _when(stamp: str) -> datetime | None:
         return None
 
 
-def shown_offline(closed_now: dict[str, Closed], jobs_dir: Path, now: datetime | None = None) -> list[dict[str, Any]]:
+def shown_offline(
+    closed_now: dict[str, Closed],
+    jobs_dir: Path,
+    now: datetime | None = None,
+    link: Callable[[Any], str | None] = lambda _: None,
+) -> list[dict[str, Any]]:
     """Of the sessions Claude Code closed on its own (jobs.closed_by_claude_code), those closed lately
     that are on Remote Control, latest close first: their id, name, folder, why they were closed
-    and when."""
+    and when, and the link that opens them in the app, made by `link` from their Remote Control id."""
     now = now or datetime.now(UTC)
     found = []
     for short, closed in closed_now.items():
@@ -54,6 +62,7 @@ def shown_offline(closed_now: dict[str, Closed], jobs_dir: Path, now: datetime |
                 "folder": record.get("cwd"),
                 "closed": closed.why,
                 "closed_at": closed.at,
+                **app_links.field(link(app_links.from_job(record.get("bridgeSessionId")))),
             }
         )
     return sorted(found, key=lambda s: str(s["closed_at"]), reverse=True)

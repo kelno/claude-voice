@@ -332,6 +332,14 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: it ties a general bridge to one issue tracker. Upstream may prefer it as a plugin; it reads only a file, so it would port to one easily.
 - Test first: `tests/test_beads.py` was written first and seen failing.
 
+### 20. Each session's app link wherever a session is named — fork "Give each session's app link in the session lists, starts and resumes"
+
+- Status: an idea; nothing prepared, no branch.
+- What: upstream's `app_url`, so far only in `fleet_recap`, also in `list_active_sessions` (closed sessions the app still lists included, from the job record's `cse_…` id), in the results of `start_active_session` and `attach_conversation`, which wait a few seconds for Remote Control's id, and in the guide (`app_links.py`).
+- Why upstream would want it: a relay that starts or lists a session can hand the user the link that opens it on the phone, without a second call to `fleet_recap`; upstream already built the link, this only gives it where sessions are named.
+- Expect pushback: the start now waits up to 5 s for an id when Remote Control is on; the wait ends as soon as the id comes (about 1.3 s when measured), and is skipped when Remote Control is off.
+- Test first: `tests/test_app_link.py` was written first and seen failing.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.
