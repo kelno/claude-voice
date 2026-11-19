@@ -124,3 +124,13 @@ def no_wait_for_a_remote_control_id(monkeypatch):
     from claude_voice import app_links
 
     monkeypatch.setattr(app_links, "WAIT_SECONDS", 0.0)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip upstream's tests that can't run in the fork, as tests/not_here.py lists them."""
+    from not_here import NOT_HERE
+
+    for item in items:
+        why = NOT_HERE.get(item.nodeid.split("[")[0])
+        if why:
+            item.add_marker(pytest.mark.skip(reason=why))
