@@ -327,10 +327,10 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 
 ### 19. A beads store in fleet_recap — fork "Carry a beads store's open and recent issues in fleet_recap"
 
-- What: a top-level `beads_export` setting names a beads store's export file, and `fleet_recap` then also returns that store's open issues and those closed in the last day (`beads.py`).
+- What: a top-level `beads_export` setting names a beads store's export file, and `fleet_recap` called with `beads` true also returns that store's open issues and those closed in the last day (`beads.py`).
 - Why upstream would want it: beads is a common way to track agents' work; a voice relay asked "what waits on me?" can answer from the store, and a page polling `fleet_recap` shows sessions and their work together.
-- Pushback to expect: it ties a general bridge to one issue tracker. Upstream may prefer it as a plugin; it reads only a file, so it would port to one easily.
-- Test-first: `tests/test_beads.py` was written first and seen failing.
+- Expect pushback: it ties a general bridge to one issue tracker. Upstream may prefer it as a plugin; it reads only a file, so it would port to one easily.
+- Test first: `tests/test_beads.py` was written first and seen failing.
 
 ## Not for upstream
 

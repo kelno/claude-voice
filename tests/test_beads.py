@@ -1,8 +1,9 @@
 """A beads store in fleet_recap: the open issues and those closed lately, read from the store's export.
 
 beads (a git-backed issue tracker for agents) writes its issues to an export file, one JSON object a
-line. A top-level `beads_export` in config.toml names that file, and fleet_recap then carries what it
-holds, so a page showing the sessions can show the work they are on without being rebuilt.
+line. A top-level `beads_export` in config.toml names that file, and fleet_recap called with beads
+true carries what it holds, so a page showing the sessions can show the work they are on without
+being rebuilt. Other calls, the bridge's own included, never read it.
 """
 
 import json
@@ -62,6 +63,12 @@ def test_the_export_is_named_in_config_toml(tmp_path):
     assert beads.configured(config_file(tmp_path, path)) == path
 
 
+def test_a_relative_export_is_found_next_to_config_toml(tmp_path):
+    file = tmp_path / "config.toml"
+    file.write_text('beads_export = "store/issues.jsonl"\n', encoding="utf-8")
+    assert beads.configured(file) == tmp_path / "store" / "issues.jsonl"
+
+
 def test_without_the_key_or_the_file_there_is_no_beads_store(tmp_path):
     assert beads.configured(None) is None
     assert beads.configured(config_file(tmp_path)) is None
@@ -83,10 +90,17 @@ def test_open_issues_and_those_closed_in_the_last_day_are_listed(tmp_path):
     assert board["closed_within_hours"] == beads.CLOSED_WITHIN_HOURS
 
 
-def test_the_newest_closed_issue_comes_first(tmp_path):
+def test_the_newest_closed_issue_comes_first_whatever_its_offset(tmp_path):
     older = {**CLOSED_LATELY, "id": "co-5", "closed_at": stamp(5)}
-    board = beads.board(export(tmp_path, older, CLOSED_LATELY), now=NOW)
-    assert [i["id"] for i in board["closed"]] == ["co-3", "co-5"]
+    # 13:30+01:00 is 12:30 UTC, older than co-3's 13:00 UTC though its text sorts after it.
+    offset = {**CLOSED_LATELY, "id": "co-6", "closed_at": "2026-11-19T13:30:00+01:00"}
+    board = beads.board(export(tmp_path, older, offset, CLOSED_LATELY), now=NOW)
+    assert [i["id"] for i in board["closed"]] == ["co-3", "co-6", "co-5"]
+
+
+def test_a_closing_time_without_an_offset_is_taken_as_utc(tmp_path):
+    naive = {**CLOSED_LATELY, "closed_at": "2026-11-19T10:00:00"}
+    assert [i["id"] for i in beads.board(export(tmp_path, naive), now=NOW)["closed"]] == ["co-3"]
 
 
 def test_the_board_says_when_the_export_was_last_written(tmp_path):
@@ -107,30 +121,44 @@ def test_a_line_that_is_not_json_is_said_with_its_number(tmp_path):
     assert "line 2" in beads.board(path, now=NOW)["error"]
 
 
-async def test_fleet_recap_carries_the_beads_store_when_one_is_named(tmp_path):
+def test_a_line_that_is_not_an_issue_is_said_with_its_number(tmp_path):
     path = export(tmp_path, WAITING)
+    path.write_text(path.read_text(encoding="utf-8") + "[]\n", encoding="utf-8")
+    assert "line 2" in beads.board(path, now=NOW)["error"]
+
+
+def server(tmp_path, export_path=None):
     (tmp_path / "live").mkdir()
-    srv = build_server(
+    return build_server(
         SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path, client_factory=FakeClaude()),
         conversations=lambda **k: [],
         live_dir=tmp_path / "live",
         projects_dir=tmp_path / "projects",
-        repo_config=config.load(config_file(tmp_path, path), env={"HOME": str(tmp_path)}),
+        repo_config=config.load(config_file(tmp_path, export_path), env={"HOME": str(tmp_path)}),
     )
+
+
+async def test_fleet_recap_carries_the_beads_store_when_asked(tmp_path):
+    srv = server(tmp_path, export(tmp_path, WAITING))
     async with Client(srv) as c:
-        fleet = (await c.call_tool("fleet_recap", {})).structured_content
+        fleet = (await c.call_tool("fleet_recap", {"beads": True})).structured_content
     assert [i["id"] for i in fleet["beads"]["open"]] == ["co-1"]
 
 
-async def test_fleet_recap_has_no_beads_without_a_store(tmp_path):
-    (tmp_path / "live").mkdir()
-    srv = build_server(
-        SessionManager(Store(tmp_path / "b.db"), project_root=tmp_path, client_factory=FakeClaude()),
-        conversations=lambda **k: [],
-        live_dir=tmp_path / "live",
-        projects_dir=tmp_path / "projects",
-        repo_config=config.load(config_file(tmp_path), env={"HOME": str(tmp_path)}),
-    )
+async def test_fleet_recap_reads_no_beads_unless_asked(tmp_path, monkeypatch):
+    def unread(*args, **kwargs):
+        raise AssertionError("the beads export was read")
+
+    monkeypatch.setattr(beads, "board", unread)
+    srv = server(tmp_path, export(tmp_path, WAITING))
+    srv.hints_check()  # the bridge's own calls to fleet_recap
     async with Client(srv) as c:
         fleet = (await c.call_tool("fleet_recap", {})).structured_content
     assert "beads" not in fleet
+
+
+async def test_beads_asked_of_a_bridge_without_a_store_is_said(tmp_path):
+    srv = server(tmp_path)
+    async with Client(srv) as c:
+        fleet = (await c.call_tool("fleet_recap", {"beads": True})).structured_content
+    assert fleet["beads"] == {"error": beads.NOT_SET}

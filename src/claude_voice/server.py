@@ -40,7 +40,6 @@ from . import (
     access,
     answers,
     api,
-    beads,
     channel,
     config,
     confirm,
@@ -84,6 +83,7 @@ from . import (
     usage,
     work,
 )
+from . import beads as beads_store  # the module; fleet_recap's parameter is named beads
 from .channel_hub import ChannelHub, ancestor_session, started_with_channel
 from .metrics import METRICS
 from .oauth import ACCESS_TTL, MIN_ACCESS_TTL, SCOPE, OAuthProvider, PublicClientMetadata
@@ -2020,7 +2020,7 @@ def build_server(
     # doesn't pass the server's instructions to the model, so they reach it through the guide.
     told = voice_instructions(repos.voice_instructions_file)
     relay_note_files = relay_notes.configured(repos.file)  # the owner's notes for relays (relay_notes.py)
-    beads_export = beads.configured(repos.file)  # a beads store fleet_recap carries (beads.py)
+    beads_export = beads_store.configured(repos.file)  # a beads store fleet_recap carries on request (beads.py)
     across = fleet.Fleet()  # the other machines, filled in once they are started below
     across.numbers = manager.store
     across.publish = api.HUB.publish
@@ -2356,21 +2356,29 @@ def build_server(
         return item
 
     @tool(annotations=READ_ONLY)
-    def fleet_recap() -> dict[str, Any]:
+    def fleet_recap(
+        beads: Annotated[
+            bool,
+            Field(description="True adds the beads store's open issues and those closed in the last day, as beads."),
+        ] = False,
+    ) -> dict[str, Any]:
         """Every running session with its status and one line on what it is doing.
         Answers "what are my sessions up to?" without reading each one; kind is "desktop",
         "terminal" or "background" (no window), side_chat marks a desktop aside, and parked marks
-        one that stop_active_session parked. When the bridge is set to a beads store, beads lists
-        its open issues and those closed in the last day, or an error to tell the owner."""
+        one that stop_active_session parked. With beads true, beads holds the beads store's open
+        issues (labels and metadata included), those closed in the last day and when the store was
+        last written, or only an error to tell the owner."""
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
         live_rows = running()
         numbers = local_numbers([str(r["claude_session_id"]) for r in live_rows])
         sessions = [
             recap_of_running(row, live_by_id.get(str(row["claude_session_id"]), {}), numbers) for row in live_rows
         ]
-        if beads_export is None:
+        if not beads:
             return {"sessions": sessions}
-        return {"sessions": sessions, "beads": beads.board(beads_export)}
+        if beads_export is None:
+            return {"sessions": sessions, "beads": {"error": beads_store.NOT_SET}}
+        return {"sessions": sessions, "beads": beads_store.board(beads_export)}
 
     def checked_model_and_effort(model: str | None, effort: str | None) -> None:
         """Refuse a model or an effort Claude Code should never be handed."""
