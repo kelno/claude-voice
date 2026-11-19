@@ -266,8 +266,10 @@ def launch(
     popen: Callable[..., Any] = subprocess.Popen,
     tests: bool = False,
 ) -> None:
-    """Start the updater outside the bridge, so it survives the restart it causes."""
-    args = ["-m", "claude_voice.updater", "--repo", str(folder), "--log", str(log), "--port", str(port), "--host", host]
+    """Start the updater outside the bridge, so it survives the restart it causes; isolated
+    (`-I`), as upstream starts it, so nothing in the folder it starts in is imported first."""
+    args = ["-I", "-m", "claude_voice.updater"]
+    args += ["--repo", str(folder), "--log", str(log), "--port", str(port), "--host", host]
     if tests:
         args.append("--tests")
     if platform == "win32":

@@ -347,7 +347,7 @@ def test_the_bridge_on_windows_starts_the_updater_detached_so_it_outlives_the_re
     updater.launch(tmp_path, tmp_path / "update.json", 8811, "10.0.0.2", platform="win32", popen=popen)
     command, kwargs = started[0]
     assert command[1:] == [
-        "-m", "claude_voice.updater", "--repo", str(tmp_path), "--log", str(tmp_path / "update.json"),
+        "-I", "-m", "claude_voice.updater", "--repo", str(tmp_path), "--log", str(tmp_path / "update.json"),
         "--port", "8811", "--host", "10.0.0.2",
     ]  # fmt: skip
     assert kwargs["creationflags"] == updater.WINDOWS_DETACHED
