@@ -101,6 +101,7 @@ def bridge(tmp_path, monkeypatch):
     woken: dict = {}  # the registry entry a wake writes back, when a test gives one
     held = asyncio.Event()  # the compaction runs once this is set; a test may clear it
     held.set()
+    broken: list[str] = []  # a test puts an error here to have the compaction fail with it
 
     async def stop(sid):
         done.append(("stop", sid))
@@ -109,6 +110,8 @@ def bridge(tmp_path, monkeypatch):
     async def compact(cwd, sid, instructions):
         done.append(("compact", cwd, sid, instructions))
         await held.wait()
+        if broken:
+            raise RuntimeError(broken[0])
 
     async def wake(cwd, session_id):
         done.append(("wake", cwd, session_id))
@@ -138,6 +141,7 @@ def bridge(tmp_path, monkeypatch):
         "done": done,
         "woken": woken,
         "held": held,
+        "broken": broken,
         "cwd": str(home / "app"),
     }
 
@@ -239,3 +243,26 @@ async def test_a_session_woken_from_a_compaction_without_its_remote_control_link
             await asyncio.sleep(0.05)
     warned = [r for r in caplog.records if "without Remote Control" in r.message]
     assert bool(warned) is not linked
+
+
+@pytest.mark.parametrize("failed", [False, True])
+async def test_a_session_woken_from_its_compaction_is_told_to_carry_on(bridge, monkeypatch, failed):
+    # Seen 2026-11-19 (ledger F119): Claude Code wakes the session with no turn to take, so it sat
+    # idle until the owner told it to resume.
+    monkeypatch.setattr(server, "RELISTED_SECONDS", 0.3)
+    if failed:
+        bridge["broken"].append("claude -p /compact exited 1")
+    bridge["store"].record_started("sid-7", "desk", bridge["cwd"])
+    (bridge["live"] / "7.json").write_text(json.dumps({**bridge["entry"], "status": "idle"}), encoding="utf-8")
+    bridge["woken"].update(bridge["entry"], status="idle")
+    async with reached(bridge["server"]) as app:
+        await call(app, "compact_after_turn", {}, tool_use_id="toolu_compact")
+        for _ in range(100):
+            if any(step[0] == "told" for step in bridge["done"]):
+                break
+            await asyncio.sleep(0.05)
+    steps = [step[0] for step in bridge["done"]]
+    assert steps[-2:] == ["wake", "told"]
+    [(_, name, text)] = [step for step in bridge["done"] if step[0] == "told"]
+    assert name == "desk" and "carry on" in text.lower()
+    assert ("failed" in text) is failed

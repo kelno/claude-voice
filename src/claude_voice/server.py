@@ -1211,6 +1211,21 @@ COMPACT_GIVE_UP_SECONDS = 1800.0  # how long it waits for that turn to end befor
 # archives its claude.ai session; the wake un-archives it and reattaches, within seconds when it
 # works (Claude Code 2.1.325, tested 2026-11-14, ledger F94).
 RELISTED_SECONDS = 30.0
+# What a session woken after its compaction is told: Claude Code wakes it with no turn to take,
+# so it sat idle until the owner told it to resume (ledger F119, 2026-11-19).
+CARRY_ON = (
+    "The bridge compacted this conversation, as you asked with compact_after_turn, and started you"
+    " again. Carry on with the work in progress, from your notes or keep-file and the summary; if"
+    " nothing is left to do, end your turn."
+)
+CARRY_ON_UNCOMPACTED = (
+    "The bridge stopped you to compact this conversation, as you asked with compact_after_turn, but"
+    " the compaction failed, so the conversation is as it was; the bridge's log says why. Carry on"
+    " with the work in progress, and call compact_after_turn again at a later break if you still"
+    " need it."
+)
+# How long the bridge looks for the woken session to be running again before it gives up telling it.
+RESUMED_SECONDS = 60.0
 
 
 async def compact_when_idle(
@@ -3529,8 +3544,9 @@ def build_server(
         For a session with no window, at a break you choose: first write down what must survive
         (your notes, a keep-file), then call this and end your turn. Once the turn has ended, the
         bridge stops you, runs /compact on the conversation and starts you again, usually within a
-        minute, and you are off the owner's session list in the Claude app until then; your next
-        message finds it compacted. status: scheduled or already_scheduled;
+        minute (you are off the owner's session list in the Claude app until then), then sends you
+        a message to carry on from your notes and the summary, so you resume by yourself (it says
+        so if the compaction failed). status: scheduled or already_scheduled;
         if your turn never seems to end within 30 minutes (a background task still running counts
         as not ended), it gives up and sends you a message saying what it saw."""
         d = await asking_session()
@@ -3591,6 +3607,18 @@ def build_server(
                 sid,
             )
 
+        async def told_to_carry_on(outcome: str) -> None:
+            """Tell the woken session to carry on, once it is running again."""
+            deadline = time.monotonic() + RESUMED_SECONDS
+            while time.monotonic() < deadline:
+                now = next((x for x in live_sessions() if str(x.get("sessionId")) == sid), None)
+                if now is not None and session_state(now) == "idle":
+                    # RULE: a session woken from its compaction is told to carry on
+                    await send_into(now, CARRY_ON if outcome == "compacted" else CARRY_ON_UNCOMPACTED)
+                    return
+                await asyncio.sleep(0.2)
+            log.warning("compact_after_turn %s (%s): not seen running after the wake, so not told", name, sid)
+
         async def run() -> None:
             try:
                 outcome = await compact_when_idle(
@@ -3605,6 +3633,8 @@ def build_server(
                     if remote:
                         await relinked()
                     log.info("compact_after_turn %s (%s): %s", name, sid, outcome)
+                    if outcome != "ended":
+                        await told_to_carry_on(outcome)
             except Exception as exc:
                 log.warning("compact_after_turn %s (%s) broke: %s", name, sid, exc)
             finally:

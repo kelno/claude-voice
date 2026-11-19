@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session woken from its compaction is told to carry on"
+file = "src/claude_voice/server.py"
+find = 'await send_into\(now, CARRY_ON if outcome == "compacted" else CARRY_ON_UNCOMPACTED\)'
+replace = 'pass'
