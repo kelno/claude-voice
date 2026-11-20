@@ -80,6 +80,7 @@ from . import (
     roster,
     routing,
     session_modes,
+    sign_in,
     software,
     tailnet,
     titles,
@@ -2877,6 +2878,9 @@ def build_server(
 
     # Each plugin's own repository joins the three above, on the software panel and the work page.
     plugin_repos = work.plugin_repos(repos.plugins)
+    # The work page's look at the sign-in, kept for health and asked again when a delivery fails.
+    # work.read_login_expiry is looked up late, so the suite can stand in for it.
+    signed_in = sign_in.Look(lambda: work.read_login_expiry(), warning=work.LOGIN_WARNING)
     board = work_board or work.Board(
         {
             "claude-voice": repos.repos.claude_voice,
@@ -2885,7 +2889,7 @@ def build_server(
         }
         | {name: repo for name, repo, _ in plugin_repos},
         run=software._gh,
-        login_expiry=lambda: work.read_login_expiry(),  # looked up late, so the suite can stand in for it
+        login_expiry=signed_in.read,
     )
 
     def software_listed() -> list[tuple[str, str, Path | None, str]]:
@@ -3987,7 +3991,7 @@ def build_server(
             slow = {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1, **typed}
             return slow | behind
         if not out.get("delivered"):
-            raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
+            raise ToolError(await asyncio.to_thread(signed_in.undelivered, out.get("detail") or "unknown reason"))
         return {
             "session": target["name"],
             "status": "delivered",
@@ -4324,7 +4328,7 @@ def build_server(
         was_busy = target.get("status") in BUSY
         out = await send_into(target, relayed(target, message, await relay_note(waits=True)))
         if not out.get("delivered"):
-            raise ToolError(f"Could not deliver: {out.get('detail') or 'unknown reason'}")
+            raise ToolError(await asyncio.to_thread(signed_in.undelivered, out.get("detail") or "unknown reason"))
 
         # Followed from here, as after a send, so a wait or a news line made while the question
         # waits sees the session working; the question's own result then moves the read mark.
@@ -4664,7 +4668,7 @@ def build_server(
     def health() -> dict[str, Any]:
         """The bridge's own state: version, memory, calls and errors per tool, folders.
         Also since when it runs, its last restart and why, the latency per tool since start, the latest
-        errors, the courier, channels and watcher, and the root and granted folders."""
+        errors, the courier, channels and watcher, Claude Code's sign-in, and the root and granted folders."""
         snap = METRICS.snapshot()
         courier = transcripts.shared_courier()
         offered = [p.status() for p in active_plugins]
@@ -4681,6 +4685,7 @@ def build_server(
             "tools": snap["tools"],
             "errors": snap["errors"],
             "courier": {"warm": courier.warm, "last_delivery_ms": courier.last_delivery_ms},
+            "sign_in": signed_in.state(),
             "channels": channels.status() if channels is not None else None,
             "watcher": {
                 "last_check_at": last_check[0] if last_check else None,

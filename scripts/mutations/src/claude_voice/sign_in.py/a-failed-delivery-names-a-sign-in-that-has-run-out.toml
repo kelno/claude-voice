@@ -1,0 +1,5 @@
+[[rule]]
+name = "a failed delivery names a sign-in that has run out"
+file = "src/claude_voice/sign_in.py"
+find = 'if expires is not None and expires <= self.now\(\):'
+replace = 'if False:'

@@ -78,6 +78,7 @@ LAYERS = {
             "channel",
             "channel_hub",
             "relay_notes",
+            "sign_in",
             "beads",
             "app_links",
             "owner_rules",

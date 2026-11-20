@@ -1,0 +1,5 @@
+[[rule]]
+name = "health shows the sign-in state"
+file = "src/claude_voice/sign_in.py"
+find = 'if self.expires is None:'
+replace = 'if True:'
