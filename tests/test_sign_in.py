@@ -44,15 +44,22 @@ async def test_a_failed_delivery_names_a_sign_in_that_has_run_out(tmp_path, root
     said = str(res.content)
     assert res.is_error and "Could not deliver: the courier did not send it" in said
     assert "sign-in has run out" in said and "/login" in said
+    assert 'If sessions answer "Login expired"' not in said  # the cause is known: no guessing hint
     assert health["sign_in"]["state"] == "expired"  # the failure's own look is kept
 
 
-async def test_a_failed_delivery_says_nothing_of_a_sign_in_still_valid(tmp_path, root, live, monkeypatch):
-    monkeypatch.setattr(work, "read_login_expiry", lambda: datetime.now(UTC) + timedelta(days=20))
+@pytest.mark.parametrize("expires", [timedelta(days=20), None], ids=["valid", "unknown"])
+async def test_a_failed_delivery_says_how_to_spot_an_ended_sign_in(tmp_path, root, live, monkeypatch, expires):
+    # A sign-in made elsewhere can end this PC's without its date passing (2026-11-12): the date
+    # alone can't tell, but a session's own "Login expired" answer can (owner's go, 2026-11-20).
+    monkeypatch.setattr(work, "read_login_expiry", lambda: expires and datetime.now(UTC) + expires)
     target = Target(live, str(root / "billing"))
     async with Client(bridge(tmp_path, root, live, target, not_sent)) as c:
         res = await c.call_tool("message_active_session", {"session": "billing-ab", "message": "go"})
-    assert res.is_error and "sign-in" not in str(res.content)
+    said = str(res.content)
+    assert res.is_error and "Could not deliver: the courier did not send it" in said
+    assert 'If sessions answer "Login expired"' in said and "/login" in said
+    assert "has run out" not in said
 
 
 def look(expires):

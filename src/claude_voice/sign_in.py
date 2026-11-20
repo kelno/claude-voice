@@ -17,6 +17,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 EXPIRED = "Claude Code's sign-in has run out: run claude on the PC and type /login, then send again."
+# A sign-in made elsewhere can end this PC's without its date passing (2026-11-12), so the date
+# can't rule it out; a session's own answer shows it.
+MAYBE_ENDED = (
+    'If sessions answer "Login expired", Claude Code\'s sign-in has ended even though its date '
+    "hasn't passed: run claude on the PC and type /login."
+)
 
 
 class Look:
@@ -56,10 +62,12 @@ class Look:
 
     def undelivered(self, detail: str) -> str:
         """The error for a message that wasn't delivered, naming the sign-in when it has run out:
-        asked afresh, since a failure is rare and the hourly look may be stale."""
+        asked afresh, since a failure is rare and the hourly look may be stale. Otherwise it says
+        how to tell an ended sign-in, which the date can't."""
         said = f"Could not deliver: {detail}"
         expires = self.read()
         # RULE: a failed delivery names a sign-in that has run out
         if expires is not None and expires <= self.now():
             return f"{said}. {EXPIRED}"
-        return said
+        # RULE: a failed delivery says how to spot an ended sign-in
+        return f"{said}. {MAYBE_ENDED}"

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a failed delivery says how to spot an ended sign-in"
+file = "src/claude_voice/sign_in.py"
+find = 'return f"\{said\}. \{MAYBE_ENDED\}"'
+replace = 'return said'
