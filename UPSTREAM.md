@@ -49,7 +49,7 @@ The fork's own decision records are numbered from 101 (ADR-CV-101 to 108), so up
 
 | Command | What it's for | Why | Fork commits |
 | --- | --- | --- | --- |
-| `claude-voice texts` | Prints, as JSON, what the bridge says to agents: the server's instructions, each tool's name and description, the guide, the notes under a relayed message (with `<sender>` and `<session name>` where values go) and the files named as notes for relays (`texts.py`). Built from a bridge put together as `serve` does, with a throwaway store, so it can't drift from what is served | The owner's tools that show which agents read which rule text need the bridge's texts too, read without starting a bridge; also a way to review all of it at once (`CLIENT-TEXT.md`) | "Print the texts the bridge serves to agents" |
+| `claude-voice texts` | Prints, as JSON, what the bridge says to agents: the server's instructions, each tool's name and description with its parameters' descriptions, the guide, the notes under a relayed message (with `<sender>` and `<session name>` where values go) and the files named as notes for relays (`texts.py`). Built from a bridge put together as `serve` does, with a throwaway store, so it can't drift from what is served | The owner's tools that show which agents read which rule text need the bridge's texts too, read without starting a bridge; also a way to review all of it at once (`CLIENT-TEXT.md`) | "Print the texts the bridge serves to agents" |
 
 ### Upstream tools the fork removed or switched off
 

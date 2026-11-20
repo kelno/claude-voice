@@ -1,8 +1,8 @@
 """What the bridge says to agents, printed without serving it (a fork feature: UPSTREAM.md).
 
 `claude-voice texts` prints, as JSON, the texts an agent reads from the bridge: its opening
-instructions, each tool's name and description as tools/list serves them, the guide as the guide
-tool returns it, the notes the bridge puts under a relayed message (with placeholders in angle
+instructions, each tool's name and the text an agent reads for it (its description as tools/list
+serves it, then each parameter's description), the guide as the guide tool returns it, the notes the bridge puts under a relayed message (with placeholders in angle
 brackets where it fills in a value), and the files config.toml names as notes for relays. They are
 read from a server built the way `serve` builds it, with a throwaway store, so the printout and
 what agents read can't drift apart; nothing is started, and the running bridge is left alone."""
@@ -42,6 +42,16 @@ NOTES = (
 )
 
 
+def tool_text(tool: Any) -> str:
+    """What an agent reads for a tool: its description as tools/list serves it, then a line
+    `<parameter>: <description>` for each parameter that has one, in the schema's order. The same format
+    the owner's path tools give their own server's tools; the key stays `description`, which they read."""
+    params = (tool.input_schema or {}).get("properties", {})
+    return (tool.description or "") + "".join(
+        f"\n{name}: {p['description']}" for name, p in params.items() if isinstance(p, dict) and p.get("description")
+    )
+
+
 async def collect(repos: config.Config | None = None) -> dict[str, Any]:
     """The texts, from a bridge built with these settings (by default, the settings file's)."""
     repos = repos or config.load(config.FILE, own_clone=roles.own_clone())
@@ -49,7 +59,7 @@ async def collect(repos: config.Config | None = None) -> dict[str, Any]:
         where = Path(folder)
         manager = SessionManager(Store(where / "texts.db"), project_root=where)
         srv = build_server(manager, conversations=lambda **_: [], live_dir=where / "live", repo_config=repos)
-        tools = [{"name": t.name, "description": t.description or ""} for t in await srv.list_tools()]
+        tools = [{"name": t.name, "description": tool_text(t)} for t in await srv.list_tools()]
         guide = getattr(await srv.call_tool("guide", {}), "structured_content", None) or {}
     return {
         "instructions": srv.instructions or "",

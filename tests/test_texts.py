@@ -35,7 +35,7 @@ async def served(tmp_path, repos):
     m = SessionManager(Store(tmp_path / "served.db"), project_root=tmp_path, client_factory=FakeClaude())
     srv = build_server(m, conversations=lambda **k: [], live_dir=tmp_path / "live", repo_config=repos)
     async with Client(srv) as c:
-        tools = [{"name": t.name, "description": t.description} for t in (await c.list_tools()).tools]
+        tools = [{"name": t.name, "description": texts.tool_text(t)} for t in (await c.list_tools()).tools]
         guide = (await c.call_tool("guide", {})).structured_content["guide"]
     return tools, guide
 
@@ -49,6 +49,18 @@ async def test_the_tools_and_the_guide_are_those_a_client_of_the_bridge_gets(tmp
     assert out["tools"] == tools
     assert out["guide"] == guide
     assert "Keep it short." in out["guide"]
+
+
+async def test_a_tools_text_carries_its_parameters_descriptions(tmp_path, settings):
+    out = {t["name"]: t["description"] for t in (await texts.collect(settings[0]))["tools"]}
+    m = SessionManager(Store(tmp_path / "params.db"), project_root=tmp_path, client_factory=FakeClaude())
+    srv = build_server(m, conversations=lambda **k: [], live_dir=tmp_path / "live", repo_config=settings[0])
+    async with Client(srv) as c:
+        recap = next(t for t in (await c.list_tools()).tools if t.name == "fleet_recap")
+    beads = recap.input_schema["properties"]["beads"]["description"]
+    # The description as served, then one line per parameter that has a description.
+    assert out["fleet_recap"].startswith(recap.description)
+    assert f"\nbeads: {beads}" in out["fleet_recap"]
 
 
 async def test_the_notes_under_a_relayed_message_have_placeholders_where_values_go(tmp_path, settings):
