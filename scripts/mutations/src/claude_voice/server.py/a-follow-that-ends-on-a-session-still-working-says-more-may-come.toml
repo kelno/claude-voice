@@ -1,0 +1,5 @@
+[[rule]]
+name = "a follow that ends on a session still working says more may come"
+file = "src/claude_voice/server.py"
+find = 'if later:'
+replace = 'if False:'

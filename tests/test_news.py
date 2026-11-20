@@ -590,6 +590,23 @@ async def test_the_result_where_following_ends_says_there_is_nothing_left_to_fol
     assert "next_step" not in later
 
 
+async def test_a_follow_that_ends_on_a_session_still_working_says_more_may_come(served):
+    # The reply to the relay is read, but the owner typed in the session meanwhile and it is on
+    # that turn now: "nothing left to follow" made the relay stop reading what came next (F123).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        sent = await call(c, "message_active_session", session="billing-ab", message="Run the export.")
+        desk.transcript.append(turn("assistant", "Export done."))
+        desk.transcript.append(turn("user", "Done", "human"))
+        desk.set("busy")
+        out = await call(c, "wait_for_session", session="billing-ab", after=sent["next_after"])
+    assert out["status"] == "still_working"
+    assert "Nothing left to follow" not in out["next_step"]
+    assert "billing-ab is still at work after its reply to you" in out["next_step"]
+    assert 'wait_for_session(session="billing-ab")' in out["next_step"]
+
+
 async def test_nothing_followed_means_no_next_step(served):
     url, _ = served
     http, client = conversation(url)

@@ -381,6 +381,13 @@ NEXT_BACKGROUND = (
     "then asks you to say it's taking a while, don't: the owner knows; stay silent until the reply."
 )
 NEXT_DONE = "Nothing left to follow: every reply is read{left}. No need to tell the owner."
+# A follow ends once the reply to the relay is read, but the session may already be on a later turn
+# (one the owner typed, say): saying nothing is left made the relay stop reading (ledger F123).
+NEXT_READ = "You have read every reply to you{left}."
+NEXT_LATER_TURN = (
+    '{name} is still at work after its reply to you, so more may come: wait_for_session(session="{name}") waits '
+    "until it rests."
+)
 # Said in the result of a send or a question to a session the owner typed in since the relay last
 # read it: the moment it matters, rather than news on every result.
 OWNER_TYPED_NOTE = (
@@ -1906,7 +1913,9 @@ def build_server(
         """
         handle = call_handle()
         marks = mine()
-        active_before = any(following.stance(m) == "followed" and m.get("state") in ACTIVE for m in marks.values())
+        active_before = {
+            sid for sid, m in marks.items() if following.stance(m) == "followed" and m.get("state") in ACTIVE
+        }
         live = {str(d.get("sessionId")): d for d in live_sessions() if not is_courier(d)}
         mark_after_call(tool, args, structured, live)
         handle, marks = call_handle(), mine()  # this call may have handed one out
@@ -1930,7 +1939,7 @@ def build_server(
         if signin_due and signin_told.get(handle or conversation) != today:
             items.extend(signin_due)
             signin_told[handle or conversation] = today
-        step = await next_step(active_before or tool == "wait_for_session" and not args.get("session"), live)
+        step = await next_step(active_before, tool == "wait_for_session" and not args.get("session"), live)
         if tool in ("read_session_output", "wait_for_session", "ask_active_session"):
             step = " ".join(filter(None, [partial_reply(structured), step])) or None
         if state.get("merged"):
@@ -1963,8 +1972,10 @@ def build_server(
         took = manager.clock() - since
         return f" for {round(took / 60)} min" if took >= 90 else f" for {round(took)} s"
 
-    async def next_step(active_before: bool, live: dict[str, dict[str, Any]]) -> str | None:
-        """What follows for the relay from the state of the sessions it follows, or None."""
+    async def next_step(active_before: set[str], waited_on_all: bool, live: dict[str, dict[str, Any]]) -> str | None:
+        """What follows for the relay from the state of the sessions it follows, or None.
+        `active_before`: the sessions it was following before this call; `waited_on_all`: this call
+        was a wait on every followed session, which ends a follow too when there was none."""
         sentences, paused = [], []
         marks = mine()
         for sid, mark in marks.items():
@@ -1987,10 +1998,21 @@ def build_server(
                 else:
                     sentences.append(NEXT_WORKING.format(name=name, since=lasted(mark.get("since")), last=last))
         active = any(following.stance(m) == "followed" and m.get("state") in ACTIVE for m in marks.values())
-        if active_before and not active:
+        if (active_before or waited_on_all) and not active:
             # RULE: the result where following ends says there is nothing left to follow
             left = f"; {', '.join(paused)} waits on the owner's answer" if paused else ""
-            sentences.append(NEXT_DONE.format(left=left))
+            later = [
+                str(marks[sid].get("name") or sid)
+                for sid in active_before
+                if sid in marks and sid in live and session_state(live[sid]) in ("busy", following.BACKGROUND)
+            ]
+            # RULE: a follow that ends on a session still working says more may come
+            if later:
+                sentences.append(
+                    " ".join([NEXT_READ.format(left=left), *(NEXT_LATER_TURN.format(name=n) for n in later)])
+                )
+            else:
+                sentences.append(NEXT_DONE.format(left=left))
         return " ".join(sentences) or None
 
     def mark_after_call(
