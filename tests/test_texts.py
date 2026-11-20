@@ -9,8 +9,8 @@ import pytest
 from fakes import FakeClaude
 from mcp.client import Client
 
-from claude_voice import cli, config, texts
-from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server, session_note
+from claude_voice import cli, config, relay_notes, texts
+from claude_voice.server import GUIDE_NOTE, RELAYED_MESSAGE_NOTE, build_server, session_note
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
@@ -81,6 +81,19 @@ async def test_the_notes_for_relays_are_named_by_their_files(settings):
     out = await texts.collect(repos)
 
     assert out["relay_notes"] == [str(note)]
+
+
+async def test_what_comes_with_the_guide_besides_it_is_printed_with_when(tmp_path, settings):
+    repos, note = settings
+    out = (await texts.collect(repos))["relay"]
+
+    assert out["guide_note"]["text"] == GUIDE_NOTE
+    # The opening and the unread line are those the bridge wraps the notes for relays in.
+    assert relay_notes.text([note]).startswith(out["opening"]["text"] + "\n\n# Relay\n")
+    missing = tmp_path / "Gone.md"
+    assert relay_notes.UNREAD.format(path=missing, name="Gone") in relay_notes.text([missing])
+    assert out["unread"]["text"] == relay_notes.UNREAD.format(path="<path>", name="<name>")
+    assert all(e["when"] and not re.search(r"\{\w+\}", e["text"]) for e in out.values())
 
 
 def test_the_command_prints_them_as_json(monkeypatch, capsys):

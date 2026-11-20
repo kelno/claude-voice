@@ -2,10 +2,13 @@
 
 `claude-voice texts` prints, as JSON, the texts an agent reads from the bridge: its opening
 instructions, each tool's name and the text an agent reads for it (its description as tools/list
-serves it, then each parameter's description), the guide as the guide tool returns it, the notes the bridge puts under a relayed message (with placeholders in angle
-brackets where it fills in a value), and the files config.toml names as notes for relays. They are
-read from a server built the way `serve` builds it, with a throwaway store, so the printout and
-what agents read can't drift apart; nothing is started, and the running bridge is left alone."""
+serves it, then each parameter's description), the guide as the guide tool returns it, the notes
+the bridge puts under a relayed message (with placeholders in angle brackets where it fills in a
+value), the files config.toml names as notes for relays, and what the bridge hands over with the
+guide besides it (`relay`: the note on the guide, the opening of the notes for relays, and the line
+standing for one it can't read), each with when. They are read from a server built the way `serve`
+builds it, with a throwaway store, so the printout and what agents read can't drift apart; nothing
+is started, and the running bridge is left alone."""
 
 from __future__ import annotations
 
@@ -14,12 +17,24 @@ from pathlib import Path
 from typing import Any
 
 from . import config, relay_notes, roles
-from .server import NAME_CHECK_FREE, NAME_CHECK_OWNERS, RELAYED_MESSAGE_NOTE, build_server, session_note
+from .server import (
+    GUIDE_NOTE,
+    NAME_CHECK_FREE,
+    NAME_CHECK_OWNERS,
+    RELAYED_MESSAGE_NOTE,
+    build_server,
+    session_note,
+)
 from .sessions import SessionManager
 from .store import Store
 
 SENDER = "<sender>"
 NAME = "<session name>"
+# The texts the bridge hands over with the guide besides the guide itself (`relay`), each with when:
+# the note on the guide, and what wraps the owner's notes for relays (relay_notes.py).
+GUIDE_NOTE_WHEN = "with the guide, when the conversation's first call to the bridge isn't to guide"
+OPENING_WHEN = "before the owner's notes for relays, handed to a relay with the guide"
+UNREAD_WHEN = "in place of one of the owner's notes for relays that the bridge can't read"
 # When the bridge adds each note, in the order a session meets them.
 NOTES = (
     ("under a message the relay sends into a session (it has no inbox)", RELAYED_MESSAGE_NOTE),
@@ -67,4 +82,9 @@ async def collect(repos: config.Config | None = None) -> dict[str, Any]:
         "guide": str(guide.get("guide", "")),
         "notes": [{"when": when, "text": text} for when, text in NOTES],
         "relay_notes": [str(p) for p in relay_notes.configured(repos.file)],
+        "relay": {
+            "guide_note": {"when": GUIDE_NOTE_WHEN, "text": GUIDE_NOTE},
+            "opening": {"when": OPENING_WHEN, "text": relay_notes.OPENING},
+            "unread": {"when": UNREAD_WHEN, "text": relay_notes.UNREAD.format(path="<path>", name="<name>")},
+        },
     }

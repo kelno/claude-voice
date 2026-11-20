@@ -30,7 +30,7 @@ Everything the bridge says to an assistant is text the assistant has to understa
 
 ## Checking new wording
 
-- To read the text as clients get it, `claude-voice texts` prints it as JSON, without serving anything: the server's instructions, each tool's name and the text an agent reads for it (its description as `tools/list` serves it, then a line `<parameter>: <description>` for each parameter that has one), the guide as the `guide` tool returns it, the notes under a relayed message (values the bridge fills in shown as `<sender>` or `<session name>`), and the files the settings name as notes for relays. It builds the bridge the way `serve` does, from the settings file, so it shows what the running bridge says once restarted on the same code. It leaves out what results say, which depends on each call.
+- To read the text as clients get it, `claude-voice texts` prints it as JSON, without serving anything: the server's instructions, each tool's name and the text an agent reads for it (its description as `tools/list` serves it, then a line `<parameter>: <description>` for each parameter that has one), the guide as the `guide` tool returns it, the notes under a relayed message (values the bridge fills in shown as `<sender>` or `<session name>`), the files the settings name as notes for relays, and what comes with the guide besides it (`relay`: the note on the guide, the opening of the notes for relays, and the line standing for one the bridge can't read, with `<path>` and `<name>`), each with when. It builds the bridge the way `serve` does, from the settings file, so it shows what the running bridge says once restarted on the same code. It leaves out what results say, which depends on each call.
 
 ```console
 $ claude-voice texts --help
