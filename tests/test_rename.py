@@ -4,9 +4,11 @@ The bridge keeps its own name for any running session. A session the bridge star
 Claude Code too, through its job record, which a running background session watches and takes its
 name from at once, and which waking it again reads; any other keeps its old name in Claude Code."""
 
+import asyncio
 import json
 import logging
 import os
+import time
 
 import pytest
 from mcp.client import Client
@@ -236,15 +238,17 @@ def watching(tmp_path, root, live, jobs):
     )
 
 
-async def named_in_job(record, name, seconds=3.0):
-    """Whether the job record gets `name` within `seconds`."""
-    import asyncio
+async def named_in_job(record, name, seconds=10.0):
+    """Whether the job record gets `name` within `seconds`.
 
-    for _ in range(int(seconds / 0.02)):
+    The default is long because under the full suite on 8 workers the bridge's watcher was seen to
+    take more than 3 s to apply a name; the checks that a name is not applied pass a short wait."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
         if json.loads(record.read_text(encoding="utf-8"))["name"] == name:
             return True
         await asyncio.sleep(0.02)
-    return False
+    return json.loads(record.read_text(encoding="utf-8"))["name"] == name
 
 
 async def test_a_name_given_mid_turn_reaches_claude_code_once_the_session_is_idle(tmp_path, root, live, jobs):
