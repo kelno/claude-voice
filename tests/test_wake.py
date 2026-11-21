@@ -243,3 +243,108 @@ async def test_a_session_still_running_is_never_woken(tmp_path):
         ]
 
     assert await wake_interrupted(store, jobs, {"s-running", "s-dead"}, starter.wake) == ["s-dead"]
+
+
+# Seen 2026-11-21: a session stop_active_session had parked was woken after a PC restart, as if it
+# had been running for its own sake. Parking only keeps a session listed in the Claude app; the
+# owner asked for it to stop, so the bridge leaves it down (owner, 2026-11-21).
+
+
+async def test_a_session_parked_when_the_bridge_last_ran_is_not_woken_at_start(tmp_path, caplog):
+    work, store = setup(tmp_path)
+    starter = Starter(tmp_path, register=False)
+
+    async def jobs():
+        return [job("s-parked", work, state="done", name="Backup"), job("s-busy", work)]
+
+    def still_parked(sid, cwd):
+        return sid == "s-parked"
+
+    with caplog.at_level(logging.INFO, logger="claude_voice"):
+        woken = await wake_interrupted(store, jobs, {"s-parked", "s-busy"}, starter.wake, still_parked=still_parked)
+    assert woken == ["s-busy"]
+    assert any("Backup" in r.message and "parked" in r.message for r in caplog.records)
+
+
+def test_a_parked_session_that_worked_since_is_not_counted_as_parked(tmp_path):
+    from claude_voice import parking
+
+    store = Store(tmp_path / "b.db")
+    parking.park(store, "s-parked", 1_000.0)
+    marks = parking.marks(store)
+    assert parking.left_parked(marks, "s-parked", 900.0)  # its conversation untouched since
+    assert parking.left_parked(marks, "s-parked", None)  # no conversation to read: as it was
+    assert not parking.left_parked(marks, "s-parked", 1_500.0)  # it worked after being parked
+    assert not parking.left_parked(marks, "s-other", 900.0)  # never parked
+
+
+async def test_the_served_bridge_leaves_a_parked_session_down_and_still_wakes_one_named_to_wake_at_start(
+    tmp_path, monkeypatch
+):
+    import json
+    import os
+
+    from claude_agent_sdk import project_key_for_directory
+
+    from claude_voice import config, parking
+
+    class Reader:
+        async def warm(self):
+            pass
+
+    monkeypatch.setattr(transcripts, "shared_reader", Reader)
+    work, store = setup(tmp_path)
+    projects = tmp_path / "projects"
+    folder = projects / project_key_for_directory(str(work))
+    folder.mkdir(parents=True)
+    for sid in ("s-parked", "s-coord"):
+        talk = folder / f"{sid}.jsonl"
+        talk.write_text("{}\n", encoding="utf-8")
+        os.utime(talk, (1_000, 1_000))  # last written before both were parked
+        parking.park(store, sid, 2_000_000.0)
+    jobs_dir = tmp_path / "jobs"
+    (jobs_dir / "s-coord").mkdir(parents=True)
+    (jobs_dir / "s-coord" / "state.json").write_text(
+        json.dumps({"sessionId": "s-coord", "name": "Coordinator", "cwd": str(work)}), encoding="utf-8"
+    )
+    settings = tmp_path / "config.toml"
+    settings.write_text('wake_at_start = ["Coordinator"]\n', encoding="utf-8")
+    live = tmp_path / "live"
+    live.mkdir()
+    starter = Starter(live, register=True)
+
+    async def jobs():
+        return [
+            job("s-parked", work, state="done", name="Backup"),
+            job("s-coord", work, state="done", name="Coordinator"),
+        ]
+
+    async def background():
+        return {"s-parked", "s-coord"}
+
+    async def up():
+        return True
+
+    srv = build_server(
+        SessionManager(store, project_root=tmp_path, client_factory=FakeClaude()),
+        live_dir=live,
+        watch_interval=60.0,
+        wake_background=starter.wake,
+        background_jobs=jobs,
+        background_sessions=background,
+        connectors_reachable=up,
+        jobs_dir=jobs_dir,
+        projects_dir=projects,
+        repo_config=config.load(settings, env={"HOME": str(tmp_path)}),
+    )
+    with store.db:  # both were running at the bridge's last look
+        for sid in ("s-parked", "s-coord"):
+            store.db.execute("INSERT INTO live_snapshot VALUES(?,?,?)", (sid, "idle", sid))
+    async with Client(srv) as c:
+        for _ in range(100):
+            if starter.woken:
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(0.05)  # room for a wrong wake
+        await c.list_tools()
+    assert [sid for _, sid in starter.woken] == ["s-coord"]

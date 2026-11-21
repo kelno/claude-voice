@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from .store import Store
 
@@ -64,3 +64,20 @@ def prune(store: Store, running_ids: Iterable[str]) -> None:
     # RULE: a parked mark goes once its session is no longer running
     if marks.keys() - running:
         store.set_setting(SETTING, {sid: at for sid, at in marks.items() if sid in running})
+
+
+def marks(store: Store) -> dict[str, float]:
+    """Every parked mark: session id -> when it was parked, in milliseconds."""
+    return dict(store.get_setting(SETTING) or {})
+
+
+def left_parked(marked: Mapping[str, float], sid: str, last_write_ms: float | None) -> bool:
+    """Whether a session was still parked when the bridge last ran: marked, and its conversation not
+    written since (`last_write_ms`, None when there is none to read). The mark alone can be stale:
+    it is dropped only when the sessions are listed. A shutdown writes nothing to an idle session's
+    conversation (seen 2026-11-21), so the last write still tells."""
+    parked_at = marked.get(sid)
+    if parked_at is None:
+        return False
+    # RULE: a parked session that worked since is not counted as parked
+    return last_write_ms is None or last_write_ms <= parked_at

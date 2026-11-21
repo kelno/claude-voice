@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session parked when the bridge last ran is not woken at start"
+file = "src/claude_voice/server.py"
+find = 'if still_parked\(sid, cwd\):'
+replace = 'if False:'

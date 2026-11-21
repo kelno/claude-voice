@@ -1,0 +1,5 @@
+[[rule]]
+name = "a parked session that worked since is not counted as parked"
+file = "src/claude_voice/parking.py"
+find = 'return last_write_ms is None or last_write_ms <= parked_at'
+replace = 'return True'

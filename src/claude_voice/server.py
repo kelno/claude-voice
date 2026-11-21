@@ -1170,6 +1170,7 @@ async def wake_interrupted(
     retry: float = 5.0,
     patience: float = 300.0,
     skip: Collection[str] = (),
+    still_parked: Callable[[str, str], bool] = lambda sid, cwd: False,
 ) -> list[str]:
     """Wake the background sessions the last shutdown interrupted, the owner's own too.
 
@@ -1186,7 +1187,9 @@ async def wake_interrupted(
     A session started before the network is back runs without its claude.ai connectors, so when
     there is one to wake, `ready` is asked every `retry` seconds until claude.ai answers, for up
     to `patience` seconds; past that they are woken anyway. The ids in `skip` were just resumed
-    another way (wake_at_start.py) and are left out.
+    another way (wake_at_start.py) and are left out. So is a session stop_active_session had
+    parked (`still_parked`, by id and folder): parking only keeps it in the Claude app's list, and the
+    owner asked for it to stop (owner, 2026-11-21).
     """
     todo = []
     for job in await background_jobs():
@@ -1197,6 +1200,10 @@ async def wake_interrupted(
             continue
         # RULE: a session already resumed because it is named to wake at start is not woken again
         if sid in skip:
+            continue
+        # RULE: a session parked when the bridge last ran is not woken at start
+        if still_parked(sid, cwd):
+            log.info("left %s (%s) down: it was parked when the bridge last ran", job.get("name") or sid, sid)
             continue
         # RULE: a session still running is never woken
         if job.get("pid") and procs.alive(int(job["pid"])):
@@ -1641,7 +1648,7 @@ def build_server(
         finally:
             looking.release()
 
-    async def wake_at_logon(was_live: set[str]) -> None:
+    async def wake_at_logon(was_live: set[str], was_parked: dict[str, float]) -> None:
         """First the sessions config.toml names to wake at every start, whether the bridge saw them
         running or not (wake_at_start.py); then the others the last shutdown interrupted."""
         resumed = await wake_at_start.wake(
@@ -1652,8 +1659,21 @@ def build_server(
             connectors_reachable,
         )
         await wake_interrupted(
-            manager.store, background_jobs, was_live, wake_background, connectors_reachable, skip=resumed
+            manager.store,
+            background_jobs,
+            was_live,
+            wake_background,
+            connectors_reachable,
+            skip=resumed,
+            still_parked=lambda sid, cwd: parking.left_parked(was_parked, sid, last_write_ms(sid, cwd)),
         )
+
+    def last_write_ms(sid: str, cwd: str) -> float | None:
+        """When a session's conversation was last written, in milliseconds; None without one."""
+        try:
+            return (projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl").stat().st_mtime * 1000
+        except OSError:
+            return None
 
     def runs_now(session: str) -> bool:
         """Whether a running session answers to this name or id; when several do, one runs."""
@@ -1717,12 +1737,14 @@ def build_server(
             )
             # What ran at the last look, read before the watcher's first look replaces it.
             was_live = watcher.last_seen_live()
+            # And which were parked, read before a listing drops the marks of sessions not running.
+            was_parked = parking.marks(store)
             task = asyncio.create_task(watch())
             # The service keeps the side-question reader ready, so the first answer is quick too.
             warming = asyncio.create_task(transcripts.shared_reader().warm())
             warming.add_done_callback(log_failure("warming the side-question reader"))
             # The served bridge starts at logon: bring back what the last shutdown stopped.
-            waking = asyncio.create_task(wake_at_logon(was_live))
+            waking = asyncio.create_task(wake_at_logon(was_live, was_parked))
             waking.add_done_callback(log_failure("the wake-up of interrupted sessions"))
         if channels is not None:
             await channels.start()
