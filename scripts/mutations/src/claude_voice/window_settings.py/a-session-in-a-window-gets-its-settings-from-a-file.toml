@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session in a window gets its settings from a file"
+file = "src/claude_voice/window_settings.py"
+find = 'return \[\*command\[:at\], str\(path\), \*command\[at \+ 1 :\]\]'
+replace = 'return command'

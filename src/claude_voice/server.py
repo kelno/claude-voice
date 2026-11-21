@@ -415,11 +415,11 @@ RELAYED_STUB_CHARS = 80
 # start or a resume, and how often it looks.
 CHANNEL_CONNECT_SECONDS = 15.0
 CHANNEL_CONNECT_POLL_SECONDS = 0.25
-# Said when a session has no channel: only the bridge's own background sessions have one.
+# Said when a session has no channel: only the sessions the bridge starts or resumes have one.
 NO_CHANNEL = (
     "'{name}' has no relay channel, so the bridge can't write into it. Only sessions the bridge"
-    " starts or resumes in the background have one; a session the owner opened in the desktop app"
-    " or a terminal is theirs to type to."
+    " starts or resumes have one; a session the owner opened themselves, in the desktop app or a"
+    " terminal, is theirs to type to."
 )
 # What comes before a relayed message's own words: the line and tag of a message from another
 # session (the courier's, upstream's way), or the tag of the bridge's channel.
@@ -574,9 +574,9 @@ Sessions
   resume it or nudge it. A "project" the owner names is a folder to
   the bridge; claude.ai Projects, the chat workspaces, are out of its reach. A
   session the bridge started can start one itself with the bridge's tools.
-  Only sessions the bridge starts or resumes in the background take your
-  messages: one the owner opened in the desktop app or a terminal is theirs
-  to type to, so never ask one to do anything.
+  Only sessions the bridge starts or resumes take your messages: one the
+  owner opened themselves, in the desktop app or a terminal, is theirs to type
+  to, so never ask one to do anything.
 - Sessions the bridge starts or resumes are on Remote Control and in the
   desktop app's sidebar, so the owner can open them on the phone or at the PC
   and take over. A session on Remote Control carries app_url, the link that

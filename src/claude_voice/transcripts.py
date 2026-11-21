@@ -38,7 +38,7 @@ from claude_agent_sdk import (
     project_key_for_directory,
 )
 
-from . import channel_hub, held_folder, procs
+from . import channel_hub, held_folder, procs, window_settings
 
 MESSAGING_TOOLS = frozenset({"ListAgents", "SendMessage", "ToolSearch"})
 # Claude Code accepts any model name at start and only refuses it at the first message, with
@@ -1033,12 +1033,14 @@ def background_command(
 
     A conversation that has been a background session before is continued in place by
     jobs.wake_command instead: given these flags, Claude Code would start a copy of it.
-    With `channel`, a background session runs the relay channel; Claude Code keeps both flags
-    in its job record, so a woken session keeps it.
+    With `channel`, the session runs the relay channel, in a window as in the background, since
+    the channel is the only way a message reaches it (owner, 2026-11-21); Claude Code keeps both
+    flags in a background session's job record, so a woken session keeps it.
     """
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
-    relay = channel and not terminal
+    # RULE: a session in a window runs the relay channel too
+    relay = channel
     plugins = {"enabledPlugins": {CHANNEL_PLUGIN: True}} if relay else {}
     return [
         *(terminal or []),
@@ -1102,6 +1104,7 @@ async def start_background(
         channel_installed(),
     )
     if terminal:
+        command = window_settings.in_a_file(command, name)  # the fork: a terminal may mangle the JSON
         opener = procs.find(terminal[0]) or terminal[0]
         window = await asyncio.create_subprocess_exec(
             opener,

@@ -179,6 +179,17 @@ def test_a_session_the_bridge_starts_runs_the_relay_channel_when_it_is_set_up():
     assert command.index("--channels") < command.index("--settings") < command.index("--")
 
 
+def test_a_session_in_a_window_runs_the_relay_channel_too():
+    # Since the courier went (owner, 2026-11-21), a session the bridge opened in a window had no way
+    # to get a message; the owner kept the feature, through the channel.
+    terminal = ["wt.exe", "-d", "D:/work/app", "--"]
+    command = transcripts.background_command("claude", "job", prompt="go", terminal=terminal, channel=True)
+    assert command[: len(terminal)] == terminal and "--bg" not in command
+    assert command[command.index("--channels") + 1] == "plugin:relay-channel@claude-voice"
+    settings = json.loads(command[command.index("--settings") + 1])
+    assert settings["enabledPlugins"] == {"relay-channel@claude-voice": True}
+
+
 def test_without_the_channel_set_up_a_session_starts_as_before():
     command = transcripts.background_command("claude", "job", prompt="go")
     assert "--channels" not in command

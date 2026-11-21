@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session in a window runs the relay channel too"
+file = "src/claude_voice/transcripts.py"
+find = 'relay = channel$'
+replace = 'relay = channel and not terminal'

@@ -79,6 +79,7 @@ LAYERS = {
             "channel_hub",
             "relay_notes",
             "wake_at_start",
+            "window_settings",
             "sign_in",
             "beads",
             "app_links",
