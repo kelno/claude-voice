@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session named to wake at start that already runs is left alone"
+file = "src/claude_voice/wake_at_start.py"
+find = 'if running\(session\):'
+replace = 'if False:'

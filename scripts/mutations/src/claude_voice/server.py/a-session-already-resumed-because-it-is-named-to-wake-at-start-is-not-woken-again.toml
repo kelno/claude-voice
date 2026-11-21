@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session already resumed because it is named to wake at start is not woken again"
+file = "src/claude_voice/server.py"
+find = 'if sid in skip:'
+replace = 'if False:'

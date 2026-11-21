@@ -16,7 +16,7 @@ import secrets
 import threading
 import time
 import weakref
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -87,6 +87,7 @@ from . import (
     transcripts,
     updater,
     usage,
+    wake_at_start,
     work,
 )
 from . import beads as beads_store  # the module; fleet_recap's parameter is named beads
@@ -1168,6 +1169,7 @@ async def wake_interrupted(
     ready: Callable[[], Awaitable[bool]] | None = None,
     retry: float = 5.0,
     patience: float = 300.0,
+    skip: Collection[str] = (),
 ) -> list[str]:
     """Wake the background sessions the last shutdown interrupted, the owner's own too.
 
@@ -1183,7 +1185,8 @@ async def wake_interrupted(
 
     A session started before the network is back runs without its claude.ai connectors, so when
     there is one to wake, `ready` is asked every `retry` seconds until claude.ai answers, for up
-    to `patience` seconds; past that they are woken anyway.
+    to `patience` seconds; past that they are woken anyway. The ids in `skip` were just resumed
+    another way (wake_at_start.py) and are left out.
     """
     todo = []
     for job in await background_jobs():
@@ -1192,18 +1195,15 @@ async def wake_interrupted(
         # RULE: a background session the owner started is woken too
         if job.get("state") not in INTERRUPTED or not cwd or sid not in was_live:
             continue
+        # RULE: a session already resumed because it is named to wake at start is not woken again
+        if sid in skip:
+            continue
         # RULE: a session still running is never woken
         if job.get("pid") and procs.alive(int(job["pid"])):
             continue  # a restart of the bridge alone: Claude Code lists one at rest as blocked or done too
         todo.append((sid, cwd, str(job.get("name") or sid)))
     if todo and ready is not None:
-        deadline = time.monotonic() + patience
-        # RULE: the sessions to wake wait until claude.ai answers
-        while not await ready():
-            if time.monotonic() >= deadline:
-                log.info("claude.ai still doesn't answer after %d s; waking the sessions anyway", patience)
-                break
-            await asyncio.sleep(retry)
+        await wake_at_start.until_ready(ready, retry, patience)
     woken = []
     for sid, cwd, name in todo:
         try:
@@ -1641,6 +1641,31 @@ def build_server(
         finally:
             looking.release()
 
+    async def wake_at_logon(was_live: set[str]) -> None:
+        """First the sessions config.toml names to wake at every start, whether the bridge saw them
+        running or not (wake_at_start.py); then the others the last shutdown interrupted."""
+        resumed = await wake_at_start.wake(
+            wake_at_start.configured(repos.file),
+            runs_now,
+            lambda session: every_session.known(store, session, jobs_dir),
+            resume_known,
+            connectors_reachable,
+        )
+        await wake_interrupted(
+            manager.store, background_jobs, was_live, wake_background, connectors_reachable, skip=resumed
+        )
+
+    def runs_now(session: str) -> bool:
+        """Whether a running session answers to this name or id; when several do, one runs."""
+        try:
+            return named(live_sessions(), session) is not None
+        except (renames.Ambiguous, org.Ambiguous):
+            return True
+
+    async def resume_known(found: dict[str, Any]) -> None:
+        """Resume a session that isn't running the way attach_conversation does."""
+        await resume_in(manager.resolve_folder(str(found["cwd"])), str(found["name"]), str(found["claude_session_id"]))
+
     @contextlib.asynccontextmanager
     async def lifespan(_server):
         # A restart kills the bridge, so its helpers' folders are cleared here, at the next start.
@@ -1697,9 +1722,7 @@ def build_server(
             warming = asyncio.create_task(transcripts.shared_reader().warm())
             warming.add_done_callback(log_failure("warming the side-question reader"))
             # The served bridge starts at logon: bring back what the last shutdown stopped.
-            waking = asyncio.create_task(
-                wake_interrupted(manager.store, background_jobs, was_live, wake_background, connectors_reachable)
-            )
+            waking = asyncio.create_task(wake_at_logon(was_live))
             waking.add_done_callback(log_failure("the wake-up of interrupted sessions"))
         if channels is not None:
             await channels.start()

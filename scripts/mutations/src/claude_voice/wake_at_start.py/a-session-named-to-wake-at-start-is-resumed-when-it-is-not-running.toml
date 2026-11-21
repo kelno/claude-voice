@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session named to wake at start is resumed when it is not running"
+file = "src/claude_voice/wake_at_start.py"
+find = 'await resume\(found\)'
+replace = 'pass'
