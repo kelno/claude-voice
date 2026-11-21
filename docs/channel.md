@@ -1,11 +1,8 @@
 # Delivering messages through a channel
 
-The relay's messages reach a running session in one of two ways:
+The relay's messages reach a running session through its channel, and no other way. Each session the bridge starts or resumes in the background runs a small MCP server, `src/claude_voice/channel.py`, from the plugin in `plugin/`. The server declares Claude Code's `claude/channel` capability, connects to the bridge's hub on this computer, and turns each message the bridge hands it into a channel event, which starts a turn in an idle session. No model sits in between: the hand-over takes a fraction of a second.
 
-- **The channel**, for the sessions the bridge starts. Each such session runs a small MCP server, `src/claude_voice/channel.py`, from the plugin in `plugin/`. The server declares Claude Code's `claude/channel` capability, connects to the bridge's hub on this computer, and turns each message the bridge hands it into a channel event, which starts a turn in an idle session. No model sits in between: the hand-over takes a fraction of a second.
-- **The courier**, for every other session (desktop sessions, sessions started by hand) and whenever a session's channel isn't connected: a small model session that sends the message with Claude Code's SendMessage. It takes a few seconds per message.
-
-Results say which way a message went (`path`: `channel` or `courier`).
+A session started with the channel is waited for, up to 15 seconds, until its channel connects, for a message sent right after a start or a resume. A session with no channel (one the owner opened in the desktop app or a terminal) gets no message, and the relay is told why. Upstream's courier, a small model session that sent each message with Claude Code's SendMessage in a few seconds, carried those until 2026-11-21; the owner then dropped sessions outside the bridge from what it serves, and the courier is left unused. Only a bridge built without channels (stdio, upstream's way) still sends by courier.
 
 ## How the parts find each other
 

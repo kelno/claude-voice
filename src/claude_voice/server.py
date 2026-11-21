@@ -44,6 +44,7 @@ from . import (
     app_links,
     calllog,
     channel,
+    channel_hub,
     config,
     confirm,
     confirm_page,
@@ -410,8 +411,18 @@ FINAL_CHARS = 12_000
 # reply (seen live, 2026-11-12).
 RELAYED_STUB = "[relayed message] "
 RELAYED_STUB_CHARS = 80
+# How long a message waits for the channel of a session started with it to connect, right after a
+# start or a resume, and how often it looks.
+CHANNEL_CONNECT_SECONDS = 15.0
+CHANNEL_CONNECT_POLL_SECONDS = 0.25
+# Said when a session has no channel: only the bridge's own background sessions have one.
+NO_CHANNEL = (
+    "'{name}' has no relay channel, so the bridge can't write into it. Only sessions the bridge"
+    " starts or resumes in the background have one; a session the owner opened in the desktop app"
+    " or a terminal is theirs to type to."
+)
 # What comes before a relayed message's own words: the line and tag of a message from another
-# session (the courier's), or the tag of the bridge's channel.
+# session (the courier's, upstream's way), or the tag of the bridge's channel.
 RELAY_WRAPPER = re.compile(
     r"^\s*(?:Another Claude session sent a message:\s*)?<(?:cross-session-message|channel)\b[^>]*>"
 )
@@ -562,10 +573,10 @@ Sessions
   a minute, then carries on by itself, since the bridge tells it to: don't
   resume it or nudge it. A "project" the owner names is a folder to
   the bridge; claude.ai Projects, the chat workspaces, are out of its reach. A
-  session the bridge started can start one itself with the bridge's tools. A
-  desktop session (one the owner opened in the desktop app) can't: the app
-  refuses a start from a relayed message and puts a card in front of the
-  owner, so never ask one to.
+  session the bridge started can start one itself with the bridge's tools.
+  Only sessions the bridge starts or resumes in the background take your
+  messages: one the owner opened in the desktop app or a terminal is theirs
+  to type to, so never ask one to do anything.
 - Sessions the bridge starts or resumes are on Remote Control and in the
   desktop app's sidebar, so the owner can open them on the phone or at the PC
   and take over. A session on Remote Control carries app_url, the link that
@@ -3872,19 +3883,38 @@ def build_server(
         return str(d.get("deliver_to") or d["name"])
 
     async def send_into(target: dict[str, Any], text: str) -> dict[str, Any]:
-        """Write `text` into a running session: through its channel when it has one, else by courier.
+        """Write `text` into a running session through its channel, and no other way: the courier,
+        which carried messages to sessions with no channel, is left unused, since every session is
+        to run under the bridge (owner, 2026-11-21). Only a bridge built without channels,
+        upstream's way, still sends by courier.
 
-        A message the channel took but never confirmed is not carried again by the courier: it may
-        already be in the session, and twice is worse than a failure the relay hears about."""
-        if channels is not None:
-            # RULE: a session with a connected channel gets the message through it, not the courier
-            out = await channels.deliver(str(target.get("sessionId")), text)
-            if out is not None:
-                log.info(
-                    "channel -> %s %s", target.get("name"), "delivered" if out.get("delivered") else "not delivered"
-                )
-                return out
-        return {**await deliver(address(target), text), "path": "courier"}
+        A session started with the channel is waited for until it connects, for a message sent
+        right after a start or a resume. A message the channel took but never confirmed is
+        reported, not sent again: it may already be in the session."""
+        if channels is None:
+            return {**await deliver(address(target), text), "path": "courier"}
+        sid, pid = str(target.get("sessionId")), int(target.get("pid") or 0)
+        # RULE: a session with a connected channel gets the message through it, not the courier
+        out = await channels.deliver(sid, text)
+        # RULE: a session started with the channel is waited for until it connects
+        if out is None and pid and channel_hub.started_with_channel(pid):
+            for _ in range(int(CHANNEL_CONNECT_SECONDS / CHANNEL_CONNECT_POLL_SECONDS)):
+                await asyncio.sleep(CHANNEL_CONNECT_POLL_SECONDS)
+                if (out := await channels.deliver(sid, text)) is not None:
+                    break
+        # RULE: a session without a channel is not reached by the courier
+        if out is None:
+            log.info("no channel -> %s, not delivered", target.get("name"))
+            return {"delivered": False, "detail": NO_CHANNEL.format(name=target.get("name")), "path": None}
+        log.info("channel -> %s %s", target.get("name"), "delivered" if out.get("delivered") else "not delivered")
+        return out
+
+    async def undelivered(out: dict[str, Any]) -> ToolError:
+        """The error for a message that didn't reach its session: without a channel, why; otherwise
+        what went wrong, with what Claude Code's sign-in has to do with it."""
+        if out.get("path") is None and channels is not None:
+            return ToolError(str(out.get("detail")))
+        return ToolError(await asyncio.to_thread(signed_in.undelivered, out.get("detail") or "unknown reason"))
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def rename_session(
@@ -4055,7 +4085,7 @@ def build_server(
             slow = {**sending_on(sid, str(target["name"]), message, delivery), "next_after": before - 1, **typed}
             return slow | behind
         if not out.get("delivered"):
-            raise ToolError(await asyncio.to_thread(signed_in.undelivered, out.get("detail") or "unknown reason"))
+            raise await undelivered(out)
         return {
             "session": target["name"],
             "status": "delivered",
@@ -4124,7 +4154,7 @@ def build_server(
                 sending.get(sid, []).remove(item)
             result = task.result() if not task.cancelled() and task.exception() is None else {}
             delivered = bool(result.get("delivered"))
-            detail = str(result.get("detail") or ("" if delivered else "the courier broke"))
+            detail = str(result.get("detail") or ("" if delivered else "the delivery broke"))
             outcome = "delivered" if delivered else f"not delivered: {detail}"
             log.info("message %s to %s -> %s", item["id"], name, outcome)
             report = {"session": sid, "id": item["id"], "delivered": delivered, "detail": detail}
@@ -4392,7 +4422,7 @@ def build_server(
         was_busy = target.get("status") in BUSY
         out = await send_into(target, relayed(target, message, await relay_note(waits=True)))
         if not out.get("delivered"):
-            raise ToolError(await asyncio.to_thread(signed_in.undelivered, out.get("detail") or "unknown reason"))
+            raise await undelivered(out)
 
         # Followed from here, as after a send, so a wait or a news line made while the question
         # waits sees the session working; the question's own result then moves the read mark.

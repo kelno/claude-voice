@@ -56,8 +56,8 @@ def test_the_manual_states_its_central_rules():
         "start_active_session",  # new work
         "attach_conversation",  # resumed work
         "on remote control",  # sessions the bridge starts can be taken over on the phone or at the PC
-        "so never ask one to",  # a desktop session: the app refuses a start from a relayed message
-        "a session the bridge started can",  # unlike a desktop session, it starts new work itself
+        "so never ask one to",  # a session the owner opened in the desktop app or a terminal takes no message
+        "a session the bridge started can",  # it starts new work itself
         "the owner's to answer",  # permission prompts
         "settings → connectors",  # where a missing new tool gets refreshed
     ):

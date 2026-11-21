@@ -1,8 +1,10 @@
-"""Which way a relayed message goes: the session's channel when it has one, else the courier.
+"""How a relayed message reaches a session: through the session's channel, and no other way.
 
-The channel hands a message to Claude Code at once, with no model in between; the courier
-is a small model session that sends it with SendMessage, and still carries every message
-to a session with no channel (desktop sessions, sessions started by hand).
+The channel hands a message to Claude Code at once, with no model in between. The courier, a
+small model session that sent it with SendMessage, carried every message to a session with no
+channel (desktop sessions, sessions started by hand); the served bridge no longer uses it, since
+every session is to run under the bridge (owner, 2026-11-21). Only a bridge built without
+channels, upstream's way, still sends by courier.
 """
 
 import json
@@ -92,14 +94,57 @@ async def test_a_session_with_a_connected_channel_gets_the_message_through_it_no
     assert courier.carried == []
 
 
-async def test_a_session_with_no_channel_is_reached_by_the_courier(world):
+async def test_a_session_without_a_channel_is_not_reached_by_the_courier(world):
+    # Seen 2026-11-21: of a week's messages, the courier carried 46, all to sessions the owner had
+    # opened in the desktop app or by hand; the owner dropped those from what the bridge serves.
     hub, courier = Hub(None), Courier()
+    async with Client(bridge(world, hub, courier)) as c:
+        result = await c.call_tool("message_active_session", {"session": "billing", "message": "hello"})
+        asked = await c.call_tool("ask_active_session", {"session": "billing", "message": "hi?", "wait_seconds": 0.05})
+    assert result.is_error and asked.is_error and courier.carried == []
+    said = result.content[0].text
+    assert "no relay channel" in said and "desktop app" in said
+    assert "sign-in" not in said.lower()  # nothing to do with Claude Code's sign-in
+
+
+async def test_a_session_started_with_the_channel_is_waited_for_until_it_connects(world, monkeypatch):
+    # Right after a start or a resume, the session runs before its channel has connected; the
+    # courier used to carry such a message.
+    from claude_voice import channel_hub, server
+
+    class Late(Hub):
+        async def deliver(self, session, text):
+            self.handed.append((session, text))
+            return self.answer if len(self.handed) > 3 else None
+
+    monkeypatch.setattr(channel_hub, "started_with_channel", lambda pid: pid == PID)
+    monkeypatch.setattr(server, "CHANNEL_CONNECT_POLL_SECONDS", 0.01)
+    hub, courier = Late({"delivered": True, "detail": "", "path": "channel"}), Courier()
     async with Client(bridge(world, hub, courier)) as c:
         out = (
             await c.call_tool("message_active_session", {"session": "billing", "message": "hello"})
         ).structured_content
-    assert out["delivered"] is True
-    assert [name for name, _ in courier.carried] == ["billing"]
+    assert out["delivered"] is True and len(hub.handed) == 4 and courier.carried == []
+
+
+async def test_a_bridge_without_channels_still_sends_by_courier(world):
+    tmp_path, root, live = world
+    courier = Courier()
+    m = SessionManager(Store(tmp_path / "b.db"), project_root=root, client_factory=FakeClaude())
+    srv = build_server(
+        m,
+        conversations=lambda directory=None, limit=None: [],
+        live_dir=live,
+        deliver=courier,
+        read_transcript=lambda sid, directory: [],
+        poll_seconds=0.01,
+        projects_dir=tmp_path / "projects",
+    )
+    async with Client(srv) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "billing", "message": "hello"})
+        ).structured_content
+    assert out["delivered"] is True and [name for name, _ in courier.carried] == ["billing"]
 
 
 async def test_a_message_the_channel_took_but_never_confirmed_is_not_sent_again_by_the_courier(world):
