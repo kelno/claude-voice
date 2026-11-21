@@ -1,0 +1,5 @@
+[[rule]]
+name = "a parked session left down at start is marked as left down"
+file = "src/claude_voice/server.py"
+find = 'parking\.leave_down\(store, sid, jobs\.stamp\(\), spawned\(\)\)'
+replace = 'pass'

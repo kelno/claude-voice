@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session left down stays down only until it runs again"
+file = "src/claude_voice/parking.py"
+find = 'return \{sid: at for sid, at in marks\.items\(\) if spawned\.get\(sid\[:8\], ""\) <= at\}'
+replace = 'return dict(marks)'

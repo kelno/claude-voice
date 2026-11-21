@@ -28,6 +28,10 @@ SAY = (
     "takes it off that list."
 )
 SETTING = "parked"  # session id -> when it was parked, in milliseconds
+# Session id -> when the bridge left it down at its start because it was parked, stamped as
+# Claude Code's daemon log stamps its lines (jobs.stamp).
+DOWN = "left_down"
+DOWN_WHY = "at the PC's shutdown, while parked"
 
 
 def park(store: Store, sid: str, parked_at_ms: float | None) -> None:
@@ -81,3 +85,25 @@ def left_parked(marked: Mapping[str, float], sid: str, last_write_ms: float | No
         return False
     # RULE: a parked session that worked since is not counted as parked
     return last_write_ms is None or last_write_ms <= parked_at
+
+
+def leave_down(store: Store, sid: str, at: str, spawned: Mapping[str, str]) -> None:
+    """Mark a session the bridge left down at its start because it was parked, at `at` (jobs.stamp),
+    and drop the marks of sessions Claude Code started again since (`spawned`, jobs.spawned)."""
+    kept = _still_down(store.get_setting(DOWN) or {}, spawned)
+    kept[sid] = at
+    store.set_setting(DOWN, kept)
+
+
+def left_down(store: Store, spawned: Mapping[str, str]) -> dict[str, str]:
+    """The sessions the bridge left down at its start because they were parked, and that Claude Code
+    hasn't started again since (`spawned`, jobs.spawned), by short id (a session id's first 8
+    characters): when they were left down (jobs.stamp). Left down, one runs nowhere while the
+    Claude app still lists it for the owner to type to, so it counts as closed (DOWN_WHY), like one
+    Claude Code closed on its own (owner, 2026-11-21)."""
+    return {sid[:8]: at for sid, at in _still_down(store.get_setting(DOWN) or {}, spawned).items()}
+
+
+def _still_down(marks: Mapping[str, str], spawned: Mapping[str, str]) -> dict[str, str]:
+    # RULE: a session left down stays down only until it runs again
+    return {sid: at for sid, at in marks.items() if spawned.get(sid[:8], "") <= at}

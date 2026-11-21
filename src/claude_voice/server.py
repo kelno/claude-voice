@@ -553,8 +553,9 @@ Sessions
 - A session gone from the list keeps its conversation: attach_conversation
   resumes it in place, with its history, so resume it rather than start
   afresh. Claude Code closes idle ones on its own, hours after they last
-  worked or sooner when memory runs low; a message you send one through the
-  bridge resumes it by itself. One the owner types to it in the Claude app
+  worked or sooner when memory runs low, and after a PC restart the bridge
+  leaves parked ones down; a message you send one through the bridge resumes
+  it by itself. One the owner types to it in the Claude app
   doesn't: the app shows the session offline, and the message waits unseen
   until the session is resumed (list_active_sessions, offline_in_app). A
   session that compacts itself (compact_after_turn) is off the list for about
@@ -1171,6 +1172,7 @@ async def wake_interrupted(
     patience: float = 300.0,
     skip: Collection[str] = (),
     still_parked: Callable[[str, str], bool] = lambda sid, cwd: False,
+    spawned: Callable[[], Mapping[str, str]] = dict,
 ) -> list[str]:
     """Wake the background sessions the last shutdown interrupted, the owner's own too.
 
@@ -1189,7 +1191,9 @@ async def wake_interrupted(
     to `patience` seconds; past that they are woken anyway. The ids in `skip` were just resumed
     another way (wake_at_start.py) and are left out. So is a session stop_active_session had
     parked (`still_parked`, by id and folder): parking only keeps it in the Claude app's list, and the
-    owner asked for it to stop (owner, 2026-11-21).
+    owner asked for it to stop (owner, 2026-11-21). It is marked left down (parking.leave_down, with
+    when Claude Code last started each session, from `spawned`), so it counts as closed until it
+    runs again.
     """
     todo = []
     for job in await background_jobs():
@@ -1201,13 +1205,15 @@ async def wake_interrupted(
         # RULE: a session already resumed because it is named to wake at start is not woken again
         if sid in skip:
             continue
-        # RULE: a session parked when the bridge last ran is not woken at start
-        if still_parked(sid, cwd):
-            log.info("left %s (%s) down: it was parked when the bridge last ran", job.get("name") or sid, sid)
-            continue
         # RULE: a session still running is never woken
         if job.get("pid") and procs.alive(int(job["pid"])):
             continue  # a restart of the bridge alone: Claude Code lists one at rest as blocked or done too
+        # RULE: a session parked when the bridge last ran is not woken at start
+        if still_parked(sid, cwd):
+            log.info("left %s (%s) down: it was parked when the bridge last ran", job.get("name") or sid, sid)
+            # RULE: a parked session left down at start is marked as left down
+            parking.leave_down(store, sid, jobs.stamp(), spawned())
+            continue
         todo.append((sid, cwd, str(job.get("name") or sid)))
     if todo and ready is not None:
         await wake_at_start.until_ready(ready, retry, patience)
@@ -1666,6 +1672,7 @@ def build_server(
             connectors_reachable,
             skip=resumed,
             still_parked=lambda sid, cwd: parking.left_parked(was_parked, sid, last_write_ms(sid, cwd)),
+            spawned=lambda: jobs.spawned(daemon_log),
         )
 
     def last_write_ms(sid: str, cwd: str) -> float | None:
@@ -2121,11 +2128,20 @@ def build_server(
         """Whether the session wrote anything after the relay's message that the relay hasn't read."""
         return following.unread_reply(all_turns(str(d.get("sessionId")), str(d.get("cwd"))), mark)
 
+    def closed_now() -> dict[str, jobs.Closed]:
+        """The sessions closed and not run since, by short id: by Claude Code on its own, or by a
+        shutdown while parked, the bridge then leaving them down at its start (parking.left_down)."""
+        down = parking.left_down(store, jobs.spawned(daemon_log))
+        # RULE: a session the bridge left down while parked counts as closed
+        closed = {short: jobs.Closed(parking.DOWN_WHY, at, by="") for short, at in down.items()}
+        return {**closed, **jobs.closed_by_claude_code(daemon_log)}
+
     def why_gone(sid: str) -> str:
-        """Why a session is no longer running, when Claude Code says: empty otherwise."""
+        """Why a session is no longer running, when Claude Code says or the bridge left it down: empty
+        otherwise."""
         # RULE: a session Claude Code closed for low memory says why and how to resume it
-        closed = jobs.closed_by_claude_code(daemon_log).get(sid[:8])
-        return f"closed by Claude Code {closed.why}" if closed else ""
+        closed = closed_now().get(sid[:8])
+        return f"closed {f'by {closed.by} ' if closed.by else ''}{closed.why}" if closed else ""
 
     def followed_entry(sid: str, mark: dict[str, Any], d: dict[str, Any] | None) -> list[str]:
         """A followed session's entry in the news line, or none once its finished turn is read
@@ -3030,7 +3046,8 @@ def build_server(
         parked, and say for the owner): it stays at rest until Claude Code closes it itself, about
         8 hours after it last worked or sooner when memory runs low, and that close keeps it in
         the owner's session list in the Claude app, shown offline, like any session Claude Code
-        closed (list_active_sessions, offline_in_app). Stopped at once
+        closed (list_active_sessions, offline_in_app); so does a PC shutdown, after which the
+        bridge leaves a parked session down. Stopped at once
         (status stopped: with now, or for any other session), a session on Remote Control leaves
         that list."""
         target = named_for_voice(live_sessions(), name)
@@ -3146,8 +3163,9 @@ def build_server(
         open_folder; open in an app doesn't count) shows only its name, folder, status and app_url, with
         access "folder_not_open" (open_folder opens it once the owner confirms) or
         "folder_closed" (inside or holding a secret or system folder; never opened).
-        offline_in_app, when there are any: sessions Claude Code closed on its own in the last 3
-        days that the Claude app still lists, shown offline. A message the owner types to one
+        offline_in_app, when there are any: sessions closed in the last 3 days that the Claude app
+        still lists, shown offline: closed by Claude Code on its own, or by a PC shutdown while
+        parked (the bridge then leaves them down). A message the owner types to one
         there waits unseen until it runs again: when the owner says they wrote to one, resume it
         with attach_conversation (claude_session_id; one closed earlier and not listed here too),
         and check with read_session_output that their message arrived before telling them."""
@@ -3155,7 +3173,7 @@ def build_server(
         numbers = local_numbers([str(r["claude_session_id"]) for r in rows])
         # RULE: every list of sessions shows the number the page shows
         sessions = [{**r, "number": numbers.get(str(r["claude_session_id"]))} for r in rows]
-        offline_now = offline.shown_offline(jobs.closed_by_claude_code(daemon_log), jobs_dir, link=app_url)
+        offline_now = offline.shown_offline(closed_now(), jobs_dir, link=app_url)
         return {"sessions": sessions, **({"offline_in_app": offline_now} if offline_now else {})}
 
     def moved_to(d: dict[str, Any]) -> dict[str, Any] | None:
@@ -3341,8 +3359,8 @@ def build_server(
         )
 
     async def find_live_or_wake(session: str) -> tuple[dict[str, Any], str | None]:
-        """The running session `session` names; one Claude Code closed on its own is resumed
-        first, and the second value says so."""
+        """The running session `session` names; one Claude Code closed on its own, or a parked one a
+        PC shutdown closed, is resumed first, and the second value says so."""
         try:
             return find_live(session), None
         except ToolError:
@@ -4016,7 +4034,8 @@ def build_server(
         """Send to a session and return at once; wait_for_session then gets the reply.
         Returns once delivered, in a few seconds; use it when your next step doesn't depend on the
         answer, then wait_for_session(after=next_after), or read_session_output(after=next_after)
-        later. A session Claude Code closed on its own is resumed first; resumed says so."""
+        later. A session Claude Code closed on its own, or a parked one a PC shutdown closed, is
+        resumed first; resumed says so."""
         target, resumed = await find_live_or_wake(session)
         woke = {"resumed": resumed} if resumed else {}
         moved = moved_to(target)
@@ -4356,8 +4375,8 @@ def build_server(
         its turn ended; continue with wait_for_session(after=next_after)), "session_ended" (it
         exited meanwhile), "not_received" (the message never reached its conversation), "moved"
         (the conversation now lives in moved_to; nothing sent), or "needs_choice" (it waits for its
-        user to pick one of question.options). A session Claude Code closed on its own is resumed
-        first; resumed says so."""
+        user to pick one of question.options). A session Claude Code closed on its own, or a parked
+        one a PC shutdown closed, is resumed first; resumed says so."""
         began = asyncio.get_running_loop().time()  # a resume and the delivery count toward the wait
         target, resumed = await find_live_or_wake(session)
         woke = {"resumed": resumed} if resumed else {}

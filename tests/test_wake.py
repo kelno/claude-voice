@@ -348,3 +348,47 @@ async def test_the_served_bridge_leaves_a_parked_session_down_and_still_wakes_on
         await asyncio.sleep(0.05)  # room for a wrong wake
         await c.list_tools()
     assert [sid for _, sid in starter.woken] == ["s-coord"]
+
+
+# Seen 2026-11-21: left down after a restart, a parked session ran nowhere and showed nowhere: not
+# among the running sessions, not under offline_in_app, and a bridge message to it failed, while the
+# Claude app still listed it for the owner to type to. So it counts as closed, like one Claude Code
+# closed on its own, until it runs again (owner, 2026-11-21).
+
+
+async def test_a_parked_session_left_down_at_start_is_marked_as_left_down(tmp_path):
+    import os
+
+    from claude_voice import parking
+
+    work, store = setup(tmp_path)
+    starter = Starter(tmp_path, register=False)
+
+    async def jobs():
+        return [
+            job("s-parked", work, state="done", name="Backup"),
+            {**job("s-resting", work, state="done"), "pid": os.getpid()},  # a restart of the bridge alone
+            job("s-busy", work),
+        ]
+
+    def still_parked(sid, cwd):
+        return sid in ("s-parked", "s-resting")
+
+    woken = await wake_interrupted(
+        store, jobs, {"s-parked", "s-resting", "s-busy"}, starter.wake, still_parked=still_parked
+    )
+    assert woken == ["s-busy"]
+    assert list(parking.left_down(store, {})) == ["s-parked"]
+
+
+def test_a_session_left_down_stays_down_only_until_it_runs_again(tmp_path):
+    from claude_voice import parking
+
+    store = Store(tmp_path / "b.db")
+    parking.leave_down(store, "a1b2c3d4-0000", "2026-11-21T08:00:00.000Z", {})
+    assert parking.left_down(store, {}) == {"a1b2c3d4": "2026-11-21T08:00:00.000Z"}
+    assert "a1b2c3d4" in parking.left_down(store, {"a1b2c3d4": "2026-11-21T07:00:00.000Z"})  # an earlier start
+    assert parking.left_down(store, {"a1b2c3d4": "2026-11-21T09:00:00.000Z"}) == {}  # woken since
+    # and a later mark drops the ones that ran since
+    parking.leave_down(store, "e5f6a7b8-0000", "2026-11-22T08:00:00.000Z", {"a1b2c3d4": "2026-11-21T09:00:00.000Z"})
+    assert list(parking.left_down(store, {})) == ["e5f6a7b8"]

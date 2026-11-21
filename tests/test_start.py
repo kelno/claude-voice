@@ -274,6 +274,33 @@ async def test_a_message_to_a_session_claude_code_closed_while_idle_resumes_it_t
     assert "closed by Claude Code while idle" in out["resumed"]
 
 
+async def test_a_message_to_a_session_left_down_while_parked_resumes_it_too(tmp_path, world):
+    # Seen 2026-11-21: after a restart the bridge leaves a parked session down; the Claude app still
+    # lists it, and a message to it is a sign the owner wants it back (owner, 2026-11-21).
+    from claude_voice import parking
+
+    async def known():
+        return {OLD}
+
+    async def deliver(name, text):
+        return {"delivered": True, "detail": ""}
+
+    root, live = world
+    store = Store(tmp_path / "b.db")
+    store.record_started(OLD, "Prompt test", str(root / "billing"))
+    parking.leave_down(store, OLD, "2026-11-21T08:00:00.000Z", {})
+    starter = Starter(live)
+    server = resuming(
+        tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=tmp_path / "none.log"
+    )
+    async with Client(server) as c:
+        out = (
+            await c.call_tool("message_active_session", {"session": "Prompt test", "message": "Hi"})
+        ).structured_content
+    assert [sid for _, sid in starter.woken] == [OLD]
+    assert "closed at the PC's shutdown, while parked" in out["resumed"]
+
+
 async def test_a_background_session_the_owner_started_is_known_from_its_job_record_too(tmp_path, world):
     # The owner started it, so the bridge has no record of it: Claude Code's job record names it.
     async def known():

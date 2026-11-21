@@ -1,7 +1,8 @@
 """The sessions the Claude app shows offline, so a relay can tell the owner and resume them.
 
-Claude Code closes a background session on its own once it has sat idle (jobs.closed_by_claude_code).
-A session on Remote Control then stays in the Claude app's list, shown offline, and the app still
+Claude Code closes a background session on its own once it has sat idle (jobs.closed_by_claude_code),
+and a PC shutdown closes a parked one, which the bridge then leaves down (parking.left_down). A
+session on Remote Control then stays in the Claude app's list, shown offline, and the app still
 lets the owner type to it. That message waits on Anthropic's side until the session runs again:
 nothing on this computer sees it, and nothing wakes the session for it (Claude Code 2.1.325;
 ledger Q113). So the bridge names these sessions, and a relay resumes one the owner wrote to.
@@ -39,7 +40,7 @@ def shown_offline(
     now: datetime | None = None,
     link: Callable[[Any], str | None] = lambda _: None,
 ) -> list[dict[str, Any]]:
-    """Of the sessions Claude Code closed on its own (jobs.closed_by_claude_code), those closed lately
+    """Of the closed sessions (jobs.closed_by_claude_code, parking.left_down), those closed lately
     that are on Remote Control, latest close first: their id, name, folder, why they were closed
     and when, and the link that opens them in the app, made by `link` from their Remote Control id."""
     now = now or datetime.now(UTC)

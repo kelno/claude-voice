@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session the bridge left down while parked counts as closed"
+file = "src/claude_voice/server.py"
+find = 'closed = \{short: jobs\.Closed\(parking\.DOWN_WHY, at, by=""\) for short, at in down\.items\(\)\}'
+replace = 'closed = {}'

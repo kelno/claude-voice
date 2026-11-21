@@ -67,3 +67,31 @@ async def test_only_a_session_on_remote_control_is_shown_offline_in_the_claude_a
         ("Bridge code review", review, "for low memory"),
     ]
     assert offline[0]["folder"] == str(root)
+
+
+async def test_a_session_the_bridge_left_down_while_parked_counts_as_closed(tmp_path):
+    # Seen 2026-11-21: a parked session, left down after a restart, was in no list the relay reads,
+    # while the Claude app still listed it for the owner to type to (owner, 2026-11-21).
+    from claude_voice import parking
+
+    root = tmp_path / "home"
+    root.mkdir()
+    live = tmp_path / "live"
+    live.mkdir()
+    jobs_dir = tmp_path / "jobs"
+    backup = "7dd3b732-0000-4000-8000-000000000001"
+    back = "99998888-0000-4000-8000-000000000002"  # left down too, but resumed since
+    job(jobs_dir, backup, "Nightly backup", str(root))
+    job(jobs_dir, back, "Back", str(root))
+    store = Store(tmp_path / "b.db")
+    for sid in (backup, back):
+        parking.leave_down(store, sid, stamp(timedelta(hours=2)), {})
+    log = tmp_path / "daemon.log"
+    log.write_text(f"[{stamp(timedelta(hours=1))}] [bg] bg spawned {back[:8]} (fleet)\n", encoding="utf-8")
+    m = SessionManager(store, project_root=root, client_factory=FakeClaude())
+    server = build_server(m, live_dir=live, daemon_log=log, jobs_dir=jobs_dir)
+    async with Client(server) as c:
+        out = (await c.call_tool("list_active_sessions", {})).structured_content
+    assert [(s["name"], s["claude_session_id"], s["closed"]) for s in out["offline_in_app"]] == [
+        ("Nightly backup", backup, "at the PC's shutdown, while parked"),
+    ]

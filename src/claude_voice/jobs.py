@@ -13,6 +13,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -113,12 +114,32 @@ _RETIRE = re.compile(r"^\[(\S+?)\] \[bg\] bg retire (\S+?):(.*)$")
 _SPAWN = re.compile(r"\[bg\] bg spawned (\S+)")
 
 
+_SPAWNED_AT = re.compile(r"^\[(\S+?)\] \[bg\] bg spawned (\S+)")
+
+
+def stamp(at: datetime | None = None) -> str:
+    """A time, now by default, as Claude Code's daemon log stamps its lines (UTC, to the millisecond),
+    so the two compare as text."""
+    return (at or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def spawned(log: Path = DAEMON_LOG) -> dict[str, str]:
+    """When Claude Code last started or woke each background session, by short id: the log line's
+    time stamp (stamp)."""
+    try:
+        lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    return {m.group(2): m.group(1) for line in lines if (m := _SPAWNED_AT.search(line))}
+
+
 @dataclass(frozen=True)
 class Closed:
-    """A background session Claude Code closed on its own: why, as told to the relay, and when."""
+    """A closed background session: why, as told to the relay, when, and by whom, if anyone."""
 
     why: str  # "for low memory" or "while idle"
     at: str  # the log line's time stamp, UTC
+    by: str = "Claude Code"  # empty for one nobody closed on purpose (parking.left_down)
 
 
 def closed_by_claude_code(log: Path = DAEMON_LOG) -> dict[str, Closed]:
