@@ -13,6 +13,10 @@ MAILBOX = (
     " fork's session tools don't take `ack` (UPSTREAM.md)"
 )
 OLD_SKILL = "the fork switches every upstream skill off by name, upstream's pointer write-plugin included"
+NO_GREP = (
+    "counts terms with Git for Windows' grep, which exits with code 1536 and no output when"
+    " Python starts it outside Git Bash; upstream runs this tool on Linux, never in CI"
+)
 POSIX_ONLY = "POSIX paths only: on Windows a backslash is a separator, so the folder isn't a child of tmp_path"
 
 NOT_HERE = {
@@ -31,6 +35,8 @@ NOT_HERE = {
     "tests/test_mailbox_sessions.py::test_an_ack_with_an_unknown_or_read_id_is_ignored": MAILBOX,
     "tests/test_mailbox_sessions.py::test_an_ack_marks_only_the_replies_it_names": MAILBOX,
     "tests/test_mailbox_sessions.py::test_a_reply_from_a_session_under_an_older_name_still_reaches_whats_new": MAILBOX,
+    "tests/test_mailbox_sessions.py::test_an_ack_on_one_sessions_tool_confirms_a_reply_from_any_session": MAILBOX,
     "tests/test_plugin_skill.py::test_no_file_links_to_the_old_skill_after_the_move": OLD_SKILL,
+    "tests/test_review_prep.py::test_terms_are_counted_never_shown": NO_GREP,
     "tests/test_routing.py::test_a_home_folder_with_backslashes_is_read_as_it_is": POSIX_ONLY,
 }

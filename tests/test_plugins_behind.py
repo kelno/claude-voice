@@ -50,6 +50,7 @@ def behind_bridge(tmp_path, specs, slow, listed=list):
         plugin_approvals=approvals,
         plugin_client=slow,
         plugins_behind=True,
+        switched_off=frozenset(),  # the fork switches plugin_restart off; these test upstream's code
     )
 
 
