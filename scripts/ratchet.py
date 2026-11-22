@@ -140,6 +140,7 @@ LAYERS = {
             "events",
             "mailbox",
             "tree",
+            "history",
             "approvals",
             "session_modes",
             "machines",

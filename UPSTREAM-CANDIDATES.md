@@ -333,6 +333,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: the start now waits up to 5 s for an id when Remote Control is on; the wait ends as soon as the id comes (about 1.3 s when measured), and is skipped when Remote Control is off.
 - Test first: `tests/test_app_link.py` was written first and seen failing.
 
+### 20. Older conversations page by page, a search by name, and each one's kind — fork "Let list_claude_conversations page back, search by name and say each one's kind"
+
+- What: `list_claude_conversations` takes `offset` and `query` and returns `next_offset`; each conversation says whether it ran with no window, in the desktop app or in a terminal (`history.py`); the listing runs in a worker thread.
+- Why upstream would want it: today only the 50 newest can be reached, and a conversation the owner remembers by name can't be found once it is older; a voice relay asked to resume one by name needs the search.
+- Expect pushback: reading every conversation on each call costs about a second on a PC with 1,600; upstream may want a cache, or the search done by the SDK.
+- Test first: `tests/test_history.py` was written first and seen failing.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.

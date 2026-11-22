@@ -61,6 +61,7 @@ from . import (
     gitstatus,
     handles,
     hints,
+    history,
     jobs,
     launch,
     machines,
@@ -3267,42 +3268,63 @@ def build_server(
         return sessions
 
     @tool(annotations=READ_ONLY)
-    def list_claude_conversations(
+    async def list_claude_conversations(
         folder: Annotated[
             str | None, Field(description="Only conversations in this folder, by its name in list_folders.")
         ] = None,
         limit: Annotated[int, Field(description="How many conversations, at most 50.")] = 10,
+        offset: Annotated[
+            int, Field(description="How many to skip first: a page's next_offset gives the next page.")
+        ] = 0,
+        query: Annotated[
+            str | None, Field(description="Only conversations whose name holds these words, any case, however old.")
+        ] = None,
     ) -> dict[str, Any]:
         """Earlier conversations, newest first; resume one with attach_conversation.
-        Recent Claude Code conversations on this machine, including ones started in a terminal."""
+        Recent Claude Code conversations on this machine, including ones started in a terminal.
+        kind is "background" (no window), "desktop", "terminal", or null when nothing says;
+        next_offset, when more remain, is the offset of the next page."""
         directory = None
         if folder:
             try:
                 directory = str(manager.resolve_folder(folder))
             except ValueError as exc:
                 raise ToolError(str(exc)) from None
-        limit = min(max(limit, 1), 50)
+        # Every conversation on the PC is listed and read: off the event loop (history.py).
+        return await asyncio.to_thread(conversation_page, directory, min(max(limit, 1), 50), max(offset, 0), query)
+
+    def conversation_page(directory: str | None, limit: int, offset: int, query: str | None) -> dict[str, Any]:
+        """One page of list_claude_conversations, read in a worker thread."""
         now_ms = manager.clock() * 1000
         open_ids = {d.get("sessionId") for d in live_sessions()}
-        listed = []
-        for c in conversations(directory=directory, limit=limit * 5):
+        kind = history.kinder(jobs_dir, projects_dir)
+        listed: list[dict[str, Any]] = []
+        skipped, more = 0, False
+        for c in conversations(directory=directory):
+            if not history.matches(c, query):
+                continue
             name = under_root(c.cwd)
             if name is None:
                 continue
+            if skipped < offset:
+                skipped += 1
+                continue
+            if len(listed) == limit:
+                more = True
+                break
             listed.append(
                 {
                     "claude_session_id": c.session_id,
                     "folder": name,
-                    "summary": c.custom_title or c.summary,
+                    "summary": history.title(c),
                     "first_prompt": c.first_prompt,
                     "git_branch": c.git_branch,
                     "minutes_ago": round((now_ms - c.last_modified) / 60000),
                     "open_in_terminal": c.session_id in open_ids,
+                    "kind": kind(c),
                 }
             )
-            if len(listed) == limit:
-                break
-        return {"conversations": listed}
+        return {"conversations": listed, "next_offset": offset + limit if more else None}
 
     @tool(
         annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False),
