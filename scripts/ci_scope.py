@@ -50,6 +50,7 @@ WINDOWS = (
             "held_folder",
             "install*",
             "invocation",
+            "jobs",
             "metrics",
             "org",
             "permissions",

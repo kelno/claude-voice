@@ -3,3 +3,4 @@ name = "any session in a folder open to the bridge can be stopped, the owner's o
 file = "src/claude_voice/every_session.py"
 find = 'return None'
 replace = 'return {"status": "not_started_here"}'
+occurrence = 1

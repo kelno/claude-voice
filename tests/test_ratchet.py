@@ -250,9 +250,11 @@ def fake_run(calls: list, levels: dict | None = None):
         calls.append(command)
         for arg in command:
             if arg.startswith("--cov-report=json:"):
-                pathlib.Path(arg[len("--cov-report=json:") :]).write_text('{"totals": {"percent_covered": 90.0}}')
+                pathlib.Path(arg[len("--cov-report=json:") :]).write_text(
+                    '{"totals": {"percent_covered": 90.0}}', encoding="utf-8"
+                )
         if "measure" in command:
-            pathlib.Path(command[command.index("--out") + 1]).write_text(json.dumps(levels or BASE))
+            pathlib.Path(command[command.index("--out") + 1]).write_text(json.dumps(levels or BASE), encoding="utf-8")
         out = {"pytest": "400 passed", "ruff": "[]"}.get(command[2] if len(command) > 2 else "", "")
         return subprocess.CompletedProcess(command, 0, out, "")
 

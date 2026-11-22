@@ -3,3 +3,4 @@ name = "an owners rules file that cannot be read is logged and the bridge runs o
 file = "src/claude_voice/server.py"
 find = 'except OSError as exc:'
 replace = 'except ZeroDivisionError as exc:'
+occurrence = 1
