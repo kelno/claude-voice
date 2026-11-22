@@ -333,12 +333,19 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: the start now waits up to 5 s for an id when Remote Control is on; the wait ends as soon as the id comes (about 1.3 s when measured), and is skipped when Remote Control is off.
 - Test first: `tests/test_app_link.py` was written first and seen failing.
 
-### 20. Older conversations page by page, a search by name, and each one's kind — fork "Let list_claude_conversations page back, search by name and say each one's kind"
+### 21. Older conversations page by page, a search by name, and each one's kind — fork "Let list_claude_conversations page back, search by name and say each one's kind"
 
 - What: `list_claude_conversations` takes `offset` and `query` and returns `next_offset`; each conversation says whether it ran with no window, in the desktop app or in a terminal (`history.py`); the listing runs in a worker thread.
 - Why upstream would want it: today only the 50 newest can be reached, and a conversation the owner remembers by name can't be found once it is older; a voice relay asked to resume one by name needs the search.
 - Expect pushback: reading every conversation on each call costs about a second on a PC with 1,600; upstream may want a cache, or the search done by the SDK.
 - Test first: `tests/test_history.py` was written first and seen failing.
+
+### 22. Sessions kept in step with the Claude app — fork "Stop a session archived in the Claude app, and copy a desktop session to the bridge"
+
+- What: a background session archived in the Claude app is stopped (the app's archive ends its Remote Control link and Claude Code writes a code 4090 line in its conversation, but the process keeps running); an idle desktop-app session is copied to the bridge under a new id with its history (`--resume --fork-session`), since the desktop app won't take typing to its own session once the bridge runs it (`app_sync.py`).
+- Why upstream would want it: an archived session goes on running unseen, holding memory and a slot; a message typed to it in the app waits unseen.
+- Expect pushback: reading Claude Code's words in the conversation is not a documented interface; copying desktop sessions suits an owner who never uses them, so upstream may want it behind a setting, off by default.
+- Test first: `tests/test_app_sync.py` was written first and seen failing.
 
 ## Not for upstream
 

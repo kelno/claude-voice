@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session archived in the Claude app is stopped at once"
+file = "src/claude_voice/app_sync.py"
+find = 'if not self\.archived\(d\):'
+replace = 'if True:'

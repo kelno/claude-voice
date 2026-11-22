@@ -1,0 +1,5 @@
+[[rule]]
+name = "a desktop session is copied once it has been idle a few minutes"
+file = "src/claude_voice/app_sync.py"
+find = 'if d\.get\("status"\) != "idle" or self\.clock\(\) - _since\(d\) < DESKTOP_IDLE_SECONDS:'
+replace = 'if False:'

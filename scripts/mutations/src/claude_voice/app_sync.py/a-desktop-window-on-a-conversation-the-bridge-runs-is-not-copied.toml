@@ -1,0 +1,5 @@
+[[rule]]
+name = "a desktop window on a conversation the bridge runs is not copied"
+file = "src/claude_voice/app_sync.py"
+find = 'if self\.job_record\(sid\) is not None:'
+replace = 'if False:'

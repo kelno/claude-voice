@@ -1024,6 +1024,7 @@ def background_command(
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
     channel: bool = False,
+    fork_session: bool = False,
 ) -> list[str]:
     """The command that starts a named session, on a model and effort if given, with extra
     settings (such as a hook), Remote Control and a first message if given. In the
@@ -1035,7 +1036,8 @@ def background_command(
     jobs.wake_command instead: given these flags, Claude Code would start a copy of it.
     With `channel`, the session runs the relay channel, in a window as in the background, since
     the channel is the only way a message reaches it (owner, 2026-11-21); Claude Code keeps both
-    flags in a background session's job record, so a woken session keeps it.
+    flags in a background session's job record, so a woken session keeps it. With `fork_session`,
+    `resume` starts a copy under a new id (the fork: app_sync.py).
     """
     # RULE: a window runs Claude Code through the owners login shell
     through = [shell, "-lic", 'exec "$@"', "claude-voice"] if terminal and shell else []
@@ -1053,6 +1055,7 @@ def background_command(
         *(["--model", model] if model else []),
         *(["--effort", effort] if effort else []),
         *(["--resume", resume] if resume else []),
+        *(["--fork-session"] if resume and fork_session else []),
         *(["--permission-mode", permission_mode] if permission_mode else []),
         *(arg for d in add_dirs for arg in ("--add-dir", d)),
         # --channels takes a list: --settings after it ends the list before the first message.
@@ -1075,6 +1078,7 @@ async def start_background(
     resume: str | None = None,
     permission_mode: str | None = None,
     add_dirs: Iterable[str] = (),
+    fork_session: bool = False,
 ) -> str:
     """Start a Claude Code session in the background, as `claude --bg` does from a terminal,
     or inside a terminal window when `terminal` is given.
@@ -1102,6 +1106,7 @@ async def start_background(
         permission_mode,
         add_dirs,
         channel_installed(),
+        fork_session,
     )
     if terminal:
         command = window_settings.in_a_file(command, name)  # the fork: a terminal may mangle the JSON

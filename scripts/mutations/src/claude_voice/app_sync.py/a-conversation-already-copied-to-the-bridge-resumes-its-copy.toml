@@ -1,0 +1,5 @@
+[[rule]]
+name = "a conversation already copied to the bridge resumes its copy"
+file = "src/claude_voice/app_sync.py"
+find = 'return str\(copy\["copy"\]\) if copy else sid'
+replace = 'return sid'

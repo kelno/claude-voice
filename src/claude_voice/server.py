@@ -42,6 +42,7 @@ from . import (
     answers,
     api,
     app_links,
+    app_sync,
     calllog,
     channel,
     channel_hub,
@@ -577,7 +578,11 @@ Sessions
   session the bridge started can start one itself with the bridge's tools.
   Only sessions the bridge starts or resumes take your messages: one the
   owner opened themselves, in the desktop app or a terminal, is theirs to type
-  to, so never ask one to do anything.
+  to, so never ask one to do anything. A desktop app session left idle a few
+  minutes is copied to the bridge under a new id, with its history (copied_to
+  on the original names the copy): give work to the copy. A session the owner
+  archives in the Claude app is stopped by the bridge at once: archiving is
+  how the owner stops one.
 - Sessions the bridge starts or resumes are on Remote Control and in the
   desktop app's sidebar, so the owner can open them on the phone or at the PC
   and take over. A session on Remote Control carries app_url, the link that
@@ -1729,6 +1734,8 @@ def build_server(
                         await desk.pick_up()  # an approval typed while the bridge runs
                     with background_step("connector repair", failures):
                         await mender.step()  # a session that started without its claude.ai connectors
+                    with background_step("app sync", failures):
+                        await keeper.step()  # a session archived in the app, a desktop session to copy
                     with background_step("prompt sweep", failures):
                         sweep_prompts()  # whether or not anyone has the page open
                     with background_step("pending rename", failures):
@@ -1752,6 +1759,18 @@ def build_server(
                 reachable=connectors_reachable,
                 restart=restart_in_place,
                 send=send_into,
+                record=watcher.record,
+            )
+            # Sessions in step with the Claude app: an archived one stopped, a desktop one copied
+            # to the bridge (owner, 2026-11-22; ledger Q163, Q150).
+            keeper = app_sync.Keeper(
+                live=reachable,
+                job_record=lambda sid: app_sync.job_record(jobs_dir, sid),
+                archived=archived_in_app,
+                stop=stop_archived,
+                copy=copy_desktop_session,
+                copies=desktop_copies,
+                remember_copy=remember_copy,
                 record=watcher.record,
             )
             # What ran at the last look, read before the watcher's first look replaces it.
@@ -2606,6 +2625,8 @@ def build_server(
         for key in ("waiting_for", "question", "moved_to", "side_chat", "parked"):
             if key in row:
                 item[key] = row[key]
+        if copy := desktop_copies().get(str(row["claude_session_id"])):
+            item["copied_to"] = copy["name"]
         return item
 
     @tool(annotations=READ_ONLY)
@@ -2618,7 +2639,8 @@ def build_server(
         """Every running session with its status and one line on what it is doing.
         Answers "what are my sessions up to?" without reading each one; kind is "desktop",
         "terminal" or "background" (no window), side_chat marks a desktop aside, and parked marks
-        one that stop_active_session parked. With beads true, beads holds the beads store's open
+        one that stop_active_session parked; copied_to, on a desktop session, names the copy the
+        bridge made of it (the owner archives the original). With beads true, beads holds the beads store's open
         issues (labels and metadata included), those closed in the last day and when the store was
         last written, or only an error to tell the owner."""
         live_by_id = {str(d.get("sessionId")): d for d in live_sessions()}
@@ -3283,6 +3305,7 @@ def build_server(
         """Earlier conversations, newest first; resume one with attach_conversation.
         Recent Claude Code conversations on this machine, including ones started in a terminal.
         kind is "background" (no window), "desktop", "terminal", or null when nothing says;
+        copied_to, on a desktop conversation the bridge copied to itself, names the copy;
         next_offset, when more remain, is the offset of the next page."""
         directory = None
         if folder:
@@ -3298,6 +3321,7 @@ def build_server(
         now_ms = manager.clock() * 1000
         open_ids = {d.get("sessionId") for d in live_sessions()}
         kind = history.kinder(jobs_dir, projects_dir)
+        copies = desktop_copies()
         listed: list[dict[str, Any]] = []
         skipped, more = 0, False
         for c in conversations(directory=directory):
@@ -3322,6 +3346,7 @@ def build_server(
                     "minutes_ago": round((now_ms - c.last_modified) / 60000),
                     "open_in_terminal": c.session_id in open_ids,
                     "kind": kind(c),
+                    **({"copied_to": copies[c.session_id]["name"]} if c.session_id in copies else {}),
                 }
             )
         return {"conversations": listed, "next_offset": offset + limit if more else None}
@@ -3337,9 +3362,15 @@ def build_server(
         """Resume an earlier conversation on Remote Control; then talk to it.
         It continues in place with its whole history, its own permission mode and folders: the way
         back to a session that stopped or that Claude Code closed; one still running is left as it
-        is (already_running), so message it. Should Claude Code start a copy under a new id instead,
+        is (already_running), so message it. One begun in the Claude desktop app is resumed as a copy
+        under a new id, since the app won't take typing to it once the bridge runs it, and one the
+        bridge copied already resumes that copy: then, or should Claude Code start a copy itself,
         copied_from names the original (say so); claude_code_note is Claude Code's own remark;
         app_url is the link that opens it in the Claude app."""
+        original = claude_session_id
+        claude_session_id = app_sync.resumed_id(original, desktop_copies())
+        if claude_session_id != original:
+            label = None  # the copy runs under its own name
         live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
         # RULE: a conversation still running is not started again
         if live is not None:
@@ -3351,8 +3382,9 @@ def build_server(
                 "status": live.get("status") or "idle",
                 "already_running": True,
                 **app_links.field(app_url(live.get("bridgeSessionId"))),
+                **({"copied_from": original} if original != claude_session_id else {}),
             }
-        if folder is None:
+        if folder is None or original != claude_session_id:
             match = next((c for c in conversations(limit=1000) if c.session_id == claude_session_id), None)
             if match is None:
                 raise ToolError(f"No Claude Code conversation with id {claude_session_id}")
@@ -3365,9 +3397,53 @@ def build_server(
         if not transcripts.SESSION_ID.fullmatch(claude_session_id):
             raise ToolError(f"Not a Claude Code session id: {claude_session_id!r}")
         out = await resume_in(path, label, claude_session_id)
-        if out["claude_session_id"] != claude_session_id:
-            out["copied_from"] = claude_session_id
+        if out["claude_session_id"] != original:
+            out["copied_from"] = original
         return await with_link(out, expected=True)  # a resume is on Remote Control
+
+    def desktop_copies() -> dict[str, Any]:
+        """The desktop sessions the bridge copied to itself: original id -> {copy, name, at} (app_sync.py)."""
+        return dict(store.get_setting(app_sync.COPIES) or {})
+
+    def remember_copy(original: str, info: dict[str, Any]) -> None:
+        store.set_setting(app_sync.COPIES, {**desktop_copies(), original: info})
+
+    async def copy_to_bridge(path: Path, label: str | None, claude_session_id: str) -> dict[str, Any]:
+        """Start a copy of a conversation under a new id, on Remote Control with the relay channel, the
+        bridge's own way, and remember it as that conversation's copy. The desktop app takes typing to
+        a copy like this, not to its own session resumed in place (app_sync.py)."""
+        grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)
+        out = await start_listed(
+            path,
+            label,
+            start_in="background",
+            remote_control=True,
+            resume=claude_session_id,
+            fork_session=True,
+            permission_mode=grant.mode,
+            add_dirs=grant.dirs,
+        )
+        info = {"copy": str(out["claude_session_id"]), "name": str(out["name"]), "at": manager.clock()}
+        remember_copy(claude_session_id, info)
+        return out
+
+    async def copy_desktop_session(d: dict[str, Any]) -> dict[str, Any]:
+        """Copy a running desktop session to the bridge (app_sync.Keeper remembers it)."""
+        path = manager.resolve_folder(str(d.get("cwd") or ""))
+        return await copy_to_bridge(path, str(d.get("name") or "") or None, str(d.get("sessionId")))
+
+    async def stop_archived(d: dict[str, Any]) -> None:
+        """Stop a background session the owner archived in the Claude app (app_sync.py), as
+        stop_active_session with now does: its parked mark goes too."""
+        sid = str(d.get("sessionId"))
+        parking.park(store, sid, None)
+        await stop_background(sid)
+
+    def archived_in_app(d: dict[str, Any]) -> bool:
+        """Whether the session's conversation says the Claude app archived it since it started."""
+        cwd = str(d.get("cwd") or "")
+        transcript = projects_dir / project_key_for_directory(cwd) / f"{d.get('sessionId')}.jsonl"
+        return app_sync.archived_since(transcript, float(d.get("startedAt") or 0))
 
     async def restart_in_place(d: dict[str, Any]) -> None:
         """Stop a background session and resume it in place, its conversation,
@@ -3382,8 +3458,15 @@ def build_server(
         await wake_background(str(d.get("cwd") or ""), sid)
 
     async def resume_in(path: Path, label: str | None, claude_session_id: str) -> dict[str, Any]:
-        """Continue a conversation that isn't running, in place where Claude Code can."""
-        if claude_session_id in await background_sessions():
+        """Continue a conversation that isn't running, in place where Claude Code can; one begun in
+        the desktop app, as a copy (app_sync.py)."""
+        was_background = claude_session_id in await background_sessions()
+        born_in = None if was_background else history.ran_in(claude_session_id, str(path), projects_dir)
+        how, target = app_sync.how_to_resume(claude_session_id, was_background, born_in, desktop_copies())
+        if how == "copy":
+            return await copy_to_bridge(path, label, claude_session_id)
+        claude_session_id = target
+        if was_background or target in await background_sessions():
             # It keeps its own saved name, Remote Control, settings and mode; any flag would copy it.
             return await wake_listed(path, claude_session_id)
         grant = manager.grant_for(claude_session_id, str(path), manager.new_mode)

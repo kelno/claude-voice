@@ -147,6 +147,7 @@ LAYERS = {
             "plugin_desk",
             "org",
             "connectors",
+            "app_sync",
             "answers",
             "jobs",
             "handles",

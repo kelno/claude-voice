@@ -1,0 +1,5 @@
+[[rule]]
+name = "a desktop session is copied to the bridge once"
+file = "src/claude_voice/app_sync.py"
+find = 'if sid in self\.copies\(\) or sid in self\.failed:'
+replace = 'if False:'

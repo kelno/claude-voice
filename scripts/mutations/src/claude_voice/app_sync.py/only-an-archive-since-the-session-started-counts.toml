@@ -1,0 +1,5 @@
+[[rule]]
+name = "only an archive since the session started counts"
+file = "src/claude_voice/app_sync.py"
+find = 'if content\.startswith\(APP_ENDED\[0\]\) and content\.endswith\(APP_ENDED\[1\]\) and at >= started_ms:'
+replace = 'if content.startswith(APP_ENDED[0]) and content.endswith(APP_ENDED[1]):'

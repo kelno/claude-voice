@@ -1,0 +1,5 @@
+[[rule]]
+name = "a desktop aside is not copied"
+file = "src/claude_voice/app_sync.py"
+find = 'if name\.startswith\(ASIDE_PREFIX\):'
+replace = 'if False:'

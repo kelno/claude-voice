@@ -1,0 +1,5 @@
+[[rule]]
+name = "a conversation born in the desktop app is resumed as a copy"
+file = "src/claude_voice/app_sync.py"
+find = 'if born_in == "desktop" and not was_background:'
+replace = 'if False:'
