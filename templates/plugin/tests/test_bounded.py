@@ -58,7 +58,7 @@ def _gone(group: int) -> bool:
 def _ended(pid: int) -> bool:
     """Whether `pid` has ended, counting a zombie not yet reaped as ended."""
     try:
-        state = pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        state = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
     except (FileNotFoundError, ProcessLookupError):
         return True
     return state == "Z"
@@ -74,7 +74,7 @@ def test_a_child_that_overruns_leaves_nothing_of_its_group_running(tmp_path: pat
         run_bounded(["sh", "-c", script], 1, capture_output=True, text=True)
     # Killing the shell alone would wait out the sleep that holds its output, then find it gone.
     assert time.monotonic() - started < 15, "the bound waited for the sleep to end by itself"
-    group, grandchild = int(leader.read_text()), int(sleeper.read_text())
+    group, grandchild = int(leader.read_text(encoding="utf-8")), int(sleeper.read_text(encoding="utf-8"))
     try:
         deadline = time.monotonic() + 10  # a killed sleep is reaped by init, which takes a moment
         while not (_ended(grandchild) and _gone(group)) and time.monotonic() < deadline:

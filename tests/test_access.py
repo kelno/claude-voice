@@ -8,7 +8,7 @@ from fakes import FakeClaude
 from mcp.client import Client
 from softkey import SoftKey
 
-from claude_voice import access, passkeys, procs
+from claude_voice import folder_access, passkeys, procs
 from claude_voice.server import build_app, build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
@@ -44,8 +44,8 @@ def server(world, root=None):
         Store(world["tmp"] / "bridge.db"),
         project_root=root or world["root"],
         client_factory=FakeClaude(),
-        denied=access.default_denied(world["home"]),
-        exempt=access.default_exempt(world["home"]),
+        denied=folder_access.default_denied(world["home"]),
+        exempt=folder_access.default_exempt(world["home"]),
     )
     config = world["tmp"] / ".claude.json"  # Claude Code's own file, never the real one here
     return m, build_server(m, conversations=lambda **k: [], live_dir=world["live"], claude_config=config)
@@ -311,7 +311,7 @@ def test_a_new_folder_is_trusted_by_itself_even_inside_a_repository(tmp_path):
     (repo / ".git").mkdir(parents=True)
     new = repo / "new"
     new.mkdir()
-    assert access.trust_new_folder(new, config) == new.resolve().as_posix()
+    assert folder_access.trust_new_folder(new, config) == new.resolve().as_posix()
     projects = json.loads(config.read_text(encoding="utf-8"))["projects"]
     assert projects == {
         "C:/elsewhere": {"hasTrustDialogAccepted": True},
@@ -322,4 +322,4 @@ def test_a_new_folder_is_trusted_by_itself_even_inside_a_repository(tmp_path):
 def test_a_new_folder_s_trust_that_cannot_be_written_says_why(tmp_path):
     # Claude Code then asks in the window; the bridge raises, so its caller can log it.
     with pytest.raises(OSError):
-        access.trust_new_folder(tmp_path / "new", tmp_path / "missing.json")
+        folder_access.trust_new_folder(tmp_path / "new", tmp_path / "missing.json")

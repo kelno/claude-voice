@@ -260,6 +260,13 @@ class Store:
         ).fetchone()
         return dict(row) if row else None
 
+    def is_role(self, claude_session_id: str) -> bool:
+        """Whether the bridge launched this session as a role. A session started by voice is not
+        one: it is recorded as started, but only a role launch writes the `role:<name>` setting."""
+        rows = self.db.execute("SELECT value FROM settings WHERE key LIKE 'role:%'").fetchall()
+        # RULE: only a session started as a role waits for the approver
+        return any(_role_id(row[0]) == claude_session_id for row in rows)
+
     def rename(self, claude_session_id: str, was: str, name: str, old: Iterable[str]) -> None:
         """Session `claude_session_id`, which Claude Code calls `was`, is now `name`; the
         names in `old` still reach it."""
@@ -280,3 +287,12 @@ class Store:
         for r in self.db.execute("SELECT name, claude_session_id FROM old_names ORDER BY renamed_at").fetchall():
             out.setdefault(r[1], []).append(r[0])
         return out
+
+
+def _role_id(value: str) -> str | None:
+    """The session id a `role:<name>` setting holds, or None for one that holds none."""
+    try:
+        held = json.loads(value)
+    except ValueError:
+        return None
+    return str(held["id"]) if isinstance(held, dict) and held.get("id") else None

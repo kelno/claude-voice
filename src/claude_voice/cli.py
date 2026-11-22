@@ -37,6 +37,7 @@ COMMANDS: tuple[str, ...] = (
     "texts",
     "roles",
     "set",
+    "tracker",
 )
 
 SIGN_IN = (
@@ -220,9 +221,22 @@ def main(
     repos_cmd.add_argument("action", choices=["sync"])
     repos_cmd.add_argument("--check", action="store_true", help="say what a sync would do, from local refs only")
     sub.add_parser("texts", help="print what the bridge says to agents, as JSON, without serving it")
+    tracker_cmd = sub.add_parser(
+        "tracker", help="bring the project board in step with the open pull requests and issues"
+    )
+    tracker_cmd.add_argument("action", choices=["sync", "claim"])
+    tracker_cmd.add_argument("--dry-run", action="store_true", help="say what would change, and change nothing")
+    tracker_cmd.add_argument("file", nargs="?", help="claim: your verdict file's name, <repo>-<number>.<name>.json")
+    tracker_cmd.add_argument("--by", help="claim: the reviewer you are")
+    tracker_cmd.add_argument("--head", help="claim: the pull request's full head sha")
     parsed = parser.parse_args(args)
 
     verbs: dict[str, Callable[[], int]] = {
+        "tracker": lambda: (
+            claim_command(parsed.file, parsed.by, parsed.head, env)
+            if parsed.action == "claim"
+            else tracker_command(parsed.dry_run, env)
+        ),
         "setup": lambda: setup_command(parsed.check, parsed.json, env, login),
         "repos": lambda: repos_command(parsed.check, env),
         "texts": texts_command,
@@ -391,6 +405,54 @@ def setup_command(check: bool, as_json: bool, env: Mapping[str, str], login: Cal
     else:
         sys.stdout.write("\n".join(setup.lines(found)) + "\n")
     return 1 if left else 0
+
+
+def tracker_command(dry_run: bool, env: Mapping[str, str], client: Any = None) -> int:
+    """One board sync: read the board and the open work, and send only what changed."""
+    from . import config
+    from .tracker import github
+
+    home = env.get("HOME") or str(Path.home())
+    text = env.get("CLAUDE_VOICE_CONFIG") or str(config.FILE)
+    path = Path(home + text[1:] if text.startswith("~") else text)
+    settings = github.settings_from(path)
+    if settings is None:
+        sys.stdout.write("claude-voice: no [tracker] board in the settings file; nothing to sync\n")
+        return 0
+    try:
+        state = Path(home + str(STATE_DIR)[1:])
+        return github.sync(client or github.gh_graphql, settings, state, dry=dry_run)
+    except github.SyncError as exc:
+        sys.stderr.write(f"claude-voice: the board sync could not reach GitHub: {exc}. It tries again next run.\n")
+        return 1
+
+
+def claim_command(name: str | None, by: str | None, head: str | None, env: Mapping[str, str]) -> int:
+    """Mark a review as started in the reviewer's own verdict file, keeping its notes."""
+    from datetime import datetime
+
+    from .tracker import verdicts
+
+    match = verdicts.claimable(name or "", by or "", head or "")
+    if match is None:
+        sys.stderr.write(
+            "claude-voice: Refused: give your own verdict file's name, --by with your reviewer name, "
+            "and --head with the full 40-character sha.\n"
+        )
+        return 1
+    home = env.get("HOME") or str(Path.home())
+    path = Path(home + str(STATE_DIR)[1:]) / "reviews" / match.group(0)
+    at = datetime.now().astimezone().isoformat(timespec="seconds")
+    try:
+        claimed = verdicts.claim(path, str(by), str(head), at)
+    except verdicts.NotPlain as exc:
+        sys.stderr.write(f"claude-voice: Refused: {exc}.\n")
+        return 1
+    if claimed:
+        sys.stdout.write(f"claude-voice: claimed {match.group(0)} as reviewing at {str(head)[:12]}\n")
+    else:
+        sys.stdout.write("claude-voice: you have approved this head already; nothing changed\n")
+    return 0
 
 
 def repos_command(check: bool, env: Mapping[str, str]) -> int:
@@ -640,12 +702,27 @@ def agent_command(action: str, env: Mapping[str, str], sessions: bool = False) -
 def _machines(parsed: Any, env: Mapping[str, str]) -> int:
     """machines add writes the settings file; every other machines action is machines_command."""
     if parsed.action == "add":
-        return _settings_edit("machines add", [parsed.name, *parsed.values], env)
-    return machines_command(parsed.action, parsed.name, env)
+        code = _settings_edit("machines add", [parsed.name, *parsed.values], env)
+        if code == 0 and parsed.name:
+            _say_reapply(parsed.name)
+        return code
+    code = machines_command(parsed.action, parsed.name, env)
+    if code == 0 and parsed.action == "approve" and parsed.name:
+        _say_reapply(parsed.name)
+    return code
+
+
+def _say_reapply(machine: str) -> None:
+    """Say how to refuse a new machine's voice-only confirms, when the shipped table doesn't yet."""
+    from . import permissions
+
+    # RULE: a machine the table does not name is told to re-apply the permissions
+    if note := permissions.reapply_note(machine, invocation.command()):
+        sys.stdout.write(note + "\n")
 
 
 def machines_command(action: str, name: str | None, env: Mapping[str, str]) -> int:
-    """List the machines in the settings file, or pair with one: Roy types its code and name."""
+    """List the machines in the settings file, or pair with one: the owner types its code and name."""
     import asyncio
 
     from . import config as settings
@@ -695,7 +772,7 @@ def permissions_command(folders: list[Path], dry_run: bool, env: Mapping[str, st
     folders = _the_clones(folders, env)
     if not folders:
         return 1
-    rules, code = permissions.load(), 0
+    rules, code = permissions.load(machines=_machine_names(env)), 0
     backups = permissions.backup_root(Path(env.get("HOME") or Path.home()))
     hooks = _session_hooks(folders, env)
     for folder in folders:
@@ -706,6 +783,18 @@ def permissions_command(folders: list[Path], dry_run: bool, env: Mapping[str, st
             sys.stderr.write(f"claude-voice: {exc}\n")
             code = 1
     return code
+
+
+def _machine_names(env: Mapping[str, str]) -> list[str]:
+    """The machines in the bridge's settings, whose voice-only confirms are refused; none when
+    the settings cannot be read, which leaves the shipped table's own machines refused."""
+    from . import config as settings
+
+    try:
+        # RULE: every machine in the settings has its voice-only confirms refused
+        return [spec.name for spec in settings.load(settings.FILE, env=env).machines]
+    except settings.ConfigError:
+        return []
 
 
 def _session_hooks(folders: list[Path], env: Mapping[str, str]) -> dict[Path, str]:
@@ -778,7 +867,7 @@ def shipped_command(folders: list[Path], env: Mapping[str, str]) -> int:
     backups = permissions.backup_root(Path(env.get("HOME") or Path.home()))
     # RULE: the shipped rules are recorded under the commit that is installed
     sha = shipped.installed_commit(own)
-    done = shipped.sync(folders, chart, own, permissions.load(), sha, backup_root=backups)
+    done = shipped.sync(folders, chart, own, permissions.load(machines=_machine_names(env)), sha, backup_root=backups)
     for line in shipped.report(done):
         sys.stdout.write(line + "\n")
     return 0

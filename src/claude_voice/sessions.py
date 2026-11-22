@@ -15,7 +15,7 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
-from .access import Access
+from .folder_access import Access
 from .store import Store
 
 ClientFactory = Callable[[ClaudeAgentOptions], Any]

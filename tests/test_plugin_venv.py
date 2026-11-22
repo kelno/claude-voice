@@ -39,6 +39,13 @@ FAKE_UV = textwrap.dedent(
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", str(here)])
         (here / ".uv-child").write_text(str(child.pid))
         time.sleep(30)
+    if does == "orphan":  # a helper that leaves uv's group, yet keeps uv's output open
+        import subprocess
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)", str(here)], start_new_session=True
+        )
+        (here / ".uv-child").write_text(str(child.pid))
+        time.sleep(30)
     if does == "make":
         script = here / ".venv" / "bin" / "gizmo-mcp"
         script.parent.mkdir(parents=True, exist_ok=True)
@@ -254,6 +261,108 @@ def test_a_sync_that_runs_too_long_is_stopped_with_everything_it_started(tmp_pat
         with pytest.raises(plugin_venv.Refused):
             plugins.parameters(spec)
         assert time.monotonic() - began < 10  # not held until the build step ends by itself
+        child = int((folder / ".uv-child").read_text())
+        deadline = time.monotonic() + 5
+        while _runs(child, str(folder)) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _runs(child, str(folder))
+    finally:
+        if child is not None and _runs(child, str(folder)):
+            os.kill(child, 9)
+
+
+@posix
+def test_a_sync_still_running_when_the_bridge_stops_is_stopped_with_everything_it_started(tmp_path, uv):
+    """A sync in a worker thread never sees a Ctrl-C, so the bridge stops it as it stops itself."""
+    import threading
+
+    folder = tmp_path / "gizmo"
+    gizmo(folder, "run", "gizmo-mcp")
+    (folder / ".uv-does").write_text("spawn")
+    ended: list[object] = []
+    worker = threading.Thread(target=lambda: ended.append(plugin_venv._sync(str(uv), folder, 60)), daemon=True)
+    worker.start()
+    child = None
+    try:
+        deadline = time.monotonic() + 5
+        while not (folder / ".uv-child").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)  # until the sync has started its own helper
+        child = int((folder / ".uv-child").read_text())
+        assert plugin_venv.stop_running() == 1
+        worker.join(5)
+        assert ended and not worker.is_alive()  # the sync's thread is let go at once
+        deadline = time.monotonic() + 5
+        while _runs(child, str(folder)) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not _runs(child, str(folder))
+        assert plugin_venv.stop_running() == 0  # an ended sync is no longer counted
+    finally:
+        if child is not None and _runs(child, str(folder)):
+            os.kill(child, 9)
+
+
+@posix
+def test_a_sync_already_ended_is_never_stopped_by_its_number(tmp_path, uv, monkeypatch):
+    """Once reaped, a sync's number may be another process's: the stop must pass it over."""
+    import subprocess
+
+    folder = tmp_path / "gizmo"
+    gizmo(folder, "run", "gizmo-mcp")
+    plugin_venv._sync(str(uv), folder, 60)
+    assert not plugin_venv._running  # a sync that ends on its own leaves nothing counted
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()  # and one reaped while still counted is passed over
+    killed: list[int] = []
+    monkeypatch.setattr(plugin_venv.os, "killpg", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr(plugin_venv, "_running", {ended})
+    assert plugin_venv.stop_running() == 0 and killed == []
+
+
+@posix
+def test_a_stopped_sync_never_waits_on_output_a_helper_outside_its_group_holds(tmp_path, uv, monkeypatch, caplog):
+    monkeypatch.setattr(plugin_venv, "SYNC_SECONDS", 1.0)
+    monkeypatch.setattr(plugin_venv, "DRAIN_SECONDS", 0.5)
+    folder = tmp_path / "gizmo"
+    spec = gizmo(folder, "run", "gizmo-mcp")
+    (folder / ".uv-does").write_text("orphan")
+    child = None
+    try:
+        began = time.monotonic()
+        with pytest.raises(plugin_venv.Refused):
+            plugins.parameters(spec)
+        # the helper sleeps a minute with uv's output open; the sync must not wait for it
+        assert time.monotonic() - began < 15  # the time limit, the short last read, and slack
+        # the helper keeps running, so the log says one was left
+        assert "left a helper that still holds its output" in caplog.text
+    finally:
+        marker = folder / ".uv-child"
+        child = int(marker.read_text()) if marker.exists() else None
+        if child is not None and _runs(child, str(folder)):
+            os.kill(child, 9)
+
+
+@posix
+def test_a_sync_cut_short_by_ctrl_c_is_stopped_with_everything_it_started(tmp_path, uv, monkeypatch):
+    """A Ctrl-C in the terminal reaches the bridge, not a sync in a session of its own."""
+    import subprocess
+
+    folder = tmp_path / "gizmo"
+    gizmo(folder, "run", "gizmo-mcp")
+    (folder / ".uv-does").write_text("spawn")
+    started = subprocess.Popen.communicate
+
+    def interrupted(self, *args, **kwargs):
+        deadline = time.monotonic() + 5
+        while not (folder / ".uv-child").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)  # until the sync has started its own helper
+        monkeypatch.setattr(subprocess.Popen, "communicate", started)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    child = None
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            plugin_venv._sync(str(uv), folder, 60)
         child = int((folder / ".uv-child").read_text())
         deadline = time.monotonic() + 5
         while _runs(child, str(folder)) and time.monotonic() < deadline:

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a plugin that cannot be offered never stops the others"
+file = "src/claude_voice/server.py"
+find = '^\s*could_not_offer\(spec, exc\)$'
+replace = 'raise'

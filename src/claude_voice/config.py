@@ -30,10 +30,19 @@ runs from, so the file is only needed to change something:
     launch = "background"                       # or "terminal": where a started session runs
     terminal_command = "kitty --directory {cwd}"  # default: the first of gnome-terminal, kgx, konsole, xterm
 
+    [work]
+    board_url = "https://github.com/users/you/projects/1"  # the board the work page links to;
+                                                # https only; default: no link
+
     [budgets]                                   # seconds each client is answered within
     claude_app = 10                             # the Claude app drops a call after about 30 s
     voice_app = 120
     default = 60
+
+    [approver]
+    on = false                                  # true: the approver session answers routine boxes
+                                                # from started roles (src/claude_voice/approver.py);
+                                                # refused until the caller check is in
 """
 
 from __future__ import annotations
@@ -46,6 +55,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 FILE = Path("~/.config/claude-voice/config.toml")
 STATE_DIR = Path("~/.local/state/claude-voice")  # what the bridge keeps between runs
@@ -130,7 +140,7 @@ MACHINE_NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
 @dataclass
 class MachineSpec:
-    """Another of Roy's machines, running `claude-voice agent`, reached over the tailnet."""
+    """Another of the owner's machines, running `claude-voice agent`, reached over the tailnet."""
 
     name: str
     address: str
@@ -148,7 +158,7 @@ def _machines(raw: Any) -> list[MachineSpec]:
         whole = isinstance(port, int) and not isinstance(port, bool)
         # RULE: a machine without a tailnet address is refused
         if not (MACHINE_NAME.fullmatch(str(name)) and tailnet.on_tailnet(str(body.get("address", ""))) and whole):
-            raise ConfigError(f"[machines.{name}] needs a lowercase name and a tailnet address, such as 100.86.231.118")
+            raise ConfigError(f"[machines.{name}] needs a lowercase name and a tailnet address, such as 100.64.0.2")
         out.append(MachineSpec(str(name), str(body["address"]), port, float(body.get("timeout", 30.0))))
     return out
 
@@ -201,6 +211,8 @@ class Config:
     personal_terms_file: Path | None = None  # words an issue a session files must never hold
     activity_orgs: tuple[str, ...] = ()  # the programmes the activity view reads (docs/activity.md)
     activity_phone_orgs: tuple[str, ...] = ()  # of those, the ones served beyond this computer
+    approver_on: bool = False  # whether the approver session may answer routine boxes
+    board_url: str | None = None  # [work] board_url: the project board the work page links to
 
 
 def _repo(value: Any, key: str) -> str:
@@ -240,7 +252,21 @@ def load(path: Path | None = FILE, own_clone: Path | None = None, env: Mapping[s
         _path(raw.get("profile"), home),
         _path(raw.get("personal_terms_file"), home),
         *_activity(raw.get("activity")),
+        _approver(raw.get("approver")),
+        _board_url(raw.get("work")),
     )
+
+
+def _board_url(raw: Any) -> str | None:
+    """[work] board_url, passed on only as an https address with a host; anything else is none."""
+    value = raw.get("board_url") if isinstance(raw, dict) else None
+    if not isinstance(value, str):
+        return None
+    parts = urlsplit(value)
+    # RULE: only an https board link is passed on
+    if parts.scheme != "https" or not parts.hostname:
+        return None
+    return value
 
 
 def _codes(raw: dict[str, Any], key: str) -> tuple[str, ...]:
@@ -248,6 +274,20 @@ def _codes(raw: dict[str, Any], key: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
         raise ConfigError(f"[activity] {key} = {value!r} is not a list of programme codes")
     return tuple(value)
+
+
+def _approver(raw: Any) -> bool:
+    """[approver] on: off unless the owner writes true."""
+    on = (raw if isinstance(raw, dict) else {}).get("on", False)
+    # RULE: the approver is off unless the config says true
+    if not isinstance(on, bool):
+        raise ConfigError(f"[approver] on = {on!r} is not true or false")
+    # Until the bridge checks who calls the approver's tools, any session could answer its own
+    # box. The part that adds that check lifts this.
+    # RULE: the approver cannot be switched on before its caller check
+    if on:
+        raise ConfigError("[approver] on = true waits for the caller check; the approver cannot be switched on yet")
+    return on
 
 
 def _activity(raw: Any) -> tuple[tuple[str, ...], tuple[str, ...]]:

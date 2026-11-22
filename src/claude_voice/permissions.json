@@ -4,7 +4,6 @@
       "Bash(cat *)",
       "Bash(head *)",
       "Bash(tail *)",
-      "Bash(sed -n *)",
       "Bash(grep *)",
       "Bash(ls*)",
       "Bash(wc *)"
@@ -27,35 +26,19 @@
       "Bash(git branch -a*)",
       "Bash(git branch -r*)",
       "Bash(git branch -v*)",
-      "Bash(git fetch*)",
-      "Bash(git worktree list*)",
-      "Bash(git -C * status*)",
-      "Bash(git -C * diff*)",
-      "Bash(git -C * log*)",
-      "Bash(git -C * show*)",
-      "Bash(git -C * ls-files*)",
-      "Bash(git -C * rev-parse*)",
-      "Bash(git -C * remote -v)",
-      "Bash(git -C * branch --show-current)",
-      "Bash(git -C * branch -a*)",
-      "Bash(git -C * branch -r*)",
-      "Bash(git -C * fetch*)",
-      "Bash(git -C * worktree list*)"
+      "Bash(git fetch)",
+      "Bash(git worktree list*)"
     ],
     "git, making work on a branch": [
       "Bash(git add *)",
-      "Bash(git -C * add *)",
       "Bash(git commit *)",
-      "Bash(git -C * commit *)",
       "Bash(git checkout -b *)",
       "Bash(git switch -c *)",
       "Bash(git switch *)",
       "Bash(git rebase origin/main)",
       "Bash(git rebase --continue)",
       "Bash(git cherry-pick *)",
-      "Bash(git -C * cherry-pick *)",
-      "Bash(git worktree add *)",
-      "Bash(git -C * worktree add *)",
+      "Bash(git worktree add {home}/claude-voice-worktrees/*)",
       "Bash(git worktree prune*)",
       "Bash(git worktree remove *)"
     ],
@@ -91,7 +74,12 @@
       "Bash(gh pr update-branch * --rebase)"
     ],
     "the gates of the Python repositories": [
-      "Bash(uv sync*)",
+      "Bash(uv sync)",
+      "Bash(uv sync --locked)",
+      "Bash(uv sync --frozen)",
+      "Bash(uv sync --all-extras)",
+      "Bash(uv sync --locked --all-extras)",
+      "Bash(uv sync --frozen --all-extras)",
       "Bash(uv run ruff*)",
       "Bash(uv run mypy*)",
       "Bash(uv run pytest*)",
@@ -159,6 +147,9 @@
     "deleting files, where a recursive remove is asked by the session hook": [
       "Bash(rm -f*)"
     ],
+    "a new worktree whose path climbs out of the worktrees folder": [
+      "Bash(git worktree add *..*)"
+    ],
     "changing the session's own settings": [
       "Edit(./.claude/**)"
     ],
@@ -193,7 +184,21 @@
       "vacuum_confirm"
     ]
   },
+  "voice only": {
+    "servers": ["claude-voice", "claude_ai_claude-voice"],
+    "machines": ["phone-a"],
+    "tools": [
+      "sms_send_confirm"
+    ]
+  },
   "deny": {
+    "stopping processes by name, which ends other sessions' work too": [
+      "Bash(pkill)",
+      "Bash(pkill *)",
+      "Bash(killall)",
+      "Bash(killall *)",
+      "Bash(xargs*kill*)"
+    ],
     "history that cannot be got back": [
       "Bash(git reset --hard*)",
       "Bash(git checkout -- *)",
@@ -242,6 +247,13 @@
     ],
     "accepting a repository's rights, which only the owner types": [
       "Bash(*claude-voice permissions*--accept*)"
+    ],
+    "git writing its output to a file": [
+      "Bash(git * --output*)"
+    ],
+    "git's own files, anywhere": [
+      "Edit(//**/.git)",
+      "Edit(//**/.git/**)"
     ],
     "settings and secrets, read broadly with sed": [
       "Bash(sed -n *.config/*)",
@@ -300,6 +312,7 @@
       ".claude/settings*.json", ".claude/hooks/**", ".claude/skills/**", ".claude/plugins/**", ".claude.json",
       ".config/claude-voice/config.toml", ".config/claude-voice/roles.toml",
       ".config/claude-voice/machines/**", ".config/claude-voice/plugins/**",
+      ".config/claude-voice/orgs/**",
       ".config/gh/config.yml",
       ".config/uv/**", ".config/pip/**", ".pip/**", ".npmrc",
       ".vimrc", ".config/nvim/**", ".emacs", ".emacs.d/**"
@@ -307,7 +320,8 @@
     "any clone": [".git/hooks/**", ".git/config", ".claude/settings.json", ".claude/settings.local.json"],
     "own checkout": [
       ".githooks/**", ".npmrc", "uv.toml", "pip.conf", ".envrc", "src/claude_voice/literal_gh.py",
-      "src/claude_voice/org_rules.py", "src/claude_voice/__init__.py"
+      "src/claude_voice/org_rules.py", "src/claude_voice/__init__.py",
+      "src/claude_voice/session_hook.py", "src/claude_voice/safe_git.py", "src/claude_voice/phone_hook.py"
     ],
     "writers": [
       "tee {path}", "tee * {path}", "cp * {path}", "mv * {path}", "install * {path}", "ln * {path}",
@@ -338,7 +352,27 @@
     "allow": [
       "Bash(cp * /tmp/*)",
       "Bash(git commit -m *)",
-      "Bash(git commit -F *)"
+      "Bash(git commit -F *)",
+      "Bash(git -C * status*)",
+      "Bash(git -C * diff*)",
+      "Bash(git -C * log*)",
+      "Bash(git -C * show*)",
+      "Bash(git -C * ls-files*)",
+      "Bash(git -C * rev-parse*)",
+      "Bash(git -C * remote -v)",
+      "Bash(git -C * branch --show-current)",
+      "Bash(git -C * branch -a*)",
+      "Bash(git -C * branch -r*)",
+      "Bash(git -C * fetch*)",
+      "Bash(git -C * worktree list*)",
+      "Bash(git -C * add *)",
+      "Bash(git -C * commit *)",
+      "Bash(git -C * cherry-pick *)",
+      "Bash(git -C * worktree add *)",
+      "Bash(git fetch*)",
+      "Bash(git worktree add *)",
+      "Bash(uv sync*)",
+      "Bash(sed -n *)"
     ],
     "ask": [
       "Bash(git push* :*)",

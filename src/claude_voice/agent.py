@@ -1,6 +1,6 @@
 """The agent: claude-voice on another machine, answering only the hub it was paired with.
 
-Roy's laptop is the hub; the voice talks to it alone. Each other machine runs
+The owner's laptop is the hub; the voice talks to it alone. Each other machine runs
 ``claude-voice agent``, a small MCP server listening on that machine's tailnet address and
 nowhere else (ADR-CV-006). It offers the plugins its own owner approved, and nothing more.
 
@@ -313,7 +313,7 @@ def unit_text(command: list[str]) -> str:
 
 def _turn_sessions_on(settings: Path, say: Callable[[str], None]) -> None:
     """Add `[agent] sessions = true`, and background sessions, unless the file says otherwise."""
-    text = settings.read_text() if settings.exists() else ""
+    text = settings.read_text(encoding="utf-8") if settings.exists() else ""
     if "[agent]" in text or "[sessions]" in text:
         if "sessions = true" not in text:
             say(f"{settings} already has [agent] or [sessions]; set sessions = true under [agent] yourself.")

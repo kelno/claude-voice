@@ -22,7 +22,13 @@ ROOT = pathlib.Path(__file__).parent.parent
 MARKER = re.compile(r"^[ \t]*#\s*RULE:\s*(.+?)\s*$")
 #: The scripts whose rules are held to the same evidence as the source's. The older
 #: scripts mark rules with no rows yet; each joins this list when its rows are written.
-SCRIPTS_WITH_ROWS = ("scripts/red_first.py", "scripts/hooks/unanswered_peer.py")
+SCRIPTS_WITH_ROWS = (
+    "scripts/red_first.py",
+    "scripts/hooks/unanswered_peer.py",
+    "scripts/clean_merged.py",
+    "scripts/ci_scope.py",
+    "scripts/ratchet.py",
+)
 
 
 def _mutate():
@@ -114,6 +120,31 @@ def test_every_row_switches_off_the_line_beside_its_own_marker():
         if marks and min(hits, key=lambda i: abs(i - marks[0])) != chosen:
             astray.append(f"{rule['name']} (line {chosen + 1}; give it an occurrence)")
     assert not astray, "rows that switch off a line away from their marker: " + "; ".join(astray)
+
+
+def test_a_row_whose_pattern_matches_more_than_one_line_without_an_occurrence_says_which_lines():
+    """A pattern on two lines, and no occurrence, leaves the reader guessing which one is meant.
+
+    The run took the first. New code above the rule with the same words then took its place,
+    and the run tested the wrong line without a word.
+    """
+    mutate = _mutate()
+    text = "a = 1\nif ok:\n    return\nb = 2\nif ok:\n    return\n"
+    assert mutate.ambiguous(text, {"find": r"^if ok:"}) == (
+        "the pattern matches lines 2 and 5; name the one meant with occurrence"
+    )
+    assert mutate.ambiguous(text, {"find": r"^if ok:", "occurrence": 2}) is None
+    assert mutate.ambiguous(text, {"find": r"^a = 1"}) is None
+
+
+def test_every_row_whose_pattern_matches_more_than_one_line_names_its_occurrence():
+    mutate = _mutate()
+    unclear = []
+    for rule in mutate.all_rows():
+        why = mutate.ambiguous((ROOT / rule["file"]).read_text(encoding="utf-8"), rule)
+        if why:
+            unclear.append(f"{rule['name']}: {why}")
+    assert not unclear, "rows that match more than one line: " + "; ".join(unclear)
 
 
 def _row(name, file="src/claude_voice/store.py"):

@@ -249,7 +249,7 @@ def test_every_command_allowed_to_read_a_file_is_refused_every_secret_file():
     readers, files = table["secrets"]["readers"], table["secrets"]["files"]
     assert "*.config/claude-voice/env*" in files
     allowed = [reader for reader in readers if f"Bash({reader} *)" in rules.allow or f"Bash({reader}*)" in rules.allow]
-    assert {"cat", "head", "tail", "sed -n", "grep"} <= set(allowed)
+    assert {"cat", "head", "tail", "grep"} <= set(allowed)
     for reader in readers:
         for path in files:
             assert f"Bash({reader} {path})" in rules.deny
@@ -517,8 +517,6 @@ NEWLY_ALLOWED = (
     "npm run typecheck",
     "git commit -q -F message.txt",
     "git commit --amend --no-edit",
-    "git -C ../ui add src/app.ts",
-    "git -C ../ui commit -m fix",
     "git switch feature",
     "git switch -c feature",
     "git rebase origin/main",
@@ -682,6 +680,52 @@ def test_sending_mail_asks_first():
         assert f"mcp__claude_ai_Gmail__{tool}" in asks
 
 
+#: The bridge's two names, as a session sees it: added with `claude mcp add`, or as a connector.
+BRIDGE_NAMES = ("claude-voice", "claude_ai_claude-voice")
+
+
+@pytest.mark.parametrize("server", BRIDGE_NAMES)
+def test_a_confirm_only_the_voice_may_call_is_refused_to_every_session_by_every_name(server):
+    """The phone's confirm is offered as phone-a_sms_send_confirm; no session may call it."""
+    rules = permissions.load()
+    assert f"mcp__{server}__phone-a_sms_send_confirm" in rules.deny
+    assert f"mcp__{server}__phone-a_sms_send_confirm" not in rules.ask + rules.allow
+
+
+@pytest.mark.parametrize("server", BRIDGE_NAMES)
+@pytest.mark.parametrize("tool", ["phone-a_sms_send_request", "phone-a_sms_send_cancel"])
+def test_drafting_a_text_or_stopping_it_is_never_denied(server, tool):
+    """A draft sends nothing, and a stop can only keep a text from going."""
+    assert f"mcp__{server}__{tool}" not in permissions.load().deny
+
+
+def test_a_second_phone_or_a_renamed_one_has_its_confirm_refused_too():
+    """The table lists the plain tool; each machine the bridge knows gets its own deny row."""
+    deny = permissions.load(machines=["phone-b"]).deny
+    for server in BRIDGE_NAMES:
+        assert f"mcp__{server}__phone-b_sms_send_confirm" in deny
+        assert f"mcp__{server}__phone-a_sms_send_confirm" in deny, "the table's own machine stays"
+
+
+def test_every_machine_in_the_settings_has_its_voice_only_confirms_refused(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    file = tmp_path / "config.toml"
+    file.write_text("[machines.phone-b]\naddress = '100.64.0.9'\n", encoding="utf-8")
+    assert main(["permissions", str(repo)], env={"HOME": str(tmp_path), "CLAUDE_VOICE_CONFIG": str(file)}) == 0
+    assert "mcp__claude-voice__phone-b_sms_send_confirm" in read(repo)["permissions"]["deny"]
+
+
+def test_a_machine_the_table_does_not_name_is_told_to_re_apply_the_permissions(tmp_path, capsys):
+    file = tmp_path / "config.toml"
+    file.write_text("", encoding="utf-8")
+    env = {"HOME": str(tmp_path), "CLAUDE_VOICE_CONFIG": str(file)}
+    assert main(["machines", "add", "phone-b", "100.64.0.9"], env=env) == 0
+    out = capsys.readouterr().out
+    assert "phone-b_sms_send_confirm" in out and " permissions" in out
+    assert permissions.reapply_note("phone-a") is None, "a machine the table names needs nothing"
+
+
 # -- which folders, and the command ----------------------------------------------------
 
 
@@ -839,3 +883,172 @@ def test_applied_settings_have_the_placeholders_filled(tmp_path):
     every = written["allow"] + written["ask"] + written["deny"]
     assert not [rule for rule in every if "{" in rule and "}" in rule]
     assert f"Bash(rm -r* {folder.resolve()})" in written["deny"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pkill -f claude",
+        "pkill sleep",
+        "pkill",
+        "killall python3",
+        "killall -9 node",
+        "pgrep -f claude | xargs kill",
+        "pgrep -f x | xargs kill -9",
+        "pgrep x | xargs -r kill",
+    ],
+)
+def test_no_session_stops_processes_by_name(command):
+    """Claude Code judges each part of a pipe on its own, so the part that kills is refused."""
+    rules = permissions.load()
+    assert any(decision(rules, part.strip()) == "refused" for part in command.split("|")), command
+
+
+@pytest.mark.parametrize("command", ["kill 12345", "kill -TERM 12345", "pgrep -f claude"])
+def test_stopping_one_process_by_its_number_is_not_refused(command):
+    assert decision(permissions.load(), command) != "refused", command
+
+
+def test_the_by_name_kill_rules_reach_every_repo_without_the_owner_typing():
+    """The update writes a rule by itself only when it takes rights away and is not broad (#326)."""
+    from claude_voice import shipped
+
+    raw = json.loads(Path(permissions.__file__).with_name("permissions.json").read_text(encoding="utf-8"))
+    for rule in raw["deny"]["stopping processes by name, which ends other sessions' work too"]:
+        assert not shipped.broad(rule), rule
+
+
+# -- allow rules narrowed to the forms that are used --------------------------------------
+
+#: Allow rules that matched more than the everyday form, each now taken out of every clone.
+NARROWED = (
+    "Bash(git -C * status*)",
+    "Bash(git -C * diff*)",
+    "Bash(git -C * log*)",
+    "Bash(git -C * show*)",
+    "Bash(git -C * ls-files*)",
+    "Bash(git -C * rev-parse*)",
+    "Bash(git -C * remote -v)",
+    "Bash(git -C * branch --show-current)",
+    "Bash(git -C * branch -a*)",
+    "Bash(git -C * branch -r*)",
+    "Bash(git -C * fetch*)",
+    "Bash(git -C * worktree list*)",
+    "Bash(git -C * add *)",
+    "Bash(git -C * commit *)",
+    "Bash(git -C * cherry-pick *)",
+    "Bash(git -C * worktree add *)",
+    "Bash(git fetch*)",
+    "Bash(git worktree add *)",
+    "Bash(uv sync*)",
+    "Bash(sed -n *)",
+)
+
+
+@pytest.mark.parametrize("rule", NARROWED)
+def test_a_narrowed_allow_rule_is_retired(rule):
+    rules = permissions.load()
+    assert rule not in rules.allow and rule in rules.retired
+
+
+def test_a_settings_file_loses_the_narrowed_rules_and_keeps_the_owners_own(tmp_path):
+    with_settings(tmp_path, {"permissions": {"allow": ["Bash(make)", *NARROWED]}})
+    apply(tmp_path, permissions.load())
+    allowed = read(tmp_path)["permissions"]["allow"]
+    assert "Bash(make)" in allowed
+    assert [rule for rule in NARROWED if rule in allowed] == []
+
+
+EXACT_FORMS = (
+    "git fetch",
+    "git fetch origin",
+    "git fetch origin main",
+    "uv sync",
+    "uv sync --locked",
+    "uv sync --frozen",
+    "uv sync --all-extras",
+    "uv sync --locked --all-extras",
+    "uv sync --frozen --all-extras",
+)
+
+
+@pytest.mark.parametrize("command", EXACT_FORMS)
+def test_the_everyday_fetch_and_sync_forms_are_still_allowed(command):
+    assert decision(permissions.load(), command) == "allowed"
+
+
+NO_LONGER_ALLOWED = (
+    "git -C ../ui status",
+    "git -C ../ui add src/app.ts",
+    "git -C ../ui commit -m fix",
+    "git fetch --all",
+    "git fetch origin --prune",
+    "git worktree add ../elsewhere",
+    "uv sync --python 3.12",
+    "uv sync --frozen --no-dev",
+    "sed -n 1p notes.txt",
+)
+
+
+@pytest.mark.parametrize("command", NO_LONGER_ALLOWED)
+def test_other_forms_of_these_commands_ask_first(command):
+    assert decision(permissions.load(), command) == "asked"
+
+
+def test_no_git_or_sync_allow_rule_has_a_star_before_its_last_word():
+    """A star in the middle lets any option in before the words that follow it."""
+    wide = []
+    for rule in permissions.load().allow:
+        if rule.startswith(("Bash(git ", "Bash(uv sync")):
+            words = rule[len("Bash(") : -1].split(" ")
+            if any("*" in word for word in words[:-1]):
+                wide.append(rule)
+    assert wide == []
+
+
+@pytest.mark.parametrize("command", ["git diff --output=x", "git log --output x", "git show HEAD --output=x"])
+def test_git_writing_its_output_to_a_file_is_refused(command):
+    rules = permissions.load()
+    assert "Bash(git * --output*)" in rules.deny
+    assert decision(rules, command) == "refused"
+
+
+def test_gits_own_files_are_never_edited_anywhere():
+    rules = permissions.load()
+    assert {"Edit(//**/.git)", "Edit(//**/.git/**)"} <= set(rules.deny)
+
+
+def test_the_owners_git_settings_are_still_refused_to_every_edit():
+    rules = permissions.load()
+    for path in (".gitconfig", ".config/git/**"):
+        assert f"Edit(~/{path})" in rules.deny, path
+
+
+def _for_home():
+    """Fixed POSIX paths, as in for_a_folder, so the rule reads the same on every system."""
+    home = PurePosixPath("/h")
+    return permissions.for_folder(permissions.load(), home / "repo", home=home, uid=1000)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git worktree add /h/claude-voice-worktrees/fix-x -b fix/x origin/main",
+        "git worktree add /h/claude-voice-worktrees/fix-x fix/x",
+    ],
+)
+def test_a_new_worktree_in_the_shared_worktrees_folder_is_allowed(command):
+    assert decision(_for_home(), command) == "allowed"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git worktree add /h/elsewhere -b fix/x",
+        "git worktree add /h/claude-voice-worktrees-other/x",
+        "git worktree add /h/claude-voice-worktrees/../.claude/x",
+        "git worktree add ../claude-voice-worktrees/x",
+    ],
+)
+def test_a_new_worktree_anywhere_else_asks_first(command):
+    assert decision(_for_home(), command) == "asked"

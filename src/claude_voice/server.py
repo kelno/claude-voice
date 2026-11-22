@@ -13,6 +13,7 @@ import math
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 import weakref
@@ -37,12 +38,15 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.types import ASGIApp
 
 from . import (
-    access,
     activity,
     answers,
     api,
     app_links,
     app_sync,
+    approver,
+    approver_pane,
+    approver_token,
+    boxed,
     calllog,
     channel,
     channel_hub,
@@ -57,6 +61,7 @@ from . import (
     events,
     every_session,
     fleet,
+    folder_access,
     following,
     fork,
     gitstatus,
@@ -65,6 +70,7 @@ from . import (
     history,
     jobs,
     launch,
+    lineage,
     machines,
     mailbox,
     metrics,
@@ -72,7 +78,9 @@ from . import (
     org,
     parking,
     passkeys,
+    phone_hook,
     plugin_desk,
+    plugin_venv,
     plugins,
     procs,
     prompts,
@@ -1442,6 +1450,37 @@ def updater_command(python: str, folder: Path, log: Path, port: int) -> list[str
     return [python, "-I", "-m", "claude_voice.updater", "--repo", str(folder), "--log", str(log), "--port", str(port)]
 
 
+def _approver_id(store: Store) -> str:
+    """The session launched as the approver role, or nothing while there is none."""
+    held = store.get_setting("role:approver")
+    return str(held.get("id") or "") if isinstance(held, dict) else ""
+
+
+def _approver_process(store: Store) -> tuple[str, int, str | None] | None:
+    """The approver's session id, claude pid and start ticks, as fixed when its role was launched.
+    The live files are never read again: any session can write one."""
+    held = store.get_setting("role:approver")
+    if not isinstance(held, dict) or not held.get("id") or not isinstance(held.get("pid"), int):
+        return None
+    return str(held["id"]), held["pid"], held.get("started")
+
+
+def _duty(given: approver.Duty | None, repos: config.Config, manager: SessionManager) -> approver.Duty:
+    """The approver session's duty: the one given, or one on only once the owner switches it on."""
+
+    def is_approver(session: str) -> bool:
+        # RULE: only the session launched as the approver role is the approver
+        return bool(session) and _approver_id(manager.store) == session
+
+    return given or approver.Duty(
+        on=repos.approver_on,
+        role=manager.store.is_role,
+        approver=is_approver,
+        clock=manager.clock,
+        process=lambda: _approver_process(manager.store),
+    )
+
+
 def build_server(
     manager: SessionManager,
     oauth: OAuthProvider | None = None,
@@ -1457,17 +1496,19 @@ def build_server(
     wake_background: Callable[[str, str], Awaitable[str | None]] | None = None,
     background_sessions: Callable[[], Awaitable[set[str]]] | None = None,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
-    claude_config: Path = access.CLAUDE_CONFIG,
+    claude_config: Path = folder_access.CLAUDE_CONFIG,
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = jobs.compact_stopped,
     stop_window: Callable[[int], None] = transcripts.stop_window,
     trust_folder: Callable[[Path], Any] | None = None,
     plugin_approvals: Path | None = None,
     plugin_client: Callable[[Any], Any] | None = None,
+    plugins_behind: bool = False,
     machine_folder: Path = machines.FOLDER,
     machine_http: machines.Http = machines.http_client,
     machine_whois: machines.Whois = tailnet.whois,
     start_seconds: float = 20.0,
+    approver_window: Callable[..., Awaitable[tuple[int, str | None]]] = approver_pane.launch,
     list_prs: Callable[[str], list[dict[str, Any]]] | None = None,
     ui_origins: list[str] | None = None,
     summarize: Callable[[str, str | None, str | None], Awaitable[str]] | None = None,
@@ -1506,9 +1547,12 @@ def build_server(
     connector_logs: Path = connectors.CACHE_DIR,
     connectors_reachable: Callable[[], Awaitable[bool]] = connectors.proxy_answers,
     sessions_file: Path | None = None,
+    duty: approver.Duty | None = None,
 ) -> MCPServer:
     auth = None
+    keeper = approver_token.Keeper()  # the approver's own token, minted when it is launched
     if oauth is not None:
+        oauth.kept_elsewhere = lambda token: boxed.CLIENT if keeper.valid(token) else None
         auth = AuthSettings(
             issuer_url=AnyHttpUrl(oauth.public_url),
             resource_server_url=AnyHttpUrl(f"{oauth.public_url}/mcp"),
@@ -1539,6 +1583,7 @@ def build_server(
 
     def with_replies(answer: dict[str, Any], sender: str, ack: list[int] | None = None) -> dict[str, Any]:
         """The answer, with that session's replies not yet heard, after marking heard those in `ack`.
+        An `ack` may name a reply from any session, since the ids are the voice's own.
 
         No cursor carries this answer's number, so these are confirmed by an `ack`, on this tool
         or on whats_new, or pushed again by whats_new and confirmed there: heard twice at worst,
@@ -1554,7 +1599,9 @@ def build_server(
     transcripts.hear_replies(heard)
 
     # A folder the bridge just made is trusted on its own, written where the passkey path writes too.
-    trust_new: Callable[[Path], Any] = trust_folder or (lambda folder: access.trust_new_folder(folder, claude_config))
+    trust_new: Callable[[Path], Any] = trust_folder or (
+        lambda folder: folder_access.trust_new_folder(folder, claude_config)
+    )
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
@@ -1586,6 +1633,7 @@ def build_server(
         # RULE: a wait never runs past the callers time budget
         return max(min(seconds, MAX_WAIT_SECONDS, budget), 0)
 
+    duty = _duty(duty, repos, manager)
     start_settings = launch.Settings(manager.store, repos.sessions)
     desktop = os.environ if desktop_env is None else desktop_env
 
@@ -1735,7 +1783,7 @@ def build_server(
                     with background_step("connector repair", failures):
                         await mender.step()  # a session that started without its claude.ai connectors
                     with background_step("app sync", failures):
-                        await keeper.step()  # a session archived in the app, a desktop session to copy
+                        await app_keeper.step()  # a session archived in the app, a desktop session to copy
                     with background_step("prompt sweep", failures):
                         sweep_prompts()  # whether or not anyone has the page open
                     with background_step("pending rename", failures):
@@ -1763,7 +1811,7 @@ def build_server(
             )
             # Sessions in step with the Claude app: an archived one stopped, a desktop one copied
             # to the bridge (owner, 2026-11-22; ledger Q163, Q150).
-            keeper = app_sync.Keeper(
+            app_keeper = app_sync.Keeper(
                 live=reachable,
                 job_record=lambda sid: app_sync.job_record(jobs_dir, sid),
                 archived=archived_in_app,
@@ -1788,6 +1836,13 @@ def build_server(
             await channels.start()
         # The software report is built on a thread of its own, so the bridge listens at once.
         stop_software = software_report.start() if watch_interval else None
+        # The hooks report approver calls here; nothing listens while the approver is off.
+        reports = await approver.serve_reports(duty, phone_hook.REPORT_SOCKET, keeper)
+        starting = None
+        if plugins_behind and not plugins_started:
+            plugins_started.append(True)
+            starting = asyncio.create_task(start_plugins())
+            starting.add_done_callback(start_ended)
         try:
             yield {}
         finally:
@@ -1795,10 +1850,23 @@ def build_server(
                 task.cancel()
             if channels is not None:
                 await channels.stop()
+            if starting and not starting.done():
+                # A check already under way runs on in its thread until its own time limit.
+                # It starts the plugin only to list its tools and stops it again, and nothing is
+                # offered after the cancel, so no plugin process is left running. In the service
+                # this happens only as the bridge stops; tests open a new start for each client.
+                starting.cancel()
+                plugins_started.clear()  # the next start tries again
+            # A plugin's sync runs in a session of its own, so it would outlive the bridge.
+            # RULE: a bridge that stops stops the plugin syncs still running
+            if stopped := plugin_venv.stop_running():
+                log.info("stopped %d plugin syncs still running as the bridge stops", stopped)
             with background_step("activity flush", {}):
                 _activity_flush(activity_view)
             if stop_software:
                 stop_software()
+            if reports:
+                reports.close()
 
     # Each relay's marks, by its handle, then by Claude session id: what a mark holds is in
     # following.py, how handles are kept in handles.py.
@@ -2289,6 +2357,7 @@ def build_server(
         auth=auth,
         middleware=[
             log_requests,
+            boxed.gate,
             result_notes(
                 news_line,
                 lambda: calling_transcript(),
@@ -2300,6 +2369,7 @@ def build_server(
         ],
         lifespan=lifespan,
     )
+    mcp.approver_token = keeper  # type: ignore[attr-defined]
     titled = titles.titled(mcp, titles.load())  # each tool's display title, from the shared table
 
     def tool(**kwargs: Any) -> Callable[[Callable[..., Any]], Any]:
@@ -2566,7 +2636,61 @@ def build_server(
             api.HUB.publish("programme_hints", {"programme_hints": now})
         hints_seen[:] = [now]
 
-    active_plugins = plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client, commit_of)
+    active_plugins = plugins.started_before_listening(
+        plugins_behind, lambda: plugins.start_approved(mcp, repos.plugins, plugin_approvals, plugin_client, commit_of)
+    )
+    plugins_started: list[bool] = []
+    plugin_failures: list[dict[str, Any]] = []  # shown by health beside the plugins offered
+
+    async def offer_checked(spec: config.PluginSpec, found: plugins.Checked) -> None:
+        """Offer one checked plugin's tools."""
+        plugin, listing, _ = found
+        if plugin is not None:
+            plugins.present(mcp, plugin, listing, await asyncio.to_thread(commit_of, spec.cwd))
+            active_plugins.append(plugin)
+
+    def could_not_offer(spec: config.PluginSpec, exc: BaseException) -> None:
+        """Log why a plugin was not offered, and list it in health by the kind of error only."""
+        log.warning("plugin %s could not be offered: %s", spec.name, exc)
+        # Health leaves the laptop, read by the voice, and an error's text may carry a path or a
+        # token. So it names the kind of error, and the full text stays in the local log.
+        # RULE: health never carries the text of a plugin error
+        why = f"{type(exc).__name__}; see the bridge log on the laptop"
+        plugin_failures.append({"name": spec.name, "state": "could not be offered", "why": why})
+
+    async def start_plugins() -> None:
+        """Start every approved plugin behind the listening bridge, and offer each one's tools
+        once it is checked; the voice hears that the tool list changed."""
+        specs = list(repos.plugins)
+        # A start cancelled as the bridge stopped runs again at the next one.
+        # RULE: a plugin start that runs again never lists a failure twice
+        plugin_failures.clear()
+
+        def check(spec: config.PluginSpec) -> Awaitable[plugins.Checked]:
+            return asyncio.to_thread(plugins.check_one, spec, plugin_approvals, plugin_client)
+
+        # RULE: the plugins start side by side
+        checked = await asyncio.gather(*map(check, specs), return_exceptions=True)
+        try:
+            for spec, found in zip(specs, checked, strict=True):
+                if isinstance(found, BaseException):  # its check failed, even by a cancel
+                    # RULE: a check ended by a cancel never stops the others
+                    could_not_offer(spec, found)
+                    continue
+                try:
+                    await offer_checked(spec, found)
+                except Exception as exc:
+                    # RULE: a plugin that cannot be offered never stops the others
+                    could_not_offer(spec, exc)
+        finally:
+            await tools_changed()
+
+    def start_ended(task: asyncio.Task[None]) -> None:
+        """Log a plugin start that failed as a whole, so it never disappears unseen."""
+        if not task.cancelled() and (failed := task.exception()) is not None:
+            # RULE: a plugin start that fails as a whole is logged
+            log.error("the plugins could not be started: %s", failed)
+
     developer_mode = devmode.DeveloperMode()
     desk = plugin_desk.Desk(
         mcp,
@@ -2823,11 +2947,17 @@ def build_server(
             wanted = f"{wanted}-{secrets.token_hex(2)}"
         return wanted
 
-    async def appeared(name: str, folder: Path) -> dict[str, Any]:
-        """The started session once Claude Code lists it, recorded so the bridge may stop it."""
+    async def appeared(name: str, folder: Path, pid: int | None = None) -> dict[str, Any]:
+        """The started session once Claude Code lists it, recorded so the bridge may stop it.
+        With `pid`, only a row of that process counts: any session can write a row."""
         deadline = time.monotonic() + start_seconds
+
+        def ours(d: dict[str, Any]) -> bool:
+            # RULE: the approvers process is taken from its window not a session file
+            return d.get("name") == name and d.get("cwd") == str(folder) and pid in (None, d.get("pid"))
+
         while time.monotonic() < deadline:
-            found = next((d for d in live_sessions() if d.get("name") == name and d.get("cwd") == str(folder)), None)
+            found = next((d for d in live_sessions() if ours(d)), None)
             if found:
                 store.record_started(str(found.get("sessionId")), name, str(folder))
                 return found
@@ -2847,6 +2977,8 @@ def build_server(
             )
         folder = roles.folder_for(spec)
         name = unused_name(str(spec.get("name") or role))
+        if role == boxed.CLIENT:
+            return await launch_approver(spec, folder, name, task)
         how, _, _ = how_to_start(str(folder), name, None, None)
         try:
             await start_background(
@@ -2859,8 +2991,33 @@ def build_server(
         except Exception as exc:
             raise ToolError(f"Claude Code could not start a session: {exc}") from None
         found = await appeared(name, folder)
-        store.set_setting(f"role:{role}", {"name": name, "id": str(found.get("sessionId"))})
+        pid = int(found.get("pid") or 0)
+        # The approver's process is fixed here, once; a session file written later cannot move it.
+        # RULE: a launched role keeps the process it started as
+        held = {"name": name, "id": str(found.get("sessionId")), "pid": pid, "started": lineage.start_ticks(pid)}
+        store.set_setting(f"role:{role}", held)
         return {"role": role, "name": name, "claude_session_id": found.get("sessionId"), "status": found.get("status")}
+
+    async def launch_approver(spec: dict[str, Any], folder: Path, name: str, task: str | None) -> dict[str, Any]:
+        """The approver in a tmux window of its own, boxed in to its two tools, its process pinned
+        from tmux's answer the moment the window opens (approver-v1, v1.5 and v1.7)."""
+        tmux, cli = find_program("tmux"), find_program("claude")
+        # RULE: the approver cannot start without tmux
+        if not tmux or not cli:
+            raise ToolError("The approver needs tmux and claude on this machine, and cannot start without them.")
+        claude = await asyncio.to_thread(os.path.realpath, cli)
+        hooks = phone_hook.settings_entries(sys.executable)
+        prompt = roles.first_message(spec, folder, task)
+        argv = approver_pane.command(sys.executable, claude, name, bridge_port, hooks, prompt)
+        try:
+            pid, ticks = await approver_window([tmux], keeper, name, str(folder), argv, claude, start_seconds)
+        except (OSError, RuntimeError) as exc:
+            raise ToolError(f"The approver could not start: {exc}") from None
+        found = await appeared(name, folder, pid)
+        held = {"name": name, "id": str(found.get("sessionId")), "pid": pid, "started": ticks}
+        store.set_setting(f"role:{boxed.CLIENT}", held)
+        session = found.get("sessionId")
+        return {"role": boxed.CLIENT, "name": name, "claude_session_id": session, "status": found.get("status")}
 
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def start_role(
@@ -2985,6 +3142,7 @@ def build_server(
         | {name: repo for name, repo, _ in plugin_repos},
         run=software._gh,
         login_expiry=signed_in.read,
+        board_url=repos.board_url,
     )
 
     def software_listed() -> list[tuple[str, str, Path | None, str]]:
@@ -3573,12 +3731,12 @@ def build_server(
         if by_path:
             # A session already runs in a session's folder, so Claude Code trusts it; a folder by
             # path may never have been, and the owner's confirmation covers its trust too.
-            root = access.trust_root(opened)
+            root = folder_access.trust_root(opened)
             if manager.access.state(root) == "closed":
                 out["trust_not_set"] = f"Claude Code's trust is kept on {root}: {manager.access.explain(root)}"
                 return out
             try:
-                out["trusted"] = access.trust_in_claude_code(opened, claude_config)
+                out["trusted"] = folder_access.trust_in_claude_code(opened, claude_config)
             except (OSError, ValueError) as exc:
                 out["trust_not_set"] = f"Claude Code's workspace trust could not be saved: {exc}"
         return out
@@ -4871,8 +5029,11 @@ def build_server(
         snap = METRICS.snapshot()
         courier = transcripts.shared_courier()
         offered = [p.status() for p in active_plugins]
+        # A plugin offered since, by a restart, no longer shows as one that could not be offered.
+        # RULE: a plugin offered after it failed is no longer listed as failed
+        failed = [f for f in plugin_failures if f["name"] not in {p["name"] for p in offered}]
         return {
-            "plugins": offered,
+            "plugins": offered + failed,
             "developer_mode": developer_mode.state(),
             "now": {
                 "up_since": started_at,
@@ -4951,6 +5112,23 @@ def build_server(
         (their own answer when no option fits), only once they have clearly picked; never guess.
         When answered is false, read 'say' aloud (it is on the screen), or ask again from 'options'."""
         return answers.answer(prompt_book, question_id, choice, own_words)[1]
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
+    def approver_boxes() -> Any:
+        """The approval boxes the approver may answer, for the approver role only.
+        Each box says whether the approver may answer it, and why not. Looking is the
+        approver's check-in: a box waits for it only while it looks at least every two minutes."""
+        names = {str(row.get("sessionId")): row.get("name") for row in events.read_live(live_dir)}
+        return approver.boxes(prompt_book, duty, names, phone_hook.args_digest({}))
+
+    @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True))
+    def approver_answer(id: str, decision: str, reason: str) -> dict[str, Any]:
+        """Answer one routine approval box as the approver, for the approver role only.
+        Give allow or deny and a short reason. The bridge refuses any box that is not
+        answerable. An allow counts for this one call, never for later ones."""
+        settle = lambda prompt, body: answers.settle(prompt, body, "approver", api.HUB.publish)  # noqa: E731
+        digest = phone_hook.args_digest({"id": id, "decision": decision, "reason": reason})
+        return approver.answer(prompt_book, duty, id, decision, reason, settle, digest)
 
     # -- the session the voice talks to, and the companion page that picks it -----------
 
@@ -5111,7 +5289,9 @@ def build_server(
     if oauth is not None:
 
         async def check_token(token: str) -> bool:
-            return await oauth.load_access_token(token) is not None
+            found = await oauth.load_access_token(token)
+            # RULE: the rest api refuses the approvers token
+            return found is not None and found.client_id != boxed.CLIENT
 
         api.EventApi(
             store,
@@ -5155,6 +5335,7 @@ def build_server(
             away=lambda app_open: PRESENCE[0].away(app_open=app_open),
             route=_router(route, across),
             activity=activity_view,
+            duty=duty,
         ).routes(mcp)
 
     mcp.feed_news = feed_news  # type: ignore[attr-defined]  # for tests
@@ -5232,8 +5413,8 @@ def serve_forever(cfg: Config) -> None:
     manager = SessionManager(
         store,
         project_root=cfg.root,
-        denied=access.default_denied(),
-        exempt=access.default_exempt(),
+        denied=folder_access.default_denied(),
+        exempt=folder_access.default_exempt(),
         new_mode=cfg.new_session_mode,
         grant_for=session_modes.session_grant,
     )
@@ -5263,6 +5444,7 @@ def serve_forever(cfg: Config) -> None:
             ),
         ),
         activity_file=config.STATE_DIR.expanduser() / activity.FILE,
+        plugins_behind=True,
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)
     configure_logging(cfg.db.parent / LOG_FILE)

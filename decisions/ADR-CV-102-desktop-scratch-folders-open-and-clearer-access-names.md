@@ -45,4 +45,4 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29. Amends ADR-CV-
 
 ## Related
 
-`src/claude_voice/access.py`, ADR-CV-101, README "How it behaves".
+`src/claude_voice/folder_access.py`, ADR-CV-101, README "How it behaves".

@@ -3,9 +3,9 @@
 import os
 import pathlib
 import shutil
-import subprocess
 
 import pytest
+from bounded import run_bounded
 
 ROOT = pathlib.Path(__file__).parent.parent
 SCRIPTS = ("imperative.py", "no_session_links.py", "private_data_scan.py", "readable.py")
@@ -23,14 +23,14 @@ def repo(tmp_path):
     env = {**os.environ, "HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1"}
     env |= {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid"}
     env |= {"GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=folder, env=env, check=True)
-    subprocess.run(["git", "config", "core.hooksPath", ".githooks"], cwd=folder, env=env, check=True)
+    run_bounded(["git", "init", "-q", "-b", "main"], cwd=folder, env=env, check=True)
+    run_bounded(["git", "config", "core.hooksPath", ".githooks"], cwd=folder, env=env, check=True)
     return folder, env
 
 
 def _commit(repo, message):
     folder, env = repo
-    return subprocess.run(
+    return run_bounded(
         ["git", "commit", "-q", "--allow-empty", "-m", message], cwd=folder, env=env, capture_output=True, text=True
     )
 
@@ -48,6 +48,31 @@ def test_the_hook_refuses_another_trailer_and_says_where_it_belongs(repo):
 
 def test_the_hook_refuses_a_subject_in_the_past_tense(repo):
     assert _commit(repo, "feat: Added a thing\n").returncode != 0
+
+
+def test_a_pre_commit_hook_runs_the_private_data_scan_on_the_staged_files():
+    hook = ROOT / ".githooks" / "pre-commit"
+    assert hook.is_file() and os.access(hook, os.X_OK)
+    assert "scripts/private_data_scan.py" in hook.read_text(encoding="utf-8")
+
+
+def _stage(repo, text):
+    folder, env = repo
+    (folder / "notes.txt").write_text(text, encoding="utf-8")
+    run_bounded(["git", "add", "notes.txt"], cwd=folder, env=env, check=True)
+    return run_bounded(
+        ["git", "commit", "-q", "-m", "docs: Add notes\n"], cwd=folder, env=env, capture_output=True, text=True
+    )
+
+
+def test_a_staged_file_with_a_home_network_address_is_refused_before_the_commit(repo):
+    done = _stage(repo, "The box answers on " + "192." + "168.1.20 at home.\n")
+    assert done.returncode != 0 and "notes.txt" in done.stderr
+
+
+def test_a_clean_staged_file_is_committed(repo):
+    done = _stage(repo, "The box answers on 192.0.2.20 in the examples.\n")
+    assert done.returncode == 0, done.stderr
 
 
 def test_the_hook_lets_a_fixup_through_for_folding_in_later(repo):

@@ -75,7 +75,7 @@ ran in the last day, with the session the owner talks to:
 - `kind`: `desktop`, `terminal` or `background`.
 - `machine`: `null` for a session on this computer, or the name of the other
   machine it runs on (see [other machines](other-machines.md)). A session there has
-  an `id` with the machine in front, `lukas-laptop/840ab631…`, which every
+  an `id` with the machine in front, `laptop-a/840ab631…`, which every
   endpoint below takes, as a slash or as `%2F`. Its `name` is the machine's own
   name for it, and its `number` is `null`. One whose questions can only be answered
   in the Claude app carries `answer_in: "claude_app"`.
@@ -159,8 +159,8 @@ Turn texts are cut to 600 characters; `cut` and `length` say when.
 `GET /api/v1/sessions` also carries `machines`, one per approved machine:
 
 ```json
-{"machines": [{"name": "lukas-laptop", "state": "online", "reachable": true, "error": null,
-               "seen_as": "hjemme", "latency_ms": 54, "checked_at": "<iso>",
+{"machines": [{"name": "laptop-a", "state": "online", "reachable": true, "error": null,
+               "seen_as": "laptop-host", "latency_ms": 54, "checked_at": "<iso>",
                "last_seen": "<iso>", "sessions": true}]}
 ```
 
@@ -179,7 +179,7 @@ changes, so remote news is up to ten seconds late.
 `GET /api/v1/prompts` includes the questions on other machines that can be
 answered from here, with a prefixed `id` and `session` and a `machine`.
 `POST /api/v1/prompts/{id}` passes the answer on, and answers `502 {"error":
-"lukas-laptop did not answer"}` when it cannot. A question that goes away on the
+"laptop-a did not answer"}` when it cannot. A question that goes away on the
 machine itself closes with `prompt_closed` and `how: "screen"`.
 
 ## Usage
@@ -302,7 +302,7 @@ per measure, and counts only with both a written reason and the owner's yes:
 [[exempt]]
 measure = "complexity"
 reason = "the tool table is one long match on the tool's name"
-approved = "Roy, 2026-11-11, in pull request #212"
+approved = "the owner, 2026-11-11, in pull request #212"
 ```
 
 `mutations` is the newest mutation report the followed branch kept with a
@@ -321,7 +321,7 @@ approval is ignored.
 
 | Call | Answer |
 | --- | --- |
-| `GET /api/v1/work` | `{"as_of", "waiting_on_owner": [{"id", "text", "command"\|null, "since", "repo"\|null, "session"\|null, "prompt"\|null}], "open_prs": [{"repo", "number", "title", "url", "checks": "pass"\|"fail"\|"pending", "draft"}], "unreadable": ["<repo>"], "developer_mode": {"on", "until"\|null}}` |
+| `GET /api/v1/work` | `{"as_of", "waiting_on_owner": [{"id", "text", "command"\|null, "since", "repo"\|null, "session"\|null, "prompt"\|null}], "open_prs": [{"repo", "number", "title", "url", "checks": "pass"\|"fail"\|"pending", "draft"}], "unreadable": ["<repo>"], "board_url": "<https url>"\|null, "developer_mode": {"on", "until"\|null}}` |
 
 What waits on the owner is the manager session's own list, read fresh on every
 call from `~/.local/state/claude-voice/waiting.json`; an item with no `id` or
@@ -334,6 +334,9 @@ minute; a repository whose pull requests could not be read is named in
 `unreadable` rather than shown as having none. `text` and `command` are plain
 text, never markup. `developer_mode` says whether the owner's voice may approve a
 plugin whose tools changed, and until when (ADR-CV-010); it ends by itself.
+`board_url` is the project board the page links to, from `[work] board_url` in the
+settings file. It is passed on only as an `https` address with a host; anything
+else, or no setting, gives `null`. The stream's `work` event carries it too.
 
 ## A session's own page
 
@@ -426,7 +429,7 @@ box shows at once rather than after five minutes.
 | `POST /api/v1/prompts/{id}` | for a question `{"answer": "<label>"}`, `{"answer": ["<label>", …]}` when `multi`, or `{"answer": {"text": "…"}}`; for an approval `{"decision": "allow"|"deny", "reason"?}`. `200`, `409` when it does not fit the prompt, `404` when it is gone. A change: with the cookie it needs an allowed `Origin` |
 
 While the hook waits, the bridge asks every five seconds whether the owner is still away.
-Once he is back at the laptop, the hook's wait gets `409`, and the box shows in the terminal.
+Once the owner is back at the laptop, the hook's wait gets `409`, and the box shows in the terminal.
 
 Read `GET /api/v1/prompts` on every connect; the stream only carries changes:
 `prompt` (one opened) and `prompt_closed` (`{"id", "how"}`).

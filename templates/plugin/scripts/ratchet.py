@@ -305,7 +305,7 @@ def _run(*command: str, cwd: Path = ROOT, env: dict[str, str] | None = None) -> 
     which the ratchet prints. Its output goes to temporary files, so a step with a lot to say
     never blocks on a full pipe, and one that outlives the ratchet never dies of a closed one.
     """
-    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as out, tempfile.TemporaryFile("w+", encoding="utf-8") as err:
         step = subprocess.Popen(
             command,
             cwd=cwd,
@@ -351,7 +351,7 @@ def measure(*, skip_mutation: bool = False, recorded: dict[str, Any] | None = No
         seconds = round(time.monotonic() - started, 1)
         if suite.returncode:
             raise SystemExit("The suite fails; the ratchet measures a green tree.\n" + suite.stdout[-2000:])
-        coverage = round(json.loads(report.read_text())["totals"]["percent_covered"], 2)
+        coverage = round(json.loads(report.read_text(encoding="utf-8"))["totals"]["percent_covered"], 2)
         passed = re.search(r"(\d+) passed", suite.stdout)
         lint = _python("-m", "ruff", "check", ".", "--output-format", "json", env=env)
         types = _python("-m", "mypy", "src", env=env)
@@ -434,7 +434,7 @@ def exceptions(text: str | None) -> set[str]:
 def budget(path: Path) -> dict[str, Any]:
     """The suite's time budget, the one thing `quality.json` keeps."""
     try:
-        return dict(json.loads(path.read_text())["test_budget"])
+        return dict(json.loads(path.read_text(encoding="utf-8"))["test_budget"])
     except (OSError, ValueError, KeyError, TypeError):
         return dict(DEFAULT_BUDGET)
 
@@ -442,13 +442,13 @@ def budget(path: Path) -> dict[str, Any]:
 def write_levels(path: Path, now: dict[str, Any]) -> None:
     """Write the measured levels, for main to keep with its run."""
     levels = {k: v for k, v in now.items() if k != "test_budget"}
-    path.write_text(json.dumps(levels, indent=2, sort_keys=True) + "\n")
+    path.write_text(json.dumps(levels, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def base_levels(kept: Path | None, measure_base: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     """Main's kept levels for the base, or, when they are missing, the base measured."""
     try:
-        levels = json.loads(kept.read_text()) if kept else None
+        levels = json.loads(kept.read_text(encoding="utf-8")) if kept else None
     except (OSError, ValueError):
         levels = None
     if isinstance(levels, dict) and "coverage" in levels:
@@ -515,7 +515,7 @@ def measure_at(ref: str, repo: Path | None = None) -> dict[str, Any]:
         if measured.returncode:
             msg = f"Measuring {ref} failed:\n{measured.stdout[-2000:]}{measured.stderr[-2000:]}"
             raise SystemExit(msg)
-        return dict(json.loads(out.read_text()))
+        return dict(json.loads(out.read_text(encoding="utf-8")))
 
 
 def main() -> int:

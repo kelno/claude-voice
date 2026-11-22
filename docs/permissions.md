@@ -144,19 +144,21 @@ The retired rules so far are all allow rules:
 
 | Group | What it is for |
 | --- | --- |
-| read files and folders | `cat`, `head`, `tail`, `sed -n`, `grep`, `ls` and `wc`, to look at code |
-| git, looking only | status, diffs, logs, branches and worktrees, read but not changed |
-| git, making work on a branch | adding and committing, also with `git -C`; new branches, switching branch, worktrees, cherry-picks; `git rebase origin/main` and `--continue` |
+| read files and folders | `cat`, `head`, `tail`, `grep`, `ls` and `wc`, to look at code |
+| git, looking only | status, diffs, logs, branches and the list of worktrees, read but not changed; a plain `git fetch` |
+| git, making work on a branch | adding and committing; new branches, switching branch, cherry-picks; `git rebase origin/main` and `--continue`; pruning and removing worktrees, and adding one in `~/claude-voice-worktrees/` |
 | bringing main up to date, by fast-forward only | `git fetch origin`, with or without `main`; `git pull --ff-only`, with or without `origin main`; and `git merge --ff-only origin/main` |
 | GitHub, looking only | reading pull requests, their checks and status, workflow runs and watching one, issues, the repository and its releases |
 | pushing a session's own pull-request branch | `git push origin <branch>`, with `-u` or `-q -u`; `git push --force-with-lease origin <branch>`, with or without `-u`; and `gh pr update-branch <n> --rebase` |
-| the gates of the Python repositories | `uv sync`, ruff, mypy and pytest, also with `uv run --quiet`, the mutation run and the ratchet |
+| the gates of the Python repositories | `uv sync`, alone or with `--locked` or `--frozen` and with or without `--all-extras`; ruff, mypy and pytest, also with `uv run --quiet`, the mutation run and the ratchet |
 | the gates of the companion app | `npm ci`, its tests, lint, typecheck and build |
 | the gates of the Android app | Gradle's assemble, check, lint and test |
 | editing files in the repository | `Edit(./**)`, every file under the repository. Claude Code checks a file write against `Edit` rules, so there is no `Write` rule |
 
 Merging, opening a pull request, `gh api` and installing anything else still
-ask, as does anything no rule names. Merging gets no rule of either kind on
+ask, as does anything no rule names. So does `git -C <folder>`, which can carry
+any option before the command. To work in another clone, `cd` into it in a call
+of its own, then run the plain git command in the next call. Merging gets no rule of either kind on
 purpose: the owner lets a session merge its own pull request once every check
 is green.
 
@@ -175,6 +177,7 @@ like any other.
 | a lease push in any other form than the one allowed | `--force-with-lease` after the remote, as in `git push origin feature --force-with-lease` |
 | GitHub, writing what others read | commenting on, closing or reviewing a pull request; creating or commenting on an issue; creating or editing a release; editing the repository; secrets; `gh api graphql`; and `gh api` with `-X`, `--method`, `-f`, `-F`, `--field`, `--raw-field` or `--input` |
 | deleting files | `rm -f`; a recursive remove is asked by the session hook, below |
+| a new worktree whose path climbs out of the worktrees folder | `git worktree add` with `..` anywhere in it |
 | changing the session's own settings | `Edit(./.claude/**)`, so a session cannot edit its own rules without the owner |
 | the devices in the house | the tools that open the garage door, switch a TV on or off, or start, stop, pause, send home, find or clean with the vacuum |
 | the garage door's own server, run in its repository | the same garage tools, by the name the garage door's repository gives its own server |
@@ -188,6 +191,18 @@ tool is `mcp__claude-voice__garage_request`. As a claude.ai connector it is
 rule. Looking at a device, such as `garage_status` or `vacuum_where`, does not
 ask. A new plugin whose tools move something adds them to `device tools.tools`
 in the same pull request as the plugin.
+
+Some confirms only the voice may call, after the owner's spoken yes. They are
+listed under `voice only`, and they are refused to every session, never asked.
+The first is the phone's `sms_send_confirm`. It sends a text the voice has read
+back. The bridge offers a machine's tool with the machine's name in front, such
+as `phone-a_sms_send_confirm`. So the rule is written once for each machine in
+the table's own `machines` list and once for each machine in the bridge's
+settings, under both of the bridge's names. After `machines add` or
+`machines approve` names a machine the table doesn't, the command says to run
+`claude-voice permissions` again, so its confirm is refused too. Drafting a text
+(`phone-a_sms_send_request`) and stopping it (`phone-a_sms_send_cancel`) are not
+refused: a draft sends nothing, and a stop can only keep a text from going.
 
 ### Forced pushes to a session's own branch
 
@@ -216,6 +231,12 @@ but names `main` or `master` is refused too, from the forms under `other pushes`
 
 **Refused, even when the owner would say yes:**
 
+- **Stopping processes by name.** `pkill`, `killall`, and a list of process
+  numbers piped into `kill` through `xargs`. A name matches every session's
+  processes, so one session's cleanup can end another's work. Stopping one
+  process by its number with `kill <pid>` still asks. The `xargs` rule also
+  refuses a few harmless forms, such as `xargs echo kill`. A refusal costs a
+  reworded command, and a miss costs another session's work.
 - **History that cannot be got back.** A hard reset, discarding changes with
   `checkout --`, `git clean -f`, deleting or moving a branch, forcing a
   worktree away, and a `git switch` with `-f`, `--force`, `--discard-changes`
@@ -228,7 +249,7 @@ but names `main` or `master` is refused too, from the forms under `other pushes`
   allows would let all of these through without these rules.
 - **Approving a pull request,** with `gh pr review --approve` or `-a`, or with
   any `gh api` call that names `APPROVE`. A session acts on GitHub as the owner,
-  so its approval would show publicly in his name. Commenting on a review, or
+  so its approval would show publicly in the owner's name. Commenting on a review, or
   asking for changes, is asked instead. An approval sent from a file with
   `gh api --input` cannot be seen in the command, so it is only asked.
 - **Removing what cannot be got back,** with `rm -r`, `-R`, `-fr` or `--recursive`: the
@@ -269,6 +290,54 @@ fence against a slip, and the files themselves stay readable by the owner alone.
 
 A new plugin that keeps a secret in a file of its own adds that file to
 `secrets.files` in the table, in the same pull request as the plugin.
+
+## The push guard for a role
+
+A session started for a role, such as `contribute`, runs behind a second hook,
+the push guard. It reads every `git push` in a command. It has two modes, and
+only the role's entry in the owner's own roles file chooses between them.
+
+- **Fork-only**, the default. A push is refused when any push address of the
+  named remote is on GitHub under the upstream's owner, whatever the repository
+  name, since GitHub sends a renamed repository's old address on. Every push
+  address must be a plain GitHub address the guard can read, or the push is
+  refused. A push to an address written in the command is refused too.
+- **Own-clone**, set with `push_mode = "own-clone"` on the role. Every push
+  address of `origin` must be the role's `upstream`, or the push is refused.
+  Every push then asks the owner.
+
+In both modes the guard reads a push's remotes only when the command is a
+plain push, on one line, as a call of its own:
+
+- `git push <words>`, `git -C <folder> push <words>`, or either after one
+  `cd <folder> && `. The push is judged by the remotes of that folder.
+- The folder is written out: no variable, pattern, `~user` or leading `-`.
+  While CDPATH is set, a relative folder must start with `./` or `../`.
+- After `push`, the only options are `-u`, `--set-upstream`, `-q`, `--quiet`,
+  `-v`, `--dry-run` and `--force-with-lease`, bare or as `=<ref>:<sha>`.
+- Nothing else is in the command: no redirection such as `2>&1`, second
+  command, pipe, variable, subshell or `NAME=value` before git. Bash may run a
+  redirection's target as a command, so the guard reads none.
+- A folder has no backslash. Bash reads an unquoted backslash as an escape, so
+  on Windows write `C:/Users/...`, not `C:\Users\...`.
+- The hook's environment holds no GIT_ variable, apart from `GIT_EDITOR`,
+  `GIT_SEQUENCE_EDITOR`, `GIT_PAGER` and `GIT_TERMINAL_PROMPT`.
+
+Any other command with a push in it is refused in fork-only mode, with the
+plain shape to use instead, and asks in own-clone mode. Common forms are
+refused this way: `git push ... 2>&1`, `git push ... | tail -1` and
+`cd X; git push`. Run the push on its own, or with `&&` after the `cd`.
+
+The shape rule judges only pushes the guard finds: `git push` itself, and one
+behind a wrapper such as `timeout` or `sh -c`. A push the guard cannot see,
+such as one inside a file run with `source` or `.`, text piped into a shell,
+or a push spelled through variables or command substitution, is not covered.
+No text check can catch every disguise. Fork-only mode is a guard against
+slips; the boundary against a deliberate trick is the rights of the credential
+the session pushes with.
+
+The guard is a fence against a slip, not a wall. It cannot see a repository
+that was moved to another owner, since the old address then names someone else.
 
 ## The session hook
 
@@ -367,7 +436,7 @@ That covers a session's own branch and pull request, a plugin's money or
 read-only mark, and its scratchpad. Each such case has a test, so the change
 that fills it in has to change the test on purpose.
 
-Each opened approval carries `routed`: `to` (always `roy` for now), the
+Each opened approval carries `routed`: `to` (always `owner` for now; older bridges wrote the owner's first name, so read any value but `manager` as the owner), the
 fixed-list `lines` it matched, the first as `line`, and `shape`.
 
 ## What later runs as the owner
@@ -393,6 +462,12 @@ refused. Two gaps are not caught here, and the command gate will close both:
 A repository's own `.claude/settings.json` and `.claude/settings.local.json` are
 refused too, in every clone. The owner changes them by hand, or through
 `claude-voice permissions`.
+
+Some of the bridge's own files run as the owner from the owner's checkout, in
+every session's hooks. They are the session hook, the git helper it loads, the
+phone hook, the GitHub command check and the org rules. In that checkout, a
+session can't write them. In a worktree it can, since nothing runs from there.
+The list is the group "own checkout" in `permissions.json`.
 
 git settings that run code are refused in the settings file for the global
 forms. The session hook refuses them in every form, including `git -c` and

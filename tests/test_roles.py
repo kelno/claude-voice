@@ -9,7 +9,7 @@ import pytest
 from fakes import FakeClaude
 from mcp.client import Client
 
-from claude_voice import guard, roles
+from claude_voice import guard, lineage, roles
 from claude_voice.oauth import OAuthProvider
 from claude_voice.server import build_app, build_server
 from claude_voice.sessions import SessionManager
@@ -59,6 +59,24 @@ def test_the_guard_answers_claude_code_as_a_pre_tool_use_hook(tmp_path):
     out = guard.answer(hook_input, UPSTREAM)
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert guard.answer({"tool_name": "Read", "tool_input": {}, "cwd": str(tmp_path)}, UPSTREAM) == {}
+
+
+def test_a_push_whose_address_cannot_be_read_is_refused():
+    assert guard.refusal("git push origin feature", UPSTREAM, remote_url=lambda name: None, default_remote=lambda: "o")
+    fork = "git push fork feature"
+    urls = {"fork": "https://github.com/someone/claude-voice"}
+    assert guard.refusal(fork, UPSTREAM, remote_url=urls.get, default_remote=lambda: "o") is None
+
+
+def test_the_guard_refuses_a_push_in_a_clone_whose_settings_it_does_not_read(tmp_path):
+    """safe_git reads nothing in such a clone, so the guard cannot tell where a push goes."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "remote", "add", "origin", f"https://github.com/{UPSTREAM}"], check=True
+    )
+    subprocess.run(["git", "-C", str(tmp_path), "config", "core.pager", "cat"], check=True)
+    hook_input = {"tool_name": "Bash", "tool_input": {"command": "git push origin feature"}, "cwd": str(tmp_path)}
+    assert guard.answer(hook_input, UPSTREAM)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 # -- the roles themselves ----------------------------------------------------------------
@@ -150,6 +168,16 @@ async def test_starting_the_contribute_role_runs_a_guarded_session_in_the_users_
     hook = json.loads(call["settings"])["hooks"]["PreToolUse"][0]
     assert hook["matcher"] == "Bash" and "claude_voice.guard" in hook["hooks"][0]["command"]
     assert stopped["status"] == "stopped"  # the bridge may stop what it started
+
+
+async def test_a_launched_role_keeps_the_process_it_started_as(tmp_path, world):
+    """The role's claude process is fixed once, as it starts; a session file written later cannot move it."""
+    ready_clone(world)
+    async with Client(bridge(tmp_path, world, Starter(world[2]))) as c:
+        out = (await c.call_tool("start_role", {"role": "contribute"})).structured_content
+    held = Store(tmp_path / "b.db").get_setting("role:contribute")
+    assert held["id"] == out["claude_session_id"]
+    assert held["pid"] == PID and held["started"] == lineage.start_ticks(PID)
 
 
 async def test_an_unknown_role_is_refused(tmp_path, world):

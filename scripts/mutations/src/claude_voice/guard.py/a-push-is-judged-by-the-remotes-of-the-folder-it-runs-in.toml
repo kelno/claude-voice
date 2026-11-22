@@ -1,0 +1,5 @@
+[[rule]]
+name = "a push is judged by the remotes of the folder it runs in"
+file = "src/claude_voice/guard.py"
+find = '^        folder = words\[0\]\[1\]$'
+replace = '        folder = None'

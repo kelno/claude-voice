@@ -1,7 +1,7 @@
-"""Other machines: the hub's side of each `claude-voice agent`, and what Roy approved of it.
+"""Other machines: the hub's side of each `claude-voice agent`, and what the owner approved of it.
 
 A machine is named in the settings file's ``[machines.<name>]`` section with its tailnet
-address (ADR-CV-006). ``claude-voice machines approve <name>`` pairs with its agent: Roy
+address (ADR-CV-006). ``claude-voice machines approve <name>`` pairs with its agent: the owner
 types the code the agent shows, sees what it offers, and types the machine's name. The hub
 keeps the key the agent handed out, readable by its owner alone, and the approval: which
 tailnet node it is, and what each tool takes.
@@ -14,6 +14,7 @@ approved; a machine that does not answer within two seconds is reported, not wai
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
-from . import invocation, plugins, tailnet
+from . import access, invocation, plugins, tailnet
 from .config import MachineSpec, PluginSpec
 
 log = logging.getLogger("claude_voice")
@@ -71,7 +72,7 @@ def _write_private(target: Path, text: str) -> None:
 
 
 def tools_fingerprint(listing: dict[str, dict[str, Any]]) -> str:
-    """What Roy approved the machine to offer: each tool's name and what it takes."""
+    """What the owner approved the machine to offer: each tool's name and what it takes."""
     return plugins._hash({tool: found.get("schema") for tool, found in sorted(listing.items())})
 
 
@@ -108,7 +109,7 @@ async def pair(
     whois: Whois = tailnet.whois,
     folder: Path = FOLDER,
 ) -> dict[str, Any]:
-    """Pair with the agent on `spec`: Roy types its code, sees what it offers, types its name."""
+    """Pair with the agent on `spec`: the owner types its code, sees what it offers, types its name."""
     import httpx
 
     node = await _whois(whois, spec.address)
@@ -167,6 +168,7 @@ class Machine(plugins.Plugin):
         as_plugin = PluginSpec(spec.name, "", [], "", sorted(listing), spec.timeout)
         super().__init__(as_plugin, lambda params: None)
         self.machine, self.approval, self.key, self.http, self.whois = spec, approval, key, http, whois
+        self.access = access.Held()
 
     @contextlib.asynccontextmanager
     async def open(self) -> AsyncIterator[Any]:
@@ -179,7 +181,49 @@ class Machine(plugins.Plugin):
             # RULE: a machine whose tools changed is not called until approved again
             if tools_fingerprint(await _listing(client)) != tools_fingerprint(self.approval["listing"]):
                 raise Refused(f"{name} now offers other tools than you approved")
+            await self.read_access(client)
             yield client
+
+    async def read_access(self, client: Any) -> bool:
+        """Read what the machine allows now from its agent_info; False when it gave no answer."""
+        try:
+            answer = await client.call_tool("agent_info", {})
+        except Exception as exc:
+            log.info("machine %s: agent_info gave no answer: %s", self.machine.name, exc)
+            return False
+        self.access = access.read(answer.structured_content)
+        return True
+
+    async def _refresh(self) -> bool:
+        try:
+            answer = await plugins.Plugin.call(self, "agent_info", {})
+        except RuntimeError:
+            return False
+        self.access = access.read(answer.structured_content)
+        return True
+
+    async def call(self, tool: str, arguments: dict[str, Any]) -> Any:
+        """The tool's answer, with a warning when a use of its plugin was last reported off.
+        The warning never stops the call: the tool's own answer decides."""
+        try:
+            answer = await super().call(tool, arguments)
+        except RuntimeError as exc:
+            warning = await self._warning(tool)
+            raise RuntimeError(f"{exc}. {warning}" if warning else str(exc)) from None
+        warning = await self._warning(tool)
+        return _with_warning(answer, warning) if warning else answer
+
+    async def _warning(self, tool: str) -> str | None:
+        """After a call, what to warn about, from a fresh read when the tool was held as off."""
+        # RULE: a call to a tool held as off reads access again
+        fresh = await self._refresh() if self.access.off(tool) else True
+        return self.access.warning(self.machine.name, tool, fresh)
+
+    async def permissions(self) -> dict[str, Any]:
+        """Which permissions the machine's plugins have, read fresh when it answers."""
+        # RULE: the owners question reads access fresh
+        fresh = await self._refresh()
+        return self.access.answer(self.machine.name, fresh)
 
     def shown(self, answer: Any) -> Any:
         """The machine's answer without its own session numbers, which only it knows."""
@@ -191,6 +235,34 @@ class Machine(plugins.Plugin):
         if refused is not None:
             return f"{refused}; to approve it again, run on the hub: {invocation.command()} machines approve {name}"
         return f"{name} did not answer; it may be asleep, offline, or not running `claude-voice agent`"
+
+
+def _with_warning(answer: Any, warning: str) -> Any:
+    """The answer with the warning added: as a field of its object, or a line of its text."""
+    shown = copy.copy(answer)
+    if answer.is_error:
+        shown.content = _with_line(answer, warning)
+        return shown
+    if answer.structured_content is not None:
+        shown.structured_content = {**answer.structured_content, "warning": warning}
+        return shown
+    shown.content = _with_line(answer, warning)
+    found = plugins.as_object(_text(answer))
+    if found:
+        shown.structured_content = {**found, "warning": warning}
+    return shown
+
+
+def _with_line(answer: Any, line: str) -> list[Any]:
+    """The answer's content with one more line of text after it."""
+    from mcp.types import TextContent
+
+    return [*(answer.content or []), TextContent(type="text", text=line)]
+
+
+def _text(answer: Any) -> str:
+    """The text of the answer's content, one line per part."""
+    return "\n".join(getattr(c, "text", "") for c in answer.content or [] if getattr(c, "text", None))
 
 
 def without_numbers(body: Any) -> Any:
@@ -205,7 +277,7 @@ def without_numbers(body: Any) -> Any:
 
 
 class Refused(ConnectionError):
-    """A machine that answered, but not as the one Roy approved."""
+    """A machine that answered, but not as the one the owner approved."""
 
 
 def _refusal(exc: BaseException) -> Refused | None:
@@ -242,6 +314,26 @@ def start_approved(
             continue
         machine = Machine(spec, approval, key, http, whois)
         machine.offered = plugins.offer(server, machine, approval["listing"])
+        _offer_permissions(server, machine)
         started.append(machine)
         log.info("machine %s offers %s", spec.name, ", ".join(machine.offered))
     return started
+
+
+def _offer_permissions(server: Any, machine: Machine) -> None:
+    """Offer `<machine>_permissions`, which answers "which permissions does <machine> have?"."""
+    from mcp.types import ToolAnnotations
+
+    name = plugins.exposed_name(machine.machine.name, "permissions")
+    if name in machine.offered:
+        return
+    title = f"Which permissions {machine.machine.name} has"
+    marks = ToolAnnotations(read_only_hint=True)
+
+    async def permissions() -> dict[str, Any]:
+        """Which private things each plugin on the machine may use now, read fresh from it.
+        Advice only: a tool's own answer decides."""
+        return await machine.permissions()
+
+    server.tool(name=name, title=title, annotations=marks)(permissions)
+    machine.offered.append(name)

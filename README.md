@@ -268,7 +268,7 @@ also the default.
 | `CLAUDE_VOICE_PUBLIC_URL` | `https://<first public host>` | the address clients reach the bridge at |
 | `CLAUDE_VOICE_PUBLIC_HOSTS` | — | comma-separated hostnames the tunnel serves |
 | `CLAUDE_VOICE_HOST` / `_PORT` | `127.0.0.1` / `8811` | keep it on this computer and tunnel in |
-| `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Roy via stemmen` |
+| `CLAUDE_VOICE_COURIER_NAME` | `Owner via claude-voice` | the sender name a session sees when the voice messages it, e.g. `Owner via stemmen` |
 | `CLAUDE_VOICE_UI_ORIGINS` | — | comma-separated origins of a companion app served elsewhere, allowed to call the [event API](docs/event-api.md) across sites |
 | `CLAUDE_VOICE_UI_DIR` | — | a folder with a companion app's built files, served at `/ui/` |
 | `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
@@ -369,12 +369,66 @@ A note over ten minutes old is ignored, and the log says so. The reason is one o
 - `boot`, when the computer has been up under five minutes;
 - `unplanned`, for anything else, such as a plain `systemctl --user restart`.
 
+### Keep a project board in step
+
+`deploy/install.sh` also installs a timer that runs `claude-voice tracker sync` every five
+minutes, apart from the bridge. It keeps a GitHub project board in step with the open pull
+requests and issues of the repositories linked to that board. It uses your own `gh` login,
+which needs the `project` scope. Without a board in the settings file, a run does nothing:
+
+```console
+$ claude-voice tracker sync --dry-run
+claude-voice: no [tracker] board in the settings file; nothing to sync
+```
+
+To use it, name the board in `~/.config/claude-voice/config.toml`. `project_id` is the board's
+node id, which `gh project view <number> --owner <you> --format json` shows as `id`:
+
+```toml
+[tracker]
+owner = "your-login"
+board = 7
+project_id = "PVT_..."
+waiting = "Waiting on you"  # the column for what waits on you
+owner_merges = ["risky"]  # the tiers whose ready pull requests wait on you to merge
+```
+
+The board needs a Status field with the columns Backlog, To do, In progress, Waiting for
+review, Being reviewed, Changes requested, Ready to merge, the waiting column, Blocked and
+Done. It may have a Health field with one option, Stalled, and a "Blocked by" text field. A
+run reads the board and the open work in two queries, and sends only what changed. It writes
+no text: it adds existing pull requests and issues and sets their Status and Health, on that
+board only. A column the board does not have is left alone.
+
+- A draft pull request goes in **In progress**.
+- A ready pull request is placed by the reviewers' verdict files at its current head and by
+  its checks. It moves through **Waiting for review**, **Being reviewed** and **Changes
+  requested** to **Ready to merge**. A risky one goes in the waiting column instead, since
+  you merge it. Nobody merges because of a column: the merge checks the verdicts again.
+- An open issue with someone assigned goes in **In progress**. Unassigned again, it goes back
+  to **To do**.
+- An outside issue you have not labelled or answered yet goes in the waiting column.
+- **Backlog**, **To do** and **Blocked** are moved by hand, and stay. So does your own issue
+  moved to the waiting column.
+- Merged or closed work goes in **Done**.
+- Work that has gone quiet is flagged **Stalled** in Health. So is Blocked work with no reason.
+
+A reviewer starting a review claims it in its own verdict file, keeping the file's notes:
+
+```console
+$ claude-voice tracker claim demo-12.quality.json --by nobody --head 0000000000000000000000000000000000000000
+claude-voice: Refused: give your own verdict file's name, --by with your reviewer name, and --head with the full 40-character sha.
+```
+
+When fewer than 500 GraphQL points are left, a run does nothing, and the journal
+(`journalctl --user -u claude-voice-board`) says so once.
+
 ## Answer questions and approvals from the phone
 
 With the companion app open, a session's choice box or permission prompt can be
 answered on the phone instead of at the terminal. A hook in your Claude Code
 settings hands it to the bridge; with the app closed it steps aside and the box
-shows in the terminal as before. Install it once, with the bridge's own Python:
+shows in the terminal as before. Install it once, from the bridge's checkout:
 
 <!-- not run: changes the reader's Claude Code settings -->
 ```
@@ -382,7 +436,9 @@ uv run python -m claude_voice.phone_hook --install
 ```
 
 It merges two hooks into `~/.claude/settings.json`, keeps everything already
-there, and saves the old file as `settings.json.bak`. The app and the API answer
+there, and saves the old file as `settings.json.bak`. The hooks run the file
+itself with the system's `python3 -I -S`, so they load nothing but the standard
+library. Running it again replaces an older phone hook line. The app and the API answer
 only this computer and the tailnet, behind the login, and every answer is
 logged. Anyone signed in to the app can approve commands on this computer, so
 sign in only on your own devices.
@@ -481,6 +537,14 @@ and say what you want changed. It works in your own clone, makes a fork under
 your GitHub account if needed, runs the tests and opens a pull request here. It
 cannot push to this repository itself. [CONTRIBUTING.md](CONTRIBUTING.md) has
 the rules it follows, which apply to any change.
+
+A guard checks every push the session makes, by remote name, by address, and
+by any setting given on the command or in the environment. When this repository
+is your own, you can let a role work in it directly: add
+`push_mode = "own-clone"` to the role in your own roles file. The guard then
+checks that the clone pushes to the role's `upstream`, refuses the push when it
+does not, and asks you before every other push. Only your own roles file turns
+this on; the clone, the environment and the command cannot.
 
 ## Develop
 

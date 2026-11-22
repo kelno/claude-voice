@@ -72,4 +72,4 @@ Accepted by the owner of the kelno/claude-voice fork, 2026-10-29.
 
 ## Related
 
-`src/claude_voice/access.py`, `src/claude_voice/sessions.py`, `src/claude_voice/server.py`, README "How it behaves".
+`src/claude_voice/folder_access.py`, `src/claude_voice/sessions.py`, `src/claude_voice/server.py`, README "How it behaves".

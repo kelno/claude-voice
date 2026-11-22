@@ -15,7 +15,7 @@ import own_code
 
 def _checkout(where: pathlib.Path) -> pathlib.Path:
     (where / "src" / own_code.MODULE).mkdir(parents=True)
-    (where / "src" / own_code.MODULE / "__init__.py").write_text("")
+    (where / "src" / own_code.MODULE / "__init__.py").write_text("", encoding="utf-8")
     return where
 
 
@@ -31,7 +31,8 @@ def test_a_check_measures_only_this_checkout_s_own_code(tmp_path):
     hook = tmp_path / "hook"
     hook.mkdir()
     (hook / "sitecustomize.py").write_text(
-        f"import sys\nsys.path.insert(0, {str(elsewhere / 'src')!r})\nimport {own_code.MODULE}\nsys.path.pop(0)\n"
+        f"import sys\nsys.path.insert(0, {str(elsewhere / 'src')!r})\nimport {own_code.MODULE}\nsys.path.pop(0)\n",
+        encoding="utf-8",
     )
     env = {**os.environ, "PYTHONPATH": str(hook)}
     with pytest.raises(SystemExit) as refused:
@@ -41,7 +42,11 @@ def test_a_check_measures_only_this_checkout_s_own_code(tmp_path):
     assert str(here / "src") in said
 
 
-def test_a_checkout_whose_code_cannot_be_imported_is_refused(tmp_path):
+def test_a_checkout_whose_code_cannot_be_imported_is_refused(tmp_path, monkeypatch):
+    """Asked for a package nothing installs: `uv sync` installs this one, so it imports from anywhere."""
+    missing = "no_package_installs_this"
+    monkeypatch.setattr(own_code, "ASK", own_code.ASK.replace(own_code.MODULE, missing))
+    monkeypatch.setattr(own_code, "MODULE", missing)
     with pytest.raises(SystemExit, match="cannot import"):
         own_code.require(tmp_path, sys.executable, dict(os.environ))
 
