@@ -211,3 +211,40 @@ def _mark_trusted(key: str, config: Path) -> str:
     staged.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     os.replace(staged, config)
     return key
+
+
+def forget_gone_helpers(prefix: str, config: Path | None = None) -> int:
+    """Drop Claude Code's entries for the bridge's helper folders that are gone; say how many.
+
+    Claude Code writes an entry for every folder it runs in and never removes one, so each message
+    helper, which runs in a folder of its own, left one behind. Only an entry whose folder is named
+    `prefix`... and no longer exists goes. Claude Code rewrites the file while it runs, so the file
+    is replaced only if it is still as read; otherwise nothing is written and the next start tries
+    again. Never raises: a file that can't be read or written drops nothing.
+    """
+    config = config or claude_config()
+    try:
+        before = config.read_bytes()
+        data = json.loads(before.decode("utf-8"))
+    except (OSError, ValueError):
+        return 0
+    projects = data.get("projects") if isinstance(data, dict) else None
+    if not isinstance(projects, dict):
+        return 0
+    # RULE: only entries of helper folders that are gone are dropped
+    gone = [key for key in projects if Path(key).name.startswith(prefix) and not Path(key).exists()]
+    if not gone:
+        return 0
+    for key in gone:
+        del projects[key]
+    staged = config.with_name(f"{config.name}.claude-voice-{os.getpid()}")
+    try:
+        staged.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        if config.read_bytes() != before:  # Claude Code wrote it meanwhile: keep its version
+            staged.unlink()
+            return 0
+        os.replace(staged, config)
+    except OSError:
+        staged.unlink(missing_ok=True)
+        return 0
+    return len(gone)

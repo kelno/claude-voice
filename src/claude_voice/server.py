@@ -1769,6 +1769,9 @@ def build_server(
         with contextlib.suppress(Exception):
             if removed := transcripts.sweep_helper_folders():
                 log.info("removed %d helper folders a stopped bridge left behind", len(removed))
+            # And Claude Code's entries for them, which it never removes (fork: folder_access.py).
+            if forgotten := folder_access.forget_gone_helpers(transcripts.HELPER_PREFIX, claude_config):
+                log.info("dropped %d entries for gone helper folders from Claude Code's config", forgotten)
         # Watch running sessions between polls, so short-lived states are not missed.
         task = None
         if watch_interval:

@@ -1,0 +1,5 @@
+[[rule]]
+name = "only entries of helper folders that are gone are dropped"
+file = "src/claude_voice/folder_access.py"
+find = '^\s*gone = \[key for key in projects if Path\(key\)\.name\.startswith\(prefix\) and not Path\(key\)\.exists\(\)\]$'
+replace = 'gone = [key for key in projects if not Path(key).exists()]'
