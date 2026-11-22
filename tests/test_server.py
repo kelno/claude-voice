@@ -597,6 +597,8 @@ async def test_a_switched_off_upstream_tool_is_offered_to_no_one_but_keeps_its_p
         "answer_question",
         "list_pending_approvals",
         "list_replies",
+        "approver_boxes",
+        "approver_answer",
     }
     assert not SWITCHED_OFF & names
     assert all(titles.load().get(name) for name in SWITCHED_OFF)
