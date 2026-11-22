@@ -354,6 +354,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: each statement is prepared again on every call; the bridge's queries are few and small, so the cost doesn't show.
 - Test first: `test_a_read_from_one_thread_never_gets_another_threads_row` (three threads reading their own setting for 1.5 s) was written first and seen failing.
 
+### 24. Held folders swept on Windows too — fork "Sweep the helpers' folders on Windows too"
+
+- What: on Windows the held folder's lock is a file its holder keeps open (`os.open` without delete sharing), and the sweep removes a folder whose lock it can delete, or one with no lock past the grace time; links and junctions are never followed (`held_folder.py`).
+- Why upstream would want it: upstream runs on Windows too, where a killed bridge's helpers and the ratchet's runs leave their folders for good; here 606 piled up in under a month.
+- Expect pushback: deleting the lock is how the sweep asks whether it is held, which is a probe that acts; it only acts when nobody holds the lock. No owner is compared on Windows, where the temporary folder is the user's own.
+- Test first: `tests/test_held_folder_everywhere.py` was written first and seen failing on Windows.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.

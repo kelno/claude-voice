@@ -1,0 +1,5 @@
+[[rule]]
+name = "on Windows the lock is a file its holder keeps open"
+file = "src/claude_voice/held_folder.py"
+find = '^\s*self\._lock = os\.open\(self\.path / LOCK, os\.O_RDWR \| os\.O_CREAT \| os\.O_EXCL, 0o600\)$'
+replace = 'os.close(os.open(self.path / LOCK, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600))'

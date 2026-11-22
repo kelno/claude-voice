@@ -4,6 +4,8 @@ A kill runs no cleanup, so whatever a killed holder was working in stays behind.
 therefore keeps a lock open inside its folder, and whoever starts next sweeps away every
 folder of its kind whose lock nobody holds. A lock is held by an open file, not by a process
 number, so a holder in another process namespace, or a reused number, never fools the sweep.
+Where there is no flock (Windows), the lock is a file its holder keeps open, which Windows lets
+no one delete meanwhile: a lock the sweep can delete has no holder left.
 
 The bridge's message helpers and the quality ratchet both work this way.
 """
@@ -32,14 +34,17 @@ GRACE_SECONDS = 60 * 60
 class HeldFolder:
     """A new folder named `prefix` and some letters, locked until `remove`.
 
-    On Windows, which has no flock, the folder is made and removed but never swept.
+    On Windows, which has no flock, the lock is the open file itself.
     """
 
     def __init__(self, prefix: str, dir: Path | None = None) -> None:
         self.path = Path(tempfile.mkdtemp(prefix=prefix, dir=dir))
         self.name = str(self.path)
         self._lock: int | None = None
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            # RULE: on Windows the lock is a file its holder keeps open
+            self._lock = os.open(self.path / LOCK, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        else:
             import fcntl
 
             # Locked under another name, then renamed, so the lock's name never stands unlocked.
@@ -65,7 +70,7 @@ class HeldFolder:
 def left_behind(path: Path) -> bool:
     """Whether `path` is a held folder of this user's whose lock nobody holds."""
     if sys.platform == "win32":
-        return False
+        return _left_behind_on_windows(path)
     import fcntl
 
     try:
@@ -91,10 +96,26 @@ def left_behind(path: Path) -> bool:
     return True
 
 
+def _left_behind_on_windows(path: Path) -> bool:
+    """Whether `path` is a held folder whose lock nobody keeps open; the temporary folder there
+    is the user's own, so no owner is compared."""
+    try:
+        found = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISDIR(found.st_mode) or path.is_junction() or path.is_symlink():
+        return False  # a link or a junction is never followed
+    try:
+        os.unlink(path / LOCK)  # Windows refuses while the holder keeps it open
+    except FileNotFoundError:
+        return time.time() - found.st_mtime > GRACE_SECONDS
+    except OSError:
+        return False
+    return True
+
+
 def sweep(place: Path, prefix: str) -> list[str]:
     """Remove every folder in `place` named `prefix`... whose holder is gone; name each one."""
-    if sys.platform == "win32":
-        return []
     removed = []
     for path in sorted(place.glob(prefix + "*")):
         # RULE: a held folder a killed holder left is removed by the next sweep
