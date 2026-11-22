@@ -1496,7 +1496,7 @@ def build_server(
     wake_background: Callable[[str, str], Awaitable[str | None]] | None = None,
     background_sessions: Callable[[], Awaitable[set[str]]] | None = None,
     background_jobs: Callable[[], Awaitable[list[dict[str, Any]]]] | None = None,
-    claude_config: Path = folder_access.CLAUDE_CONFIG,
+    claude_config: Path | None = None,  # Claude Code's config file; None looks it up when written
     stop_background: Callable[[str], Awaitable[None]] = transcripts.stop_background,
     compact_stopped: Callable[[str, str, str | None], Awaitable[None]] = jobs.compact_stopped,
     stop_window: Callable[[int], None] = transcripts.stop_window,

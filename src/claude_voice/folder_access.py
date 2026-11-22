@@ -28,9 +28,6 @@ CREATE TABLE IF NOT EXISTS access_grants(folder TEXT PRIMARY KEY, granted_at REA
 
 HOME_SECRETS = (".ssh", ".gnupg", ".claude", ".config/claude-voice", "AppData")
 
-# Claude Code's own configuration file, which holds the workspace trust it saved per folder.
-CLAUDE_CONFIG = Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~").expanduser() / ".claude.json"
-
 
 def default_denied(home: Path | None = None) -> list[Path]:
     """The folders kept closed: secrets under the home folder, and the system's own."""
@@ -173,7 +170,16 @@ def trust_root(folder: Path) -> Path:
     return folder
 
 
-def trust_in_claude_code(folder: str | Path, config: Path = CLAUDE_CONFIG) -> str:
+def claude_config() -> Path:
+    """Claude Code's own configuration file, which holds the workspace trust it saved per folder.
+
+    Looked up each time it is written, not once at import: a home or CLAUDE_CONFIG_DIR set later
+    counts, so a test with a home of its own never writes the owner's real file.
+    """
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or "~").expanduser() / ".claude.json"
+
+
+def trust_in_claude_code(folder: str | Path, config: Path | None = None) -> str:
     """Mark a folder trusted in Claude Code, as its docs say to do by hand; returns the key set.
 
     Claude Code refuses to start a background session in a folder it was never trusted in, and
@@ -182,14 +188,14 @@ def trust_in_claude_code(folder: str | Path, config: Path = CLAUDE_CONFIG) -> st
     in the file is kept, and the file is replaced in one step, so a reader never sees half of it.
     Raises OSError or ValueError when the file can't be read or written.
     """
-    return _mark_trusted(trust_root(Path(folder).resolve()).as_posix(), config)
+    return _mark_trusted(trust_root(Path(folder).resolve()).as_posix(), config or claude_config())
 
 
-def trust_new_folder(folder: str | Path, config: Path = CLAUDE_CONFIG) -> str:
+def trust_new_folder(folder: str | Path, config: Path | None = None) -> str:
     """Mark a folder the bridge has just made trusted in Claude Code: that folder alone, even inside
     a repository, since the owner approved trust only for it. Returns the key set; raises OSError or
     ValueError when Claude Code's config file can't be read or written."""
-    return _mark_trusted(Path(folder).resolve().as_posix(), config)
+    return _mark_trusted(Path(folder).resolve().as_posix(), config or claude_config())
 
 
 def _mark_trusted(key: str, config: Path) -> str:
