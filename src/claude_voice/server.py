@@ -291,8 +291,8 @@ SWITCHED_OFF = frozenset(
         # whats_new, is retired here, and the fork's session tools don't take `ack`.
         "list_replies",
         # Upstream's approver role, new at the 2026-11-22 resync: a session launched as the approver
-        # lists the approval boxes other sessions wait on and answers the routine ones. Off until the
-        # owner decides; upstream also keeps it off until `[approver] on = true`.
+        # lists the approval boxes other sessions wait on and answers the routine ones. Off: the
+        # owner said no (2026-11-23); upstream also keeps it off until `[approver] on = true`.
         "approver_boxes",
         "approver_answer",
     }
