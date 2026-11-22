@@ -1,0 +1,5 @@
+[[rule]]
+name = "a read from one thread never gets another threads row"
+file = "src/claude_voice/store.py"
+find = 'self\.db = sqlite3\.connect\(path, check_same_thread=False, factory=OneWriterAtATime, cached_statements=0\)'
+replace = 'self.db = sqlite3.connect(path, check_same_thread=False, factory=OneWriterAtATime)'

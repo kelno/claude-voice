@@ -109,7 +109,9 @@ class Store:
             path = Path(path).expanduser()
         self.clock = clock
         # RULE: a write from one thread never lands inside another
-        self.db = sqlite3.connect(path, check_same_thread=False, factory=OneWriterAtATime)
+        # RULE: a read from one thread never gets another threads row
+        # No statement cache: it hands threads running the same SQL one prepared statement.
+        self.db = sqlite3.connect(path, check_same_thread=False, factory=OneWriterAtATime, cached_statements=0)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
 

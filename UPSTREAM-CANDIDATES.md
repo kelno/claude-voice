@@ -347,6 +347,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: reading Claude Code's words in the conversation is not a documented interface; copying desktop sessions suits an owner who never uses them, so upstream may want it behind a setting, off by default.
 - Test first: `tests/test_app_sync.py` was written first and seen failing.
 
+### 23. No statement cache on the shared database connection — fork "Keep threads from reading each other's rows from the bridge's database"
+
+- What: the store's one connection, shared by threads (`check_same_thread=False`), is opened with `cached_statements=0` (`store.py`; upstream's `store.py:135`). sqlite3's statement cache hands threads running the same SQL one prepared statement, so they get each other's rows, none, or an error; the lock on writes doesn't cover reads.
+- Why upstream would want it: sync tools run in worker threads and the watcher reads from its own, so any two overlapping reads can cross. Here it crashed `list_claude_conversations` 12 times on 2026-11-22, and `start_active_session` and `fleet_recap` before (in `access.granted`); it can also silently swap or drop a setting, a session number or a rename (fork review COR-1, 2026-11-19).
+- Expect pushback: each statement is prepared again on every call; the bridge's queries are few and small, so the cost doesn't show.
+- Test first: `test_a_read_from_one_thread_never_gets_another_threads_row` (three threads reading their own setting for 1.5 s) was written first and seen failing.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.

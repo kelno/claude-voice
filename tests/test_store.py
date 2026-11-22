@@ -54,3 +54,35 @@ def test_a_write_from_one_thread_never_lands_inside_another(tmp_path):
         thread.join(10)
     assert store.get_setting("half") is None
     assert store.get_setting("whole") == 2
+
+
+def test_a_read_from_one_thread_never_gets_another_threads_row(tmp_path):
+    # The bridge reads its one connection from several threads at once (sync tools, the watcher,
+    # list_claude_conversations). With sqlite3's statement cache, threads running the same SQL share
+    # one prepared statement and get each other's rows, or none (fork review COR-1, 2026-11-19).
+    import threading
+    import time
+
+    store = Store(tmp_path / "s.db")
+    keys = [f"key-{n}" for n in range(3)]
+    for key in keys:
+        store.set_setting(key, key)
+    wrong: list[str] = []
+    until = time.monotonic() + 1.5
+
+    def read(key):
+        while time.monotonic() < until and not wrong:
+            try:
+                got = store.get_setting(key)
+            except Exception as exc:  # a shared statement also fails outright
+                wrong.append(f"{key}: {exc!r}")
+                return
+            if got != key:
+                wrong.append(f"{key}: got {got!r}")
+
+    threads = [threading.Thread(target=read, args=(key,)) for key in keys]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert wrong == []
