@@ -282,6 +282,9 @@ SWITCHED_OFF = frozenset(
         # owner said no (2026-11-23); upstream also keeps it off until `[approver] on = true`.
         "approver_boxes",
         "approver_answer",
+        # Upstream's question to the bridge about how its last update went, new at the 2026-11-26
+        # resync: off until the owner decides.
+        "update_status",
     }
 )
 # The states of a followed session that keep the relay waiting on it: still working on its

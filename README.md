@@ -102,7 +102,6 @@ the bridge says which are missing, with the exact fix, through its
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
 | `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
-| `update_status` | how the latest update is going or how it ended: its step, whether it was rolled back, and why |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher, and whether developer mode is on |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |

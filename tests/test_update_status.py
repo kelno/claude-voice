@@ -102,6 +102,7 @@ def bridge(tmp_path):
         update_log=tmp_path / "update.json",
         launch_update=lambda repo, log: None,
         bridge_folder=tmp_path,
+        switched_off=frozenset(),  # the fork switches update_status off; these test upstream's code
     )
 
 
