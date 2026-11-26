@@ -13,7 +13,7 @@ from mcp.client import Client
 from test_launch import Starter, bridge
 from test_rename import Recorder, call, names, write
 
-from claude_voice import renames
+from claude_voice import every_session, renames
 from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
@@ -151,6 +151,38 @@ async def test_a_name_that_differs_only_by_the_asterisk_is_in_use(tmp_path, root
     assert res.is_error and "in use" in res.content[0].text
 
 
+async def test_an_agent_cannot_take_the_asterisk_off_with_a_status(tmp_path, root, live):
+    # An asterisk inside the round brackets would otherwise go with the "status" an agent may drop.
+    session(live, root, "Phone (mine*)")
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "Phone (mine*)", "new_name": "Phone"})
+    assert res.is_error and "owner chose" in res.content[0].text
+
+
+def test_a_session_s_own_name_is_found_before_another_s_old_name():
+    # Once the Coordinator is "Coordinator*", a session that was once called "Coordinator" must not
+    # take its messages.
+    rows = [
+        {"name": "Payroll", "sessionId": "b", "aliases": ["Coordinator"]},
+        {"name": "Coordinator*", "sessionId": "a"},
+    ]
+    assert renames.find(rows, "Coordinator")["sessionId"] == "a"
+    assert renames.find(rows, "Payroll")["sessionId"] == "b"
+
+
+def test_a_session_not_running_is_found_by_the_newest_that_had_its_name(tmp_path):
+    # config.toml wakes "Arborist" at each start; older sessions named exactly that must not win
+    # over the one now called "Arborist*".
+    store = Store(tmp_path / "b.db")
+    store.record_started("old-id", "Arborist", str(tmp_path))
+    record = tmp_path / "jobs" / "new" / "state.json"
+    record.parent.mkdir(parents=True)
+    newer = {"sessionId": "new-id", "name": "Arborist*", "cwd": str(tmp_path), "updatedAt": "2099-01-01T00:00:00Z"}
+    record.write_text(json.dumps(newer), encoding="utf-8")
+    assert every_session.known(store, "Arborist", tmp_path / "jobs")["claude_session_id"] == "new-id"
+    assert every_session.known(store, "old-id", tmp_path / "jobs")["name"] == "Arborist"
+
+
 @pytest.fixture
 def world(tmp_path):
     """A folder to start sessions in, as tests/test_launch.py sets it up."""
@@ -185,6 +217,55 @@ async def test_only_the_owner_starts_a_session_under_a_name_with_an_asterisk(wor
         ).structured_content
     assert agents.is_error and "asterisk" in agents.content[0].text
     assert owners["name"] == "Inv*" and starter.calls == ["Inv*"]
+
+
+async def test_a_start_never_cuts_the_asterisk_off_a_name(world):
+    starter = StarredStarter(world / "live")
+    async with Client(bridge(world, starter)) as c:
+        res = await c.call_tool(
+            "start_active_session", {"folder": "billing", "name": "x" * 60 + "*", "owner_chose": True}
+        )
+    assert res.is_error and "asterisk" in res.content[0].text and starter.calls == []
+
+
+def resuming(tmp_path, world, title):
+    """A bridge that can resume one earlier conversation, whose name Claude Code keeps as `title`."""
+    from claude_agent_sdk import SDKSessionInfo
+    from fakes import FakeClaude
+    from test_server import FakeConversations
+    from test_start import OLD
+
+    billing = world / "home" / "billing"
+    m = SessionManager(Store(world / "b.db"), project_root=world / "home", client_factory=FakeClaude())
+    talk = SDKSessionInfo(
+        session_id=OLD, summary="hi", last_modified=0, cwd=str(billing), first_prompt="hi", custom_title=title
+    )
+    starter = StarredStarter(world / "live")
+    return (
+        build_server(
+            m,
+            conversations=FakeConversations([talk]),
+            live_dir=world / "live",
+            start_background=starter,
+            start_seconds=1.0,
+        ),
+        starter,
+        OLD,
+    )
+
+
+async def test_only_the_owner_resumes_a_session_under_a_name_with_an_asterisk(world):
+    bridge_, starter, old = resuming(world, world, "Invoices")
+    async with Client(bridge_) as c:
+        res = await c.call_tool("attach_conversation", {"claude_session_id": old, "label": "Invoices*"})
+    assert res.is_error and "asterisk" in res.content[0].text and starter.calls == []
+
+
+async def test_an_agent_cannot_resume_the_owners_session_under_another_name(world):
+    bridge_, starter, old = resuming(world, world, "Invoices*")
+    async with Client(bridge_) as c:
+        res = await c.call_tool("attach_conversation", {"claude_session_id": old, "label": "Payroll"})
+    assert res.is_error and "owner chose" in res.content[0].text and starter.calls == []
 
 
 async def rows(c):

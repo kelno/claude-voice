@@ -1,5 +1,0 @@
-[[rule]]
-name = "only the owner starts a session under a name with an asterisk"
-file = "src/claude_voice/server.py"
-find = 'if name and renames\.is_marked\(name\) and not owner_chose:'
-replace = 'if False:'

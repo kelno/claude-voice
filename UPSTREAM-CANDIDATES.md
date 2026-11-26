@@ -162,9 +162,9 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why: the assistant names a session at start and could never change its mind.
 - Expect pushback: it writes Claude Code's internal state, an undocumented format found by reading Claude Code's code (`jobStateNameSync`), which may change with any release. Tests: `tests/test_rename.py`.
 
-### 6g. Session names that show which are the owner's — fork "Keep session names current and mark the ones an agent chose", "Remove the bridge's hourly name check", "Protect the session names the owner marks with an asterisk"
+### 6g. Session names that show which are the owner's — fork "Keep session names current and mark the ones an agent chose", "Remove the bridge's hourly name check", "Protect the session names the owner marks with an asterisk", "Hold the owner's asterisk at a resume, a status and a lookup"
 
-- What: a name with an asterisk anywhere in it is the owner's, and only `owner_chose` renames it or gives a name an asterisk (`rename_session`, `start_active_session`); others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. Name lookup ignores the asterisk. Claude Code's `nameSource` can't tell a title given at launch from a name the owner gave, so the mark lives in the name itself.
+- What: a name with an asterisk anywhere in it is the owner's, and only `owner_chose` renames it or gives a name an asterisk (`rename_session`, `start_active_session`, `attach_conversation`); others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. Name lookup ignores the asterisk. Claude Code's `nameSource` can't tell a title given at launch from a name the owner gave, so the mark lives in the name itself.
 - Why: names drift from what sessions do, and someone who remembers a name finds it gone.
 - Expect pushback: an asterisk inside the name is a convention, and a new tool; upstream may prefer a field on the session. Builds on 6t. Tests: `tests/test_name_upkeep.py`, the news one in `tests/test_news.py`.
 

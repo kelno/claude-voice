@@ -1,5 +1,5 @@
 [[rule]]
 name = "a background session the owner started is known from its job record too"
 file = "src/claude_voice/every_session.py"
-find = 'records = job_records\(jobs_dir\)'
-replace = 'records = []'
+find = 'sessions = \[\*_started\(store\), \*_job_records\(jobs_dir\)\]'
+replace = 'sessions = [*_started(store)]'

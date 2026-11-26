@@ -1,5 +1,0 @@
-[[rule]]
-name = "a session not running is found by its name the way a running one is"
-file = "src/claude_voice/every_session.py"
-find = 'return by_spoken_name\(store, session, records\)'
-replace = 'return None'

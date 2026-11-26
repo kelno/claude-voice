@@ -50,6 +50,21 @@ def owners(d: dict[str, Any]) -> bool:
     return is_marked(str(d.get("name") or ""))
 
 
+def refused(old: str, new: str) -> str | None:
+    """Why an agent, without the owner's say (owner_chose), may not change a session's name from
+    `old` to `new`, at a rename, a start (`old` empty) or a resume: "asterisk" when it would give the
+    name an asterisk, "owners" when `old` is the owner's; None when it may."""
+    if new == old:
+        return None
+    # RULE: only the owner gives a session name an asterisk
+    if is_marked(new) and not is_marked(old):
+        return "asterisk"
+    # RULE: an agent cannot rename a session the owner named
+    if is_marked(old) and not (is_marked(new) and only_status(old, new)):
+        return "owners"
+    return None
+
+
 # A status in round brackets at the end of a name, such as " (waiting)".
 STATUS = re.compile(r"\s+\([^()]*\)$")
 
@@ -103,23 +118,25 @@ def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: b
 
 
 class Ambiguous(LookupError):
-    """A name that, its capitals aside, names more than one running session."""
+    """A name that, its capitals and asterisk aside, names more than one running session."""
 
     def __init__(self, session: str, names: list[str]) -> None:
         listed = ", ".join(repr(n) for n in names)
-        super().__init__(f"{session!r} could be any of {listed}, which differ only by capitals")
+        super().__init__(f"{session!r} could be any of {listed}, which differ only by capitals or an asterisk")
         self.names = names
 
 
 def find(rows: list[dict[str, Any]], session: str) -> dict[str, Any] | None:
-    """The running session `session` names: its own name first, then a name it had; then the same
-    whatever the capitals, as a name said aloud comes back with the capitals the transcription chose.
-    Raises Ambiguous when, capitals aside, it names more than one session and none exactly."""
+    """The running session `session` names: by its own name, exactly, then whatever the capitals and
+    the asterisk, as a name said aloud comes back with the capitals the transcription chose and no
+    asterisk; only then by a name it had, the same way, so another session's old name never beats a
+    session's own ("Coordinator" finds "Coordinator*" before the session once called "Coordinator").
+    Raises Ambiguous when, capitals and asterisk aside, it names more than one session and none exactly."""
     for old_names in (False, True):
-        for d in rows:
-            if called(d, session, old_names):
-                return d
-    for old_names in (False, True):
+        # RULE: a session's own name is found before another's old name
+        exact = next((d for d in rows if called(d, session, old_names)), None)
+        if exact is not None:
+            return exact
         found = [d for d in rows if called(d, session, old_names, any_case=True)]
         # RULE: names that differ only by capitals are all refused unless one is exact
         if len(found) > 1:

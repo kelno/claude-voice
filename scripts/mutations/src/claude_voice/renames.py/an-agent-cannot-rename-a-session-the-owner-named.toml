@@ -1,0 +1,5 @@
+[[rule]]
+name = "an agent cannot rename a session the owner named"
+file = "src/claude_voice/renames.py"
+find = 'if is_marked\(old\) and not \(is_marked\(new\) and only_status\(old, new\)\):'
+replace = 'if False:'

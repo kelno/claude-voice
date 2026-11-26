@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session's own name is found before another's old name"
+file = "src/claude_voice/renames.py"
+find = 'exact = next\(\(d for d in rows if called\(d, session, old_names\)\), None\)'
+replace = 'exact = next((d for d in rows if called(d, session, True)), None)'

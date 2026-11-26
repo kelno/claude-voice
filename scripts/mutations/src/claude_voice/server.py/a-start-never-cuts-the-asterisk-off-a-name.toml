@@ -1,0 +1,5 @@
+[[rule]]
+name = "a start never cuts the asterisk off a name"
+file = "src/claude_voice/server.py"
+find = 'if renames\.is_marked\(name or ""\) and not renames\.is_marked\(cut\):'
+replace = 'if False:'
