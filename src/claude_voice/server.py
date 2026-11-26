@@ -614,7 +614,8 @@ Sessions
   the bridge finds it either way. A name the owner gives, or agrees to when a
   session proposes one (it shows in your news), goes to rename_session,
   start_active_session or attach_conversation (its label) with owner_chose
-  true, with an asterisk only when the owner asks for one.
+  true. A new name gets an asterisk only when the owner asks for one; a
+  rename of a name that has one keeps it, unless the owner says to drop it.
 
 Confirmations
 - A session that needs the owner's OK past Claude Code's own blocks asks with
