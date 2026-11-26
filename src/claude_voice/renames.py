@@ -26,7 +26,16 @@ def clean(name: str) -> str:
     """A session name on one line: control characters become spaces, runs of spaces one, at most
     LONGEST characters. The fork takes any visible text, as a start does: upstream's narrower names
     were for typing into tmux, which the fork never does."""
-    return " ".join("".join(" " if not ch.isprintable() else ch for ch in name).split())[:LONGEST].strip()
+    return shortened(" ".join("".join(" " if not ch.isprintable() else ch for ch in name).split()))
+
+
+def shortened(name: str, longest: int = LONGEST) -> str:
+    """`name` within `longest` characters, its asterisk kept: a name cut short stays the owner's."""
+    cut = name[:longest].strip()
+    # RULE: a name cut short keeps its asterisk
+    if is_marked(name) and not is_marked(cut):
+        cut = cut[: longest - len(MARK)].rstrip() + MARK
+    return cut
 
 
 def valid(name: str) -> bool:

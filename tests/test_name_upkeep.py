@@ -219,13 +219,43 @@ async def test_only_the_owner_starts_a_session_under_a_name_with_an_asterisk(wor
     assert owners["name"] == "Inv*" and starter.calls == ["Inv*"]
 
 
-async def test_a_start_never_cuts_the_asterisk_off_a_name(world):
+def test_a_name_cut_short_keeps_its_asterisk():
+    assert renames.clean("x" * 70 + "*") == "x" * 63 + "*"
+    assert renames.shortened("Billing exports" + " x" * 30 + "*", 20) == "Billing exports x x*"
+    assert renames.clean("x" * 70) == "x" * 64
+
+
+async def test_a_start_keeps_the_asterisk_of_a_long_name(world):
+    # The start cuts a name shorter than a rename does, to leave room for a suffix.
     starter = StarredStarter(world / "live")
     async with Client(bridge(world, starter)) as c:
-        res = await c.call_tool(
-            "start_active_session", {"folder": "billing", "name": "x" * 60 + "*", "owner_chose": True}
-        )
-    assert res.is_error and "asterisk" in res.content[0].text and starter.calls == []
+        out = (
+            await c.call_tool(
+                "start_active_session", {"folder": "billing", "name": "x" * 62 + "*", "owner_chose": True}
+            )
+        ).structured_content
+    assert out["name"] == "x" * 58 + "*" and starter.calls == [out["name"]]
+
+
+def test_a_session_not_running_is_found_by_its_own_name_before_another_s_old_name(tmp_path):
+    # A session once called "Coordinator*" that stopped after the one called so now must not be woken
+    # in its place.
+    store = Store(tmp_path / "b.db")
+    store.record_started("now-id", "Coordinator*", str(tmp_path))
+    store.record_started("once-id", "Coordinator*", str(tmp_path))
+    store.rename("once-id", "Coordinator*", "Old coordinator", ["Coordinator*"])
+    record = tmp_path / "jobs" / "once" / "state.json"
+    record.parent.mkdir(parents=True)
+    later = {
+        "sessionId": "once-id",
+        "name": "Old coordinator",
+        "cwd": str(tmp_path),
+        "updatedAt": "2099-01-01T00:00:00Z",
+    }
+    record.write_text(json.dumps(later), encoding="utf-8")
+    for said in ("Coordinator", "Coordinator*"):
+        assert every_session.known(store, said, tmp_path / "jobs")["claude_session_id"] == "now-id"
+    assert every_session.known(store, "Old coordinator", tmp_path / "jobs")["claude_session_id"] == "once-id"
 
 
 def resuming(tmp_path, world, title):
@@ -261,11 +291,22 @@ async def test_only_the_owner_resumes_a_session_under_a_name_with_an_asterisk(wo
     assert res.is_error and "asterisk" in res.content[0].text and starter.calls == []
 
 
-async def test_an_agent_cannot_resume_the_owners_session_under_another_name(world):
+async def test_an_agent_cannot_resume_the_owner_s_session_under_another_name(world):
     bridge_, starter, old = resuming(world, world, "Invoices*")
     async with Client(bridge_) as c:
         res = await c.call_tool("attach_conversation", {"claude_session_id": old, "label": "Payroll"})
     assert res.is_error and "owner chose" in res.content[0].text and starter.calls == []
+    assert "without a label" in res.content[0].text
+
+
+async def test_a_name_the_bridge_alone_keeps_is_the_owners_at_a_resume(world):
+    # A session in a window renamed by voice keeps the owner's name in the bridge only; Claude Code's
+    # title for it is still its own.
+    bridge_, starter, old = resuming(world, world, "billing-1a2b")
+    Store(world / "b.db").rename(old, "billing-1a2b", "Billing*", ["billing-1a2b"])
+    async with Client(bridge_) as c:
+        res = await c.call_tool("attach_conversation", {"claude_session_id": old, "label": "Payroll"})
+    assert res.is_error and "Billing*" in res.content[0].text and starter.calls == []
 
 
 async def rows(c):

@@ -51,8 +51,9 @@ def refusal(d: dict[str, Any], folder_open: bool) -> dict[str, Any] | None:
 
 def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
     """A session that isn't running, by its id, or by its name as a relay says it (in other capitals,
-    without the asterisk, or a name it had before): the newest that had it, so a name used again
-    finds the conversation behind it now, not an older one that once had it exactly. From the
+    without the asterisk), the newest that had it, so a name used again finds the conversation
+    behind it now, not an older one that once had it exactly; only then by a name it had before,
+    so another session's old name never beats a session's own, as for a running one. From the
     bridge's own record of what it started and from Claude Code's job records, which every
     background session has. Same shape as Store.started_session."""
     from . import renames  # a part beside this one: imported when needed, not when loaded
@@ -61,11 +62,14 @@ def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
     # RULE: a background session the owner started is known from its job record too
     sessions = [*_started(store), *_job_records(jobs_dir)]
     # RULE: a session not running is found by the newest that had its name
-    for _, found in sorted(sessions, key=lambda pair: pair[0], reverse=True):
-        sid = found["claude_session_id"]
-        row = {"sessionId": sid, "name": found["name"], "aliases": old.get(sid, [])}
-        if renames.called(row, session, old_names=True, any_case=True):
-            return found
+    newest_first = sorted(sessions, key=lambda pair: pair[0], reverse=True)
+    # RULE: a session not running is found by its own name before another's old name
+    for old_names in (False, True):
+        for _, found in newest_first:
+            sid = found["claude_session_id"]
+            row = {"sessionId": sid, "name": found["name"], "aliases": old.get(sid, [])}
+            if renames.called(row, session, old_names=old_names, any_case=True):
+                return found
     return None
 
 

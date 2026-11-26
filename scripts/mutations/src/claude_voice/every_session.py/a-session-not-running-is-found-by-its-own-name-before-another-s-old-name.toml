@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session not running is found by its own name before another's old name"
+file = "src/claude_voice/every_session.py"
+find = 'for old_names in \(False, True\):'
+replace = 'for old_names in (True,):'

@@ -174,7 +174,12 @@ def session_note(sender: str, waits: bool) -> str:
 OWNERS_NAME_REFUSAL = (
     'The owner chose the name "{name}", as its asterisk shows, so only the owner renames it: propose the new name with '
     "propose_session_name instead. The relay puts it to the owner, and renames with owner_chose true once "
-    'they agree. Adding or dropping a status in round brackets at its end, such as "{name} (busy)", needs no one.'
+    'they agree. Adding or dropping a status in round brackets at its end, such as "{name} (busy)", needs no one, '
+    "as long as the asterisk stays."
+)
+OWNERS_LABEL_REFUSAL = (
+    'The owner chose the name "{name}", as its asterisk shows, so only the owner renames it: resume it without a '
+    "label, or pass owner_chose true if the owner asked for this one."
 )
 # A name proposal is shown for this long, or until the session is renamed.
 NAME_PROPOSAL_SECONDS = 24 * 3600.0
@@ -194,8 +199,9 @@ ATTACH_OWNER_CHOSE_PARAM = (
     "True only for a label the owner chose or agreed to. Needed for a label with an asterisk, which marks a "
     "name as the owner's, or to resume under another label a conversation whose name has one."
 )
-# A start leaves room in Claude Code's 64 characters for the suffix that keeps its name unique.
-START_LONGEST = 60
+# A start leaves room in Claude Code's 64 characters for the suffix ("-" and 4 hex digits) that
+# keeps its name unique.
+START_LONGEST = renames.LONGEST - 5
 START_OWNER_CHOSE_PARAM = (
     "True only for a name the owner chose or agreed to. Needed for a name with an asterisk, which marks it as the "
     "owner's."
@@ -606,9 +612,9 @@ Sessions
 - A session name with an asterisk, such as Billing*, is the owner's: only the
   owner adds one, and agents don't rename it. Say it without the asterisk;
   the bridge finds it either way. A name the owner gives, or agrees to when a
-  session proposes one (it shows in your news), goes to rename_session or
-  start_active_session with owner_chose true, with an asterisk only when the
-  owner asks for one.
+  session proposes one (it shows in your news), goes to rename_session,
+  start_active_session or attach_conversation (its label) with owner_chose
+  true, with an asterisk only when the owner asks for one.
 
 Confirmations
 - A session that needs the owner's OK past Claude Code's own blocks asks with
@@ -3079,13 +3085,7 @@ def build_server(
     ) -> dict[str, Any]:
         """Start a session in `path` under a free name, where the settings say unless this start
         asks otherwise, and wait until it is listed."""
-        cut = (name or "").strip()[:START_LONGEST]
-        # RULE: a start never cuts the asterisk off a name
-        if renames.is_marked(name or "") and not renames.is_marked(cut):
-            raise ToolError(
-                f"A session name at a start takes {START_LONGEST} characters at most, and this one's asterisk"
-                " comes after them: shorten it."
-            )
+        cut = renames.shortened((name or "").strip(), START_LONGEST)
         wanted = renames.unique(cut or f"{path.name}-{secrets.token_hex(2)}", renames.taken(live_sessions()))
         if start_in is not None and start_in not in config.LAUNCHES:
             raise ToolError(f"start_in is one of: {', '.join(config.LAUNCHES)}")
@@ -3754,9 +3754,11 @@ def build_server(
         copied_from names the original (say so); claude_code_note is Claude Code's own remark;
         app_url is the link that opens it in the Claude app."""
         if label is not None and not owner_chose:
-            # Its name before: the title Claude Code keeps for it.
-            was = next((c for c in conversations(limit=1000) if c.session_id == claude_session_id), None)
-            refuse_name(str(was.custom_title or "") if was else "", renames.clean(label))
+            # RULE: an agent cannot resume the owner's session under another name
+            was = name_before(claude_session_id)
+            if renames.refused(was, renames.clean(label)) == "owners":
+                raise ToolError(OWNERS_LABEL_REFUSAL.format(name=was))
+            refuse_name(was, renames.clean(label))
         original = claude_session_id
         claude_session_id = app_sync.resumed_id(original, desktop_copies())
         if claude_session_id != original:
@@ -4440,6 +4442,19 @@ def build_server(
         claude_code, note = rename_in_claude(target, claude_name, new_name)
         log.info("renamed %s -> %s (%s); Claude Code: %s", old, new_name, sid, claude_code)
         return {"name": new_name, "was": old, "claude_session_id": sid, "claude_code": claude_code, "note": note}
+
+    def name_before(claude_session_id: str) -> str:
+        """The name a conversation that isn't running had: the owner's, when any of the names it is known by
+        holds the asterisk (the bridge's own, a rename in a window being the bridge's only, its job record's,
+        or Claude Code's title for it), otherwise the bridge's or Claude Code's."""
+        store = manager.store
+        names = [store.renamed().get(claude_session_id, (None, None))[1]]
+        found = every_session.known(store, claude_session_id, jobs_dir)
+        names.append(found["name"] if found else None)
+        talk = next((c for c in conversations(limit=1000) if c.session_id == claude_session_id), None)
+        names.append(talk.custom_title if talk else None)
+        names = [str(n) for n in names if n]
+        return next((n for n in names if renames.is_marked(n)), names[0] if names else "")
 
     def refuse_name(old: str, new: str) -> None:
         """Refuse a name an agent may not give without the owner's say (renames.refused)."""

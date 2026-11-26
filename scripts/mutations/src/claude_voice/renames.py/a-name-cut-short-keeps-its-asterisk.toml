@@ -1,0 +1,5 @@
+[[rule]]
+name = "a name cut short keeps its asterisk"
+file = "src/claude_voice/renames.py"
+find = 'if is_marked\(name\) and not is_marked\(cut\):'
+replace = 'if False:'

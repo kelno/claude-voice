@@ -1,5 +1,5 @@
 [[rule]]
 name = "a session not running is found by the newest that had its name"
 file = "src/claude_voice/every_session.py"
-find = 'for _, found in sorted\(sessions, key=lambda pair: pair\[0\], reverse=True\):'
-replace = 'for _, found in sorted(sessions, key=lambda pair: pair[0]):'
+find = 'newest_first = sorted\(sessions, key=lambda pair: pair\[0\], reverse=True\)'
+replace = 'newest_first = sorted(sessions, key=lambda pair: pair[0])'
