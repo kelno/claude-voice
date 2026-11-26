@@ -3742,7 +3742,7 @@ def build_server(
     async def attach_conversation(
         claude_session_id: Annotated[str, Field(description="The conversation's id, from list_claude_conversations.")],
         folder: Annotated[str | None, Field(description="Its folder; left out, the folder it ran in.")] = None,
-        label: Annotated[str | None, Field(description="The name it runs under; left out, its title.")] = None,
+        label: Annotated[str | None, Field(description="The name it runs under; left out, the name it had.")] = None,
         owner_chose: Annotated[bool, Field(description=ATTACH_OWNER_CHOSE_PARAM)] = False,
     ) -> dict[str, Any]:
         """Resume an earlier conversation on Remote Control; then talk to it.
@@ -3763,6 +3763,9 @@ def build_server(
         claude_session_id = app_sync.resumed_id(original, desktop_copies())
         if claude_session_id != original:
             label = None  # the copy runs under its own name
+        elif label is None:
+            # RULE: a resume without a label keeps the name it had
+            label = name_before(claude_session_id) or None
         live = next((d for d in live_sessions() if d.get("sessionId") == claude_session_id), None)
         # RULE: a conversation still running is not started again
         if live is not None:

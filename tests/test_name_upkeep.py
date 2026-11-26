@@ -181,6 +181,11 @@ def test_a_session_not_running_is_found_by_the_newest_that_had_its_name(tmp_path
     record.write_text(json.dumps(newer), encoding="utf-8")
     assert every_session.known(store, "Arborist", tmp_path / "jobs")["claude_session_id"] == "new-id"
     assert every_session.known(store, "old-id", tmp_path / "jobs")["name"] == "Arborist"
+    # Neither the owner's: the newest wins.
+    stopped(tmp_path, "payroll-1", "Payroll", "2026-11-01T10:00:00Z")
+    stopped(tmp_path, "payroll-2", "Payroll", "2026-11-02T10:00:00Z")
+    stopped(tmp_path, "payroll-0", "Payroll", "2026-10-30T10:00:00Z")
+    assert every_session.known(store, "payroll", tmp_path / "jobs")["claude_session_id"] == "payroll-2"
 
 
 @pytest.fixture
@@ -307,6 +312,40 @@ async def test_a_name_the_bridge_alone_keeps_is_the_owners_at_a_resume(world):
     async with Client(bridge_) as c:
         res = await c.call_tool("attach_conversation", {"claude_session_id": old, "label": "Payroll"})
     assert res.is_error and "Billing*" in res.content[0].text and starter.calls == []
+
+
+def test_a_session_is_found_by_its_name_without_its_status():
+    rows = [{"name": "Arborist* (waiting)", "sessionId": "a"}]
+    assert renames.find(rows, "Arborist")["sessionId"] == "a"
+    assert renames.find(rows, "arborist*")["sessionId"] == "a"
+
+
+def stopped(tmp_path, sid, name, when):
+    """A background session that isn't running, whose job record last changed at `when`."""
+    record = tmp_path / "jobs" / sid / "state.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"sessionId": sid, "name": name, "cwd": str(tmp_path), "updatedAt": when}))
+
+
+def test_a_session_not_running_is_found_by_the_owner_s_name_before_an_unmarked_one(tmp_path):
+    # Older sessions were named exactly "Arborist"; the one the owner marked may carry a status, and an
+    # old one resumed a moment to read it may be newer.
+    stopped(tmp_path, "owners", "Arborist* (waiting)", "2026-11-26T10:00:00Z")
+    stopped(tmp_path, "older", "Arborist", "2026-11-26T11:00:00Z")
+    store = Store(tmp_path / "b.db")
+    for said in ("Arborist", "Arborist*", "arborist"):
+        assert every_session.known(store, said, tmp_path / "jobs")["claude_session_id"] == "owners"
+    assert every_session.known(store, "older", tmp_path / "jobs")["name"] == "Arborist"
+
+
+async def test_a_resume_without_a_label_keeps_the_name_it_had(world):
+    # Given a folder, a resume would otherwise run under a name made from it, and the owner's name,
+    # kept in the bridge only for a session in a window, would no longer show.
+    bridge_, starter, old = resuming(world, world, "billing-1a2b")
+    Store(world / "b.db").rename(old, "billing-1a2b", "Billing*", ["billing-1a2b"])
+    async with Client(bridge_) as c:
+        await c.call_tool("attach_conversation", {"claude_session_id": old, "folder": "billing"})
+    assert starter.calls == ["Billing*"]
 
 
 async def rows(c):

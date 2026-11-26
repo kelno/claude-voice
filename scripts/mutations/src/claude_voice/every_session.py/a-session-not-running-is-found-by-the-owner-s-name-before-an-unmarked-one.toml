@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session not running is found by the owner's name before an unmarked one"
+file = "src/claude_voice/every_session.py"
+find = 'newest_first\.sort\(key=lambda pair: renames\.is_marked\(pair\[1\]\["name"\]\), reverse=True\)'
+replace = 'newest_first.sort(key=lambda pair: 0)'

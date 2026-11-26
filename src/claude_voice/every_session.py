@@ -51,7 +51,8 @@ def refusal(d: dict[str, Any], folder_open: bool) -> dict[str, Any] | None:
 
 def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
     """A session that isn't running, by its id, or by its name as a relay says it (in other capitals,
-    without the asterisk), the newest that had it, so a name used again finds the conversation
+    without the asterisk or a status), the owner's first, as its asterisk shows, then the newest
+    that had it, so a name used again finds the conversation
     behind it now, not an older one that once had it exactly; only then by a name it had before,
     so another session's old name never beats a session's own, as for a running one. From the
     bridge's own record of what it started and from Claude Code's job records, which every
@@ -63,6 +64,8 @@ def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
     sessions = [*_started(store), *_job_records(jobs_dir)]
     # RULE: a session not running is found by the newest that had its name
     newest_first = sorted(sessions, key=lambda pair: pair[0], reverse=True)
+    # RULE: a session not running is found by the owner's name before an unmarked one
+    newest_first.sort(key=lambda pair: renames.is_marked(pair[1]["name"]), reverse=True)
     # RULE: a session not running is found by its own name before another's old name
     for old_names in (False, True):
         for _, found in newest_first:

@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session is found by its name without its status"
+file = "src/claude_voice/renames.py"
+find = 'if STATUS\.sub\("", name\)\.casefold\(\) == wanted\.casefold\(\):'
+replace = 'if False:'

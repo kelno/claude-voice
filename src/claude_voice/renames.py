@@ -108,7 +108,8 @@ def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], ali
 
 def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: bool = False) -> bool:
     """Whether `session` names this running session: by name or id, or with `old_names`
-    by a name it had before; with `any_case`, whatever the capitals and the asterisk."""
+    by a name it had before; with `any_case`, whatever the capitals, the asterisk and a status
+    in round brackets at its end, which the owner's name may carry ("Arborist* (waiting)")."""
 
     def same(a: Any) -> bool:
         if a is None:
@@ -117,6 +118,9 @@ def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: b
         if any_case:
             # RULE: a session is found by its name without the asterisk
             name, wanted = bare(name), bare(wanted)
+            # RULE: a session is found by its name without its status
+            if STATUS.sub("", name).casefold() == wanted.casefold():
+                return True
         # RULE: a session name is found whatever its capitals
         return name.casefold() == wanted.casefold() if any_case else name == wanted
 
