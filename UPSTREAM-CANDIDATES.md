@@ -272,14 +272,6 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: little; three defaults become `None`, as `side_answer` already is.
 - Test first: `tests/test_wake.py` and `tests/test_digest.py` (a bridge given no helper uses the one in place when built).
 
-### 12. A quick ratchet check that skips the sweep on both sides — fork "Leave the mutation sweep out of a quick check's copy of main too"
-
-- Status: an idea; nothing prepared, no branch.
-- What: with no kept levels for main, `ratchet.py check --skip-mutation` measures main in a copy; the copy now gets `--skip-mutation` too, measures no mutation, and the check compares none.
-- Why upstream should want it: `CONTRIBUTING.md` offers `--skip-mutation` as the quick look, but locally main's levels are never kept, so the copy ran the whole sweep anyway: about 30 minutes here, most of a 40-minute "quick" check.
-- Expect pushback: a quick check then says nothing about mutation; continuous integration still runs the full sweep.
-- Test first: `tests/test_ratchet.py`, the test named after the rule "a quick check measures no mutation on either side".
-
 ### 13. The running commit read once per process — fork "Ask git for the running commit once per process"
 
 - Status: an idea; nothing prepared, no branch.
