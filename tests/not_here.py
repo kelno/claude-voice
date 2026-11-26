@@ -17,6 +17,7 @@ NO_GREP = (
     "counts terms with Git for Windows' grep, which exits with code 1536 and no output when"
     " Python starts it outside Git Bash; upstream runs this tool on Linux, never in CI"
 )
+NO_BROKER = "the fork has no approval broker: approve, deny and the bridge's own approvals are retired (UPSTREAM.md)"
 POSIX_ONLY = "POSIX paths only: on Windows a backslash is a separator, so the folder isn't a child of tmp_path"
 
 NOT_HERE = {
@@ -38,5 +39,6 @@ NOT_HERE = {
     "tests/test_mailbox_sessions.py::test_an_ack_on_one_sessions_tool_confirms_a_reply_from_any_session": MAILBOX,
     "tests/test_plugin_skill.py::test_no_file_links_to_the_old_skill_after_the_move": OLD_SKILL,
     "tests/test_review_prep.py::test_terms_are_counted_never_shown": NO_GREP,
+    "tests/test_stalled_bridge.py::test_an_approval_for_an_unknown_session_does_not_silence_the_others": NO_BROKER,
     "tests/test_routing.py::test_a_home_folder_with_backslashes_is_read_as_it_is": POSIX_ONLY,
 }

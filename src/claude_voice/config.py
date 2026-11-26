@@ -41,8 +41,10 @@ runs from, so the file is only needed to change something:
 
     [approver]
     on = false                                  # true: the approver session answers routine boxes
-                                                # from started roles (src/claude_voice/approver.py);
-                                                # refused until the caller check is in
+                                                # from started roles (src/claude_voice/approver.py)
+    [stalled_prompt]                            # a question left waiting while nobody is at the laptop
+    enabled = true                              # whether the bridge says so (docs/event-api.md)
+    after_min = 5                               # minutes it waits first
 """
 
 from __future__ import annotations
@@ -195,6 +197,25 @@ def _budgets(raw: dict[str, Any] | None) -> Budgets:
     return Budgets({k: float(v) for k, v in raw.items()})
 
 
+@dataclass(frozen=True)
+class StalledPrompt:
+    """Whether the bridge speaks up about a question left waiting, and after how long."""
+
+    enabled: bool = True
+    after_min: float = 5
+
+
+def _stalled_prompt(raw: dict[str, Any] | None) -> StalledPrompt:
+    raw = raw or {}
+    enabled, after = raw.get("enabled", True), raw.get("after_min", 5)
+    if not isinstance(enabled, bool):
+        raise ConfigError(f"[stalled_prompt] enabled = {enabled!r} is not true or false")
+    # RULE: a wait for a stalled prompt that is not a positive number is refused
+    if isinstance(after, bool) or not isinstance(after, (int, float)) or after <= 0:
+        raise ConfigError(f"[stalled_prompt] after_min = {after!r} is not a positive number of minutes")
+    return StalledPrompt(enabled, after)
+
+
 @dataclass
 class Config:
     repos: Repos
@@ -213,6 +234,7 @@ class Config:
     activity_phone_orgs: tuple[str, ...] = ()  # of those, the ones served beyond this computer
     approver_on: bool = False  # whether the approver session may answer routine boxes
     board_url: str | None = None  # [work] board_url: the project board the work page links to
+    stalled_prompt: StalledPrompt = field(default_factory=StalledPrompt)
 
 
 def _repo(value: Any, key: str) -> str:
@@ -254,6 +276,7 @@ def load(path: Path | None = FILE, own_clone: Path | None = None, env: Mapping[s
         *_activity(raw.get("activity")),
         _approver(raw.get("approver")),
         _board_url(raw.get("work")),
+        _stalled_prompt(raw.get("stalled_prompt")),
     )
 
 
@@ -282,11 +305,6 @@ def _approver(raw: Any) -> bool:
     # RULE: the approver is off unless the config says true
     if not isinstance(on, bool):
         raise ConfigError(f"[approver] on = {on!r} is not true or false")
-    # Until the bridge checks who calls the approver's tools, any session could answer its own
-    # box. The part that adds that check lifts this.
-    # RULE: the approver cannot be switched on before its caller check
-    if on:
-        raise ConfigError("[approver] on = true waits for the caller check; the approver cannot be switched on yet")
     return on
 
 

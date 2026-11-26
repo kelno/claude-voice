@@ -13,12 +13,13 @@ import math
 import os
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -54,6 +55,7 @@ from . import (
     confirm,
     confirm_page,
     connectors,
+    decisions,
     detail,
     devmode,
     doctor,
@@ -68,6 +70,7 @@ from . import (
     handles,
     hints,
     history,
+    idle,
     jobs,
     launch,
     lineage,
@@ -93,6 +96,7 @@ from . import (
     session_modes,
     sign_in,
     software,
+    stalled,
     tailnet,
     titles,
     transcripts,
@@ -723,6 +727,7 @@ class Config:
     ui_origins: list[str] = field(default_factory=list)
     ui_dir: Path | None = None
     new_session_mode: str = "default"
+    proof: bool = False  # a bridge for a test or a proof, which starts no plugins
 
 
 MAKE_TOKEN = (
@@ -800,6 +805,8 @@ def load_config(env: Mapping[str, str], transport: str, *, need_root: bool = Tru
         public_hosts=[h for h in env.get("CLAUDE_VOICE_PUBLIC_HOSTS", "").split(",") if h],
     )
     cfg.courier_name = env.get("CLAUDE_VOICE_COURIER_NAME", "").strip() or transcripts.COURIER_NAME
+    # RULE: a bridge started with the proof mark is a proof bridge
+    cfg.proof = env.get("CLAUDE_VOICE_PROOF", "").strip() == "1"
     cfg.ui_origins = [o.strip().rstrip("/") for o in env.get("CLAUDE_VOICE_UI_ORIGINS", "").split(",") if o.strip()]
     ui_folder = _ui_folder(env)
     if ui_folder is not None:
@@ -1453,6 +1460,17 @@ def _approver_process(store: Store) -> tuple[str, int, str | None] | None:
     return str(held["id"]), held["pid"], held.get("started")
 
 
+def _repos(given: config.Config | None, proof: bool) -> config.Config:
+    """The settings a test hands in, or the settings file's; with no plugins on a proof bridge."""
+    repos = given or config.load(config.FILE, own_clone=roles.own_clone())
+    if proof:
+        # A proof bridge runs beside the owner's, so the plugins it lists would run twice.
+        # RULE: a proof bridge starts no plugins
+        repos = replace(repos, plugins=[])
+        log.info("a proof bridge starts no plugins")
+    return repos
+
+
 def _duty(given: approver.Duty | None, repos: config.Config, manager: SessionManager) -> approver.Duty:
     """The approver session's duty: the one given, or one on only once the owner switches it on."""
 
@@ -1467,6 +1485,18 @@ def _duty(given: approver.Duty | None, repos: config.Config, manager: SessionMan
         clock=manager.clock,
         process=lambda: _approver_process(manager.store),
     )
+
+
+def _idle_watch(given: idle.Watch | None, clock: Callable[[], float]) -> idle.Watch:
+    """The watch a test hands in, or one over the bridge's state folder."""
+    return given or idle.Watch(config.STATE_DIR.expanduser(), clock=clock)
+
+
+def _stalled_parts(
+    given: stalled.Watch | None, tmux: Callable[[list[str]], str] | None, after_min: float, clock: Callable[[], float]
+) -> tuple[stalled.Watch, Callable[[list[str]], str]]:
+    """The watch and the pane reader a test hands in, or the bridge's own."""
+    return given or stalled.Watch(after_min, clock=clock), tmux or stalled.run_tmux
 
 
 def build_server(
@@ -1536,6 +1566,11 @@ def build_server(
     connectors_reachable: Callable[[], Awaitable[bool]] = connectors.proxy_answers,
     sessions_file: Path | None = None,
     duty: approver.Duty | None = None,
+    idle_watch: idle.Watch | None = None,
+    manager_delivery_seconds: float = 60.0,
+    stalled_watch: stalled.Watch | None = None,
+    stalled_tmux: Callable[[list[str]], str] | None = None,
+    proof: bool = False,  # a bridge for a test or a proof: it starts no plugins, whatever its settings
 ) -> MCPServer:
     auth = None
     keeper = approver_token.Keeper()  # the approver's own token, minted when it is launched
@@ -1590,6 +1625,9 @@ def build_server(
     trust_new: Callable[[Path], Any] = trust_folder or (
         lambda folder: folder_access.trust_new_folder(folder, claude_config)
     )
+    # A yes the voice gave support is told from a peer's by the courier process that carried it.
+    # RULE: the bridge keeps the processes its courier ran as
+    transcripts.hear_opens(lambda pid, started: decisions.remember_courier(manager.store, pid, started))
 
     def renamed(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return renames.apply(rows, manager.store.renamed(), manager.store.old_names())
@@ -1610,7 +1648,7 @@ def build_server(
     wake_background = wake_background or jobs.wake_background
     summarize = summarize or transcripts.summarize
     host: doctor.Host = doctor_host or doctor.RealHost()
-    repos = repo_config or config.load(config.FILE, own_clone=roles.own_clone())
+    repos = _repos(repo_config, proof)
 
     def within_budget(seconds: float | None) -> float:
         """How long a call may wait: what it asked for, never past five minutes or the time
@@ -1784,6 +1822,10 @@ def build_server(
                         signin_due[:] = [i["text"] for i in await asyncio.to_thread(board._sign_in)]
                     with background_step("activity view", failures):
                         await asyncio.to_thread(_activity_tick, activity_view)
+                    with background_step("idle builders", failures):
+                        await tell_idle()  # at most once a minute; it says when it has nothing
+                    with background_step("stalled questions", failures):
+                        await tell_stalled()  # at most every 30 seconds; it says when it has nothing
                     with background_step("work board", failures):
                         if api.HUB.listening() and (changed := await asyncio.to_thread(board.changed)):
                             api.HUB.publish("work", changed)  # the phone page updates at once
@@ -2533,7 +2575,7 @@ def build_server(
     def plugin_specs() -> list[config.PluginSpec]:
         """The plugins as the settings file names them now, so a tool added there is seen
         without restarting the bridge; the ones read at start when it is given or unreadable."""
-        if repo_config is not None:
+        if repo_config is not None or proof:
             return repos.plugins
         try:
             return config.load(config.FILE, own_clone=roles.own_clone()).plugins
@@ -2568,6 +2610,164 @@ def build_server(
         orgs=(repos.activity_orgs, repos.activity_phone_orgs),
         projects_dir=projects_dir,
     )
+    watching_idle = _idle_watch(idle_watch, manager.clock)
+
+    def idle_now() -> tuple[list[tuple[idle.Flag, list[str]]], list[idle.Flag]]:
+        """Each flag for a manager with the names its sessions answer to, and each for the voice,
+        recorded as news here."""
+        chart = org_now()
+        rows = reachable()
+        place = chart.placer()
+        to_managers, to_voice = watching_idle.look(chart, rows, place)
+        with looking:  # a look writes the same database; wait for it rather than share it
+            for flag in to_voice:
+                watcher.record(flag.programme.code, "idle_builders", flag.to_voice())
+
+        def managers(flag: idle.Flag) -> list[str]:
+            def leads(d: dict[str, Any]) -> bool:
+                at = place(d)
+                return at.programme is flag.programme and at.role is not None and at.role.code == "manager"
+
+            return [address(d) for d in rows if leads(d)]
+
+        return [(flag, managers(flag)) for flag in to_managers], to_voice
+
+    async def tell_idle() -> None:
+        """Tell each programme's manager, and the voice where the programme asks, that every
+        builder has sat idle while work waits (docs/org-chart.md, "Idle builders")."""
+        to_managers, _ = await asyncio.to_thread(idle_now)
+        for flag, names in to_managers:
+            if not names:
+                log.info("all builders in %s idle; no manager is running to tell", flag.programme.code)
+            for name in names:
+                # RULE: a delivery to a manager never holds up the watch
+                tell_manager(flag, name)
+
+    def tell_manager(flag: idle.Flag, name: str) -> None:
+        """Send one manager the flag on a task of its own, so a courier that hangs holds up
+        nothing else; a message the courier never tried is tried again next minute."""
+
+        async def bounded() -> dict[str, Any]:
+            try:
+                # RULE: a delivery to a manager gives up after its time
+                return await asyncio.wait_for(deliver(name, flag.to_manager()), manager_delivery_seconds)
+            except TimeoutError:  # it may still arrive, so it is not sent again
+                return {"delivered": None, "detail": "no answer in time; it may have arrived"}
+
+        sent = asyncio.ensure_future(bounded())
+        in_flight.add(sent)
+
+        def done(task: asyncio.Future[Any]) -> None:
+            in_flight.discard(task)
+            out = task.result() if not task.cancelled() and task.exception() is None else {}
+            said = out.get("detail") if out.get("delivered") is None else out.get("delivered")
+            log.info("idle builders in %s told to %s: %s", flag.programme.code, name, said)
+            # RULE: a message the courier never tried is sent again next minute
+            if not out.get("delivered") and out.get("attempted") is False:
+                watching_idle.again(flag.programme.code)
+
+        sent.add_done_callback(done)
+
+    stalled_settings = repos.stalled_prompt
+    watching_stalled, read_tmux = _stalled_parts(stalled_watch, stalled_tmux, stalled_settings.after_min, manager.clock)
+    panes = renames.Tmux(run=read_tmux)  # only ever asked where a session runs, never to type
+
+    def managers_of(programme: org.Programme | None, rows: list[dict[str, Any]], place: Any) -> list[str]:
+        """The names the running sessions of `programme`'s manager role answer to."""
+        if programme is None:
+            return []
+
+        def leads(d: dict[str, Any]) -> bool:
+            at = place(d)
+            return at.programme is programme and at.role is not None and at.role.code == "manager"
+
+        return [address(d) for d in rows if leads(d)]
+
+    def pane_question(d: dict[str, Any]) -> stalled.Asked | None:
+        """The question on the session's tmux pane, read and never typed into; None when it is
+        in no pane or shows none."""
+        found = panes.pane(int(d["pid"])) if d.get("pid") else None
+        if found is None:
+            return None
+        try:
+            return stalled.parse_pane(stalled.read_pane(found[1], read_tmux))
+        except (OSError, subprocess.SubprocessError):
+            return None
+
+    def live_question(d: dict[str, Any]) -> stalled.Asked | None:
+        """What a waiting session asks: from the prompt the bridge holds or its transcript, else
+        from its pane."""
+        box = answers.waiting_on(d, prompt_book, projects_dir)
+        if box and box.get("question"):
+            return stalled.Asked(str(box["question"]), [str(o.get("label")) for o in box["options"]])
+        held = prompt_book.items.get(box["prompt_id"]) if box and box.get("prompt_id") else None
+        if held is not None:
+            return stalled.Asked(f"{held.get('tool')}: {held.get('input')}", ["Yes", "No"])
+        return pane_question(d)
+
+    def holds(sid: str) -> bool:
+        """Whether a hook holds a prompt of this session, so it can be answered by voice."""
+        open_ones = (p for p in prompt_book.items.values() if p["session"] == sid and p["answer"] is None)
+        return any(prompt_book.hook_waits(p) for p in open_ones)
+
+    def waiting_now() -> list[tuple[stalled.Waiting, list[str]]]:
+        """Each prompt a session waits on, with the names its manager answers to."""
+        chart = org_now()
+        rows = reachable()
+        place = chart.placer()
+        out = []
+        for d in rows:
+            changed = d.get("statusUpdatedAt")
+            if d.get("status") != "waiting" or not isinstance(changed, int | float):
+                continue
+            at = place(d)
+            names = managers_of(at.programme, rows, place)
+            sid = str(d.get("sessionId"))
+            text_ok = at.programme is None or at.programme.stalled_prompt_text
+            item = stalled.Waiting(
+                f"{sid}:{changed}",
+                str(d.get("name")),
+                changed / 1000,
+                functools.partial(live_question, d),
+                holds(sid),
+                text_ok,
+                bool(names),
+            )
+            out.append((item, names))
+        return out
+
+    def stalled_now() -> list[tuple[str, str]]:
+        """Each line for a manager, with the name it goes to; the voice's lines are recorded here."""
+        found = waiting_now()
+        names = {item.key: who for item, who in found}
+        away = PRESENCE[0].away(app_open=api.HUB.listening())
+        to_managers, to_voice = watching_stalled.look([item for item, _ in found], away)
+        with looking:  # a look writes the same database; wait for it rather than share it
+            for text in to_voice:
+                watcher.record("claude-voice", "stalled_prompt", text)
+        return [(name, line) for item, line in to_managers for name in names.get(item.key, [])]
+
+    async def tell_stalled() -> None:
+        """Say once that a session has waited past the limit on a question while nobody is at
+        the laptop (docs/event-api.md, "A question left waiting")."""
+        if not stalled_settings.enabled:
+            return
+        for name, line in await asyncio.to_thread(stalled_now):
+            # RULE: a line to a manager about a waiting question never holds up the watch
+            sent = asyncio.ensure_future(tell_one(name, line))
+            in_flight.add(sent)
+            sent.add_done_callback(in_flight.discard)
+
+    async def tell_one(name: str, line: str) -> None:
+        """Send one manager one line, giving up after a while: it may still arrive, so it is
+        never sent again."""
+        try:
+            # RULE: a delivery about a waiting question gives up after its time
+            out = await asyncio.wait_for(deliver(name, line), manager_delivery_seconds)
+        except TimeoutError:
+            log.info("a waiting question told to %s: no answer in time; it may have arrived", name)
+            return
+        log.info("a waiting question told to %s: %s", name, out.get("delivered"))
 
     def keep_roster() -> None:
         """Write each running session's row to the sessions file, when the bridge keeps one."""
@@ -2970,13 +3170,14 @@ def build_server(
         name = unused_name(str(spec.get("name") or role))
         if role == boxed.CLIENT:
             return await launch_approver(spec, folder, name, task)
+        settings = roles.settings_for(spec, role)  # a role whose settings file is refused does not start
         how, _, _ = how_to_start(str(folder), name, None, None)
         try:
             await start_background(
                 str(folder),
                 name,
                 prompt=roles.first_message(spec, folder, task),
-                settings=roles.guard_settings(spec),
+                settings=settings,
                 **how,
             )
         except Exception as exc:
@@ -2986,7 +3187,9 @@ def build_server(
         # The approver's process is fixed here, once; a session file written later cannot move it.
         # RULE: a launched role keeps the process it started as
         held = {"name": name, "id": str(found.get("sessionId")), "pid": pid, "started": lineage.start_ticks(pid)}
-        store.set_setting(f"role:{role}", held)
+        # RULE: a role folder behind a link is recorded as the real folder
+        real = await asyncio.to_thread(os.path.realpath, folder)  # Claude Code keys the transcript by it
+        store.set_setting(f"role:{role}", {**held, "folder": real})
         return {"role": role, "name": name, "claude_session_id": found.get("sessionId"), "status": found.get("status")}
 
     async def launch_approver(spec: dict[str, Any], folder: Path, name: str, task: str | None) -> dict[str, Any]:
@@ -3005,7 +3208,8 @@ def build_server(
         except (OSError, RuntimeError) as exc:
             raise ToolError(f"The approver could not start: {exc}") from None
         found = await appeared(name, folder, pid)
-        held = {"name": name, "id": str(found.get("sessionId")), "pid": pid, "started": ticks}
+        real = await asyncio.to_thread(os.path.realpath, folder)  # as for every role, the real folder
+        held = {"name": name, "id": str(found.get("sessionId")), "pid": pid, "started": ticks, "folder": real}
         store.set_setting(f"role:{boxed.CLIENT}", held)
         session = found.get("sessionId")
         return {"role": boxed.CLIENT, "name": name, "claude_session_id": session, "status": found.get("status")}
@@ -3073,9 +3277,13 @@ def build_server(
         update_steps_seen[0] = len(steps)
         return {**body, "running": bool(body.get("running")) and updater.running(update_log)}
 
+    def update_status_now() -> dict[str, Any]:
+        return updater.status(updater.read(update_log), running=updater.running(update_log))
+
     def start_update(tests: bool = False) -> dict[str, Any]:
         if updater.running(update_log):
-            raise RuntimeError("An update is already running.")
+            # RULE: a second update names the step the running one is on and when it started
+            raise RuntimeError(f"An update is already running. {update_status_now()['say']}")
         folder = bridge_folder or repos.paths.claude_voice
         if folder is None:
             raise LookupError("This bridge does not run from a git clone, so it cannot update itself.")
@@ -3102,6 +3310,13 @@ def build_server(
             return start_update(run_tests)
         except (LookupError, RuntimeError) as exc:
             raise ToolError(str(exc)) from None
+
+    @tool(annotations=READ_ONLY)
+    def update_status() -> dict[str, Any]:
+        """How the latest update of claude-voice is going, or how it ended.
+        Which step it is on, whether it worked or was rolled back, and why.
+        Read out 'say'."""
+        return update_status_now()
 
     def update_changes_now() -> dict[str, Any]:
         folder = bridge_folder or repos.paths.claude_voice
@@ -3149,8 +3364,13 @@ def build_server(
         )
         return [(name, repo, folder, followed.get(str(folder), "main")) for name, repo, folder in listed]
 
+    # RULE: the levels cache is chosen once when the bridge is built
+    levels_cache = software.levels_cache()
+
     def software_build() -> dict[str, Any]:
-        """Every repository's measures and checks, read afresh: git and GitHub are slow."""
+        """Every repository's measures and checks, read afresh: git and GitHub are slow. The
+        cache folder is the one chosen at build, so a build that outlives its home writes
+        where it began."""
         return {
             "as_of": datetime.now(UTC).isoformat(timespec="seconds"),
             "repos": [
@@ -3159,9 +3379,9 @@ def build_server(
                     f"https://github.com/{repo}",
                     folder,
                     ci_status(repo, branch=branch),
-                    kept_levels(repo, branch=branch),
+                    kept_levels(repo, branch=branch, cache=levels_cache),
                     branch=branch,
-                    mutations=kept_mutations(repo, branch=branch),
+                    mutations=kept_mutations(repo, branch=branch, cache=levels_cache),
                 )
                 for name, repo, folder, branch in software_listed()
             ],
@@ -4951,10 +5171,12 @@ def build_server(
     def org_chart() -> dict[str, Any]:
         """Who handles what: each programme's roles, and whether their sessions run.
         Also what to send each role, and the sessions in no programme.
-        Name a session by its address (voice/manager) or its end (manager)."""
+        Name a session by its address (voice/manager) or its end (manager).
+        `warnings` says what keeps idle builders from being flagged as the owner meant."""
         chart = org_now()
         lines = org.overview(chart, reachable(), chart.placer())
-        return {"lines": lines or ["No programme has an org chart file."]}
+        warnings = org.idle_warnings(chart, watching_idle.state)
+        return {"lines": lines or ["No programme has an org chart file."], "warnings": warnings}
 
     def feed_news(cursor: str | None = None) -> dict[str, Any]:
         """The watcher's events since `cursor`, and the cursor to pass next time; for the
@@ -4998,6 +5220,7 @@ def build_server(
         # RULE: a plugin offered after it failed is no longer listed as failed
         failed = [f for f in plugin_failures if f["name"] not in {p["name"] for p in offered}]
         return {
+            **({"proof": True} if proof else {}),  # a proof bridge says so; the owner's says nothing
             "plugins": offered + failed,
             "developer_mode": developer_mode.state(),
             "now": {
@@ -5309,6 +5532,10 @@ def build_server(
 
     mcp.fleet = across  # type: ignore[attr-defined]  # the other machines, for tests and the CLI
     mcp.org_check = tell_programmes  # type: ignore[attr-defined]  # for tests
+    mcp.idle_check = tell_idle  # type: ignore[attr-defined]  # for tests
+    mcp.deliveries_in_flight = in_flight  # type: ignore[attr-defined]  # for tests
+    mcp.stalled_check = tell_stalled  # type: ignore[attr-defined]  # for tests
+    mcp.deliveries_in_flight = in_flight  # type: ignore[attr-defined]  # for tests
     mcp.hints_check = lambda: tell_hints(fleet_recap())  # type: ignore[attr-defined]  # for tests
     mcp.software_report = software_report  # type: ignore[attr-defined]  # the kept report, for tests
     return mcp
@@ -5384,7 +5611,7 @@ def serve_forever(cfg: Config) -> None:
         grant_for=session_modes.session_grant,
     )
     if cfg.transport == "stdio":
-        build_server(manager).run("stdio")
+        build_server(manager, proof=cfg.proof).run("stdio")
         return
 
     token = cfg.token or ""
@@ -5410,6 +5637,7 @@ def serve_forever(cfg: Config) -> None:
         ),
         activity_file=config.STATE_DIR.expanduser() / activity.FILE,
         plugins_behind=True,
+        proof=cfg.proof,
     )
     app = build_app(server, cfg.public_hosts, ui_origins=cfg.ui_origins, ui_dir=cfg.ui_dir)
     configure_logging(cfg.db.parent / LOG_FILE)

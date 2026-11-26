@@ -72,7 +72,7 @@ worse, so the ratchet compares these levels with the ones main has reached:
 | `layer_violations`: imports, made when a module loads, that reach a module in the same or a higher layer (`LAYERS` in `scripts/ratchet.py`), plus modules given no layer | lower |
 | `duplication`: the share of non-blank source lines, in percent, in a block of six or more lines that appears more than once, ignoring indentation | lower |
 | `complexity`: per module, the McCabe count of its most tangled function, not counting functions defined inside it; a new module keeps every function at 15 or below | lower |
-| `test_seconds`: how long the suite takes, against `test_budget` | inside the budget plus its tolerance |
+| `test_seconds`, `test_cpu_seconds`: how long the suite takes, on the clock and in CPU work | shown, never judged |
 
 The layers, from the bottom: foundations (`procs`, `config`, `store`, `metrics`,
 `titles`, `access`); parts, each about one thing; parts built from parts (`events`,
@@ -94,8 +94,14 @@ worse says so in its pull request, on a line of its own:
 Ratchet-Exception: coverage - the module it covered was deleted
 ```
 
-The time budget is a limit, not a level: it is the one thing in `quality.json`,
-and it changes only by hand.
+The ratchet and the mutation run don't run on each pull request. They run once
+on a batch: the approved pull requests applied together on an `integration/`
+branch, and on main after the batch merges
+([ADR-CV-023](decisions/ADR-CV-023-the-mutation-run-and-ratchet-run-once-per-batch.md)).
+The batch copies each pull request's exception lines into its own body.
+
+The suite has no time cap. The ratchet prints how long it took and fails
+nothing on it ([ADR-CV-021](decisions/ADR-CV-021-the-test-suite-has-no-time-cap.md)).
 
 ## How a change is made
 
@@ -169,6 +175,29 @@ git push --force-with-lease origin <your branch>
 
 The commit-msg hook lets a `fixup!`, `amend!` or `squash!` commit through for
 this, and continuous integration still refuses one that reaches a pull request.
+
+### Who merges
+
+Only the manager merges, and only after both reviews. Approved pull requests
+land together, in a batch: `scripts/batch.py` builds the batch and prints the
+merge list, and the manager runs it (ADR-CV-023).
+The script itself never merges, and never sets a check result.
+
+A session the bridge starts for a role on this repository cannot merge either.
+Before each shell command, the guard refuses `gh pr merge` in any spelling, and
+any writing call to GitHub's API that merges, moves `main`, or sets a commit
+status or a check run. It also refuses a write to the repository's branch
+protection, rulesets, webhooks, Actions permissions or own settings. It reads
+gh's flags wherever they sit, a full address, and a call wrapped in `env`,
+`timeout`, a shell's `-c` or `eval`. It refuses a GraphQL query it cannot read,
+and `gh auth token`. Text rules refuse the plain
+spellings too. Such a role may merge only when the owner's own roles file says
+`merges = true` in its entry. Roles on other repositories keep their merges,
+unless their entry says `deny_merges = true`.
+
+This is a guard against slips, not a wall. A program that calls GitHub with a
+login it already holds is not read, and branch protection on `main` stays the
+last word.
 
 ## More rules for every change
 

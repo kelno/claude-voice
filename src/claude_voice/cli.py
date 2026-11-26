@@ -17,6 +17,7 @@ from .config import STATE_DIR
 from .server import Config, ConfigError, load_config, serve_forever
 
 if TYPE_CHECKING:
+    from . import permissions, waivers
     from .config import PluginSpec
 
 #: Every verb this command has. The documentation test requires each one to
@@ -38,6 +39,7 @@ COMMANDS: tuple[str, ...] = (
     "roles",
     "set",
     "tracker",
+    "decisions",
 )
 
 SIGN_IN = (
@@ -229,9 +231,16 @@ def main(
     tracker_cmd.add_argument("file", nargs="?", help="claim: your verdict file's name, <repo>-<number>.<name>.json")
     tracker_cmd.add_argument("--by", help="claim: the reviewer you are")
     tracker_cmd.add_argument("--head", help="claim: the pull request's full head sha")
+    decisions_cmd = sub.add_parser(
+        "decisions", help="for the manager: check a yes support recorded against the owner's own words"
+    )
+    decisions_cmd.add_argument("action", choices=["check"])
+    decisions_cmd.add_argument("uuid", help="the uuid in the decision line")
+    decisions_cmd.add_argument("--head", required=True, help="the sha the item is at now")
     parsed = parser.parse_args(args)
 
     verbs: dict[str, Callable[[], int]] = {
+        "decisions": lambda: _decisions(parsed.uuid, parsed.head),
         "tracker": lambda: (
             claim_command(parsed.file, parsed.by, parsed.head, env)
             if parsed.action == "claim"
@@ -262,6 +271,12 @@ def main(
         return 1
     serve(cfg)
     return 0
+
+
+def _decisions(uuid: str, head: str) -> int:
+    from . import decisions
+
+    return decisions.run(uuid, head)
 
 
 def _settings_edit(verb: str, words: list[str | None], env: Mapping[str, str]) -> int:
@@ -773,16 +788,31 @@ def permissions_command(folders: list[Path], dry_run: bool, env: Mapping[str, st
     if not folders:
         return 1
     rules, code = permissions.load(machines=_machine_names(env)), 0
-    backups = permissions.backup_root(Path(env.get("HOME") or Path.home()))
+    home = Path(env.get("HOME") or Path.home())
+    backups = permissions.backup_root(home)
     hooks = _session_hooks(folders, env)
+    found = _waivers(rules, home)
     for folder in folders:
         try:
-            outcome = permissions.apply(folder, rules, dry_run, backup_root=backups, hook=hooks[folder])
+            outcome = permissions.apply(
+                folder, rules, dry_run, backup_root=backups, hook=hooks[folder], waiver=found.for_folder(folder)
+            )
             sys.stdout.write(outcome.line() + "\n")
         except permissions.PermissionsError as exc:
             sys.stderr.write(f"claude-voice: {exc}\n")
             code = 1
     return code
+
+
+def _waivers(rules: permissions.Rules, home: Path) -> waivers.Waivers:
+    """The owner's ask waivers under `home`, with why a file waives nothing said first."""
+    from . import waivers
+
+    found = waivers.read(rules, home / waivers.FILE.relative_to("~"))
+    # RULE: the runs first line says why the waiver file waives nothing
+    for line in found.lines():
+        sys.stdout.write(line + "\n")
+    return found
 
 
 def _machine_names(env: Mapping[str, str]) -> list[str]:
@@ -867,7 +897,9 @@ def shipped_command(folders: list[Path], env: Mapping[str, str]) -> int:
     backups = permissions.backup_root(Path(env.get("HOME") or Path.home()))
     # RULE: the shipped rules are recorded under the commit that is installed
     sha = shipped.installed_commit(own)
-    done = shipped.sync(folders, chart, own, permissions.load(machines=_machine_names(env)), sha, backup_root=backups)
+    rules = permissions.load(machines=_machine_names(env))
+    found = _waivers(rules, Path(env.get("HOME") or Path.home()))
+    done = shipped.sync(folders, chart, own, rules, sha, backup_root=backups, found=found)
     for line in shipped.report(done):
         sys.stdout.write(line + "\n")
     return 0

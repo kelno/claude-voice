@@ -1,8 +1,11 @@
 """Roles: a background session started for a set purpose, such as contributing back to claude-voice."""
 
+import hashlib
 import json
 import os
 import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 import pytest
@@ -178,6 +181,58 @@ async def test_a_launched_role_keeps_the_process_it_started_as(tmp_path, world):
     held = Store(tmp_path / "b.db").get_setting("role:contribute")
     assert held["id"] == out["claude_session_id"]
     assert held["pid"] == PID and held["started"] == lineage.start_ticks(PID)
+
+
+async def test_a_roles_own_settings_file_reaches_its_session(tmp_path, world):
+    """builder-role-v1: the file's rules, and the guard's check on deletes beside them. The home
+    is the short one every test gets, so the bridge's report socket stays within the length a
+    Unix socket's path may have."""
+    folder = Path.home() / ".local/state/claude-voice/roles"
+    folder.mkdir(parents=True)
+    (folder / "builder.json").write_text(json.dumps({"permissions": {"deny": ["Bash(gh pr merge:*)"]}}))
+    pin = hashlib.sha256((folder / "builder.json").read_bytes()).hexdigest()
+    _, clone, live, table = world
+    table.write_text(
+        f"[roles.builder]\nfolder = '{clone}'\nguard = false\nsettings = '{folder / 'builder.json'}'\n"
+        f"settings_sha256 = '{pin}'\n"
+    )
+    ready_clone(world)
+    starter = Starter(live)
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        await c.call_tool("start_role", {"role": "builder"})
+    sent = json.loads(starter.calls[0]["settings"])
+    assert sent["permissions"]["deny"] == ["Bash(gh pr merge:*)", *roles.MERGE_DENIES]
+    assert "--push-mode no-deletes" in sent["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+
+async def test_a_role_whose_settings_file_is_missing_does_not_start(tmp_path, world):
+    _, clone, live, table = world
+    gone = Path.home() / ".local/state/claude-voice/roles/gone.json"
+    table.write_text(f"[roles.builder]\nfolder = '{clone}'\nsettings = '{gone}'\n")
+    starter = Starter(live)
+    async with Client(bridge(tmp_path, world, starter)) as c:
+        out = await c.call_tool("start_role", {"role": "builder"})
+    assert out.is_error and "gone.json" in out.content[0].text
+    assert not starter.calls
+
+
+async def test_a_launched_role_records_the_folder_it_was_started_in(tmp_path, world):
+    ready_clone(world)
+    async with Client(bridge(tmp_path, world, Starter(world[2]))) as c:
+        await c.call_tool("start_role", {"role": "contribute"})
+    assert Store(tmp_path / "b.db").get_setting("role:contribute")["folder"] == str(world[1])
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a folder link needs extra rights on Windows")
+async def test_a_role_folder_behind_a_link_is_recorded_as_the_real_folder(tmp_path, world):
+    """Claude Code keys a transcript by the real folder, so the record names that one."""
+    ready_clone(world)
+    link = tmp_path / "linked"
+    link.symlink_to(world[1], target_is_directory=True)
+    world[3].write_text(f"[roles.contribute]\nfolder = '{link}'\n")
+    async with Client(bridge(tmp_path, world, Starter(world[2]))) as c:
+        await c.call_tool("start_role", {"role": "contribute"})
+    assert Store(tmp_path / "b.db").get_setting("role:contribute")["folder"] == str(world[1].resolve())
 
 
 async def test_an_unknown_role_is_refused(tmp_path, world):

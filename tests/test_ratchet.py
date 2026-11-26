@@ -21,7 +21,6 @@ BASE = {
     "cycles": 0,
     "complexity": {"pkg/a.py": 10, "pkg/b.py": 5},
     "test_seconds": 40.0,
-    "test_budget": {"seconds": 100, "tolerance": 0.25},
 }
 
 
@@ -29,11 +28,8 @@ def measured(**changes):
     return {**json.loads(json.dumps(BASE)), **changes}
 
 
-BUDGET = {"seconds": 100, "tolerance": 0.25}
-
-
 def problems(base, now, exceptions=()):
-    return ratchet.compare(base, now, set(exceptions), BUDGET)
+    return ratchet.compare(base, now, set(exceptions))
 
 
 # -- what gets worse ----------------------------------------------------------------------
@@ -87,31 +83,16 @@ def test_a_pull_request_need_not_record_the_levels_it_reached():
     assert problems(BASE, better) == []
 
 
-def test_the_suite_s_cpu_time_must_stay_inside_its_budget():
-    assert problems(BASE, measured(test_cpu_seconds=124.0)) == []  # inside the tolerance
-    found = problems(BASE, measured(test_cpu_seconds=126.0))
-    assert found and "test_cpu_seconds" in found[0]
-
-
-def test_wall_time_never_fails_the_check():
-    """A busy machine makes the suite wait; that is the machine's load, not the code's work."""
-    assert problems(BASE, measured(test_seconds=500.0, test_cpu_seconds=60.0)) == []
+def test_the_time_the_suite_takes_never_fails_the_check():
+    """The suite has no time cap: a slow run is shown, never judged."""
+    assert problems(BASE, measured(test_seconds=5000.0, test_cpu_seconds=4000.0)) == []
+    [said] = ratchet.notes(measured(test_seconds=5000.0, test_cpu_seconds=4000.0))
+    assert "5000.0 s on the clock" in said and "4000.0 s" in said
 
 
 # CPU time comes from resource.getrusage, which Windows lacks; there the ratchet only reports
 # wall time, as test_without_cpu_time_the_wall_time_is_only_reported shows on every system.
 NO_CPU_TIME = pytest.mark.skipif(sys.platform == "win32", reason="Windows has no resource module for CPU time")
-
-
-@NO_CPU_TIME
-def test_in_ci_a_suite_that_waits_is_reported_as_waiting_and_passes():
-    _, wall, cpu = ratchet.timed(lambda: ratchet._run(sys.executable, "-c", "import time; time.sleep(2)"))
-    now = measured(test_seconds=wall, test_cpu_seconds=cpu)
-    one_second = {"seconds": 1, "tolerance": 0}
-    assert ratchet.compare(BASE, now, set(), one_second) == []
-    [said] = ratchet.notes(now, one_second, ci=True)
-    assert "waiting" in said and "work" in said
-    assert ratchet.notes(now, one_second, ci=False) == []
 
 
 @NO_CPU_TIME
@@ -132,20 +113,13 @@ def test_without_cpu_time_the_wall_time_is_only_reported(monkeypatch):
     assert ratchet.children_cpu() is None
     now = measured(test_seconds=500.0, test_cpu_seconds=None)
     assert problems(BASE, now) == []
-    assert any("CPU time cannot be read on this system" in n for n in ratchet.notes(now, BUDGET, ci=False))
-
-
-def test_the_time_budget_is_the_one_thing_quality_json_keeps(tmp_path):
-    path = tmp_path / "quality.json"
-    path.write_text(json.dumps({"test_budget": {"seconds": 90, "tolerance": 0.1}}))
-    assert ratchet.budget(path) == {"seconds": 90, "tolerance": 0.1}
-    assert ratchet.budget(tmp_path / "missing.json") == ratchet.DEFAULT_BUDGET
+    assert any("CPU time cannot be read on this system" in n for n in ratchet.notes(now))
 
 
 def test_measured_levels_are_written_for_main_to_keep(tmp_path):
     out = tmp_path / "levels.json"
-    ratchet.write_levels(out, {**measured(), "test_budget": None})
-    assert json.loads(out.read_text()) == {k: v for k, v in BASE.items() if k != "test_budget"}
+    ratchet.write_levels(out, measured())
+    assert json.loads(out.read_text()) == BASE
 
 
 def test_mains_kept_levels_are_the_base_when_they_are_there(tmp_path):
@@ -233,11 +207,6 @@ def test_layering_and_duplication_may_not_get_worse(change, metric):
 def test_a_base_without_a_new_measure_has_nothing_to_compare_with():
     now = {**BASE, "layer_violations": 0, "duplication": 2.0}
     assert problems(BASE, now) == []
-
-
-def test_a_measure_the_base_did_not_take_has_nothing_to_compare_with():
-    # A quick check measures no mutation, so a base it measured has none to compare.
-    assert problems(measured(mutation=None), measured(mutation=None)) == []
 
 
 # -- a quick check -----------------------------------------------------------------------
@@ -366,6 +335,55 @@ def test_a_stop_while_main_is_being_copied_still_removes_the_copy(monkeypatch, t
     with pytest.raises(SystemExit):
         ratchet.measure_at("main")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_quick_check_measures_the_base_without_its_mutation_run(monkeypatch, tmp_path):
+    """The mutation run is by far the slowest step; a quick look on a busy machine skips it on both sides."""
+    monkeypatch.setattr(ratchet.tempfile, "tempdir", str(tmp_path))
+    asked = []
+
+    def run(*args, **kwargs):
+        if "measure" in args:
+            asked.append(args)
+            pathlib.Path(args[args.index("--out") + 1]).write_text(json.dumps(BASE), encoding="utf-8")
+        return ratchet.subprocess.CompletedProcess(args, 0, "abc123\n", "")
+
+    monkeypatch.setattr(ratchet, "_run", run)
+    ratchet.measure_at("main", skip_mutation=True)
+    ratchet.measure_at("main")
+    assert ["--skip-mutation" in a for a in asked] == [True, False]
+
+
+def test_a_quick_measure_with_no_recorded_figures_runs_no_mutation(monkeypatch):
+    ran = []
+    monkeypatch.setattr(ratchet, "_run", lambda *args, **kwargs: ran.append(args))
+    assert ratchet.mutation_figures(True, None, None) is None
+    assert ratchet.mutation_figures(True, {"mutation": {"killed": 3, "total": 4}}, None) == {"killed": 3, "total": 4}
+    assert ran == []
+
+
+def test_a_mutation_run_is_left_out_only_when_the_check_was_asked_to_skip_it():
+    worse = measured(mutation={"killed": 1, "total": 20})
+    assert ratchet.compare(measured(mutation=None), worse, set(), skip_mutation=True) == []
+    assert ratchet.compare(BASE, measured(mutation=None), set(), skip_mutation=True) == []
+    assert ratchet.compare(BASE, worse, set(), skip_mutation=True) != []
+    assert ratchet.compare(BASE, measured(mutation=None), set()) != []
+
+
+@pytest.mark.parametrize(
+    ("base", "now", "metric"),
+    [
+        (BASE, measured(coverage=None), "coverage"),
+        (measured(tests=None), BASE, "tests"),
+        (BASE, measured(mutation=None), "mutation"),
+        (measured(mutation=None), BASE, "mutation"),
+    ],
+)
+def test_a_measure_missing_on_either_side_fails_the_check(base, now, metric):
+    """A figure that could not be read never passes as unchanged, nor does a skipped run the check was not told of."""
+    for skip in (False, True) if metric != "mutation" else (False,):
+        [found] = ratchet.compare(base, now, set(), skip_mutation=skip)
+        assert metric in found and "no figure" in found
 
 
 def _git(where, *args):

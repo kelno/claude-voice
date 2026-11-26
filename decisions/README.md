@@ -51,6 +51,9 @@ decision nobody writes down.
 | [ADR-CV-017](ADR-CV-017-a-profile-is-an-allow-listed-shape-without-values.md) | A profile is an allow-listed shape, and the values stay with the user | Accepted |
 | [ADR-CV-018](ADR-CV-018-a-paired-machine-powers-off-only-on-a-yes-the-hub-signed.md) | A paired machine powers off only on a yes the hub signed, through a helper of its own | Accepted |
 | [ADR-CV-019](ADR-CV-019-sessions-live-in-tmux-and-a-private-file-lists-them.md) | Sessions live in tmux, and a private file lists them for recovery | Accepted |
+| [ADR-CV-021](ADR-CV-021-the-test-suite-has-no-time-cap.md) | The test suite has no time cap: its time is shown, never judged | Proposed |
+| [ADR-CV-022](ADR-CV-022-a-recorded-yes-is-checked-against-the-owners-own-turn.md) | A yes the support session recorded is checked against the owner's own turn | Accepted |
+| [ADR-CV-023](ADR-CV-023-the-mutation-run-and-ratchet-run-once-per-batch.md) | The mutation run and the ratchet run once per batch | Proposed |
 | [ADR-CV-101](ADR-CV-101-folders-outside-the-root-are-opened-by-the-owner.md) | Folders outside the root are opened one at a time, by the owner | Accepted, amended by ADR-CV-102 |
 | [ADR-CV-102](ADR-CV-102-desktop-scratch-folders-open-and-clearer-access-names.md) | Desktop scratch folders can be opened, and access is named for what is missing | Accepted |
 | [ADR-CV-103](ADR-CV-103-the-side-session-is-a-read-only-fork.md) | The side session is a read-only fork, made anew for each question | Accepted, amended by ADR-CV-104 |

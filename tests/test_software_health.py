@@ -147,6 +147,31 @@ async def test_the_phone_app_is_on_the_software_panel_after_the_page(tmp_path):
     assert by_id(page["repos"][2])["ci"]["url"] == "https://ci/roykollensvendsen/claude-voice-mobile"
 
 
+async def test_the_levels_cache_is_chosen_once_when_the_bridge_is_built(tmp_path, monkeypatch):
+    """The report is refreshed on a thread of its own, which may outlive the home it began in."""
+    voice = repo_with_history(tmp_path / "voice", QUALITY)
+    for name in ("HOME", "USERPROFILE"):  # Windows reads the home from USERPROFILE
+        monkeypatch.setenv(name, str(tmp_path / "built"))
+    store = Store(tmp_path / "b.db")
+    m = SessionManager(store, project_root=tmp_path, client_factory=FakeClaude())
+    caches = []
+    server = build_server(
+        m,
+        oauth=OAuthProvider(store, SECRET, HOST, static_token=SECRET),
+        conversations=lambda **k: [],
+        live_dir=tmp_path / "live",
+        repo_config=config.Config(config.Repos(), config.Paths(voice, None, None, None), None),
+        ci_status=lambda repo, **_: None,
+        kept_levels=lambda repo, **kw: caches.append(kw.get("cache")) or [],
+        kept_mutations=lambda repo, **kw: caches.append(kw.get("cache")),
+        main_head=lambda repo, **_: "aaa",
+    )
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path / "later"))
+    await asyncio.to_thread(server.software_report.refresh)
+    assert caches and all(c == tmp_path / "built" / ".cache" / "claude-voice" / "levels" for c in caches)
+
+
 def test_layering_and_duplication_are_measures_once_a_repository_records_them(tmp_path):
     repo = repo_with_history(tmp_path / "r", {**QUALITY, "layer_violations": 0, "duplication": 2.45})
     metrics = by_id(software.repo_report("r", "https://github.com/o/r", repo))
@@ -176,6 +201,25 @@ def test_a_repository_with_no_time_budget_still_shows_how_long_its_tests_take(tm
     assert metrics["test_time"]["value"] == 103.4
     assert metrics["test_time"]["text"] == "103 s"
     assert metrics["test_time"]["status"] == "unknown"
+
+
+def test_a_repository_whose_quality_file_is_gone_still_shows_its_recorded_trend(tmp_path):
+    repo = repo_with_history(tmp_path / "r", {**QUALITY, "tests": 450})
+    git(repo, "rm", "-q", "quality.json")
+    git(repo, "commit", "-q", "-m", "chore: Drop the time budget")
+    kept = [{**QUALITY, "tests": 470, "test_budget": None}]
+    metrics = by_id(software.repo_report("claude-voice", "https://github.com/o/claude-voice", repo, kept=kept))
+    assert metrics["tests"]["trend"] == [450, 470]
+    assert metrics["test_time"]["text"] == "103 s" and metrics["test_time"]["status"] == "unknown"
+
+
+def test_a_measure_links_to_the_quality_file_only_where_the_repository_has_one(tmp_path):
+    repo = repo_with_history(tmp_path / "r", {**QUALITY, "tests": 450})
+    git(repo, "rm", "-q", "quality.json")
+    git(repo, "commit", "-q", "-m", "chore: Drop the time budget")
+    metrics = by_id(software.repo_report("claude-voice", "https://github.com/o/claude-voice", repo))
+    checks = "https://github.com/o/claude-voice/actions/workflows/checks.yml?query=branch%3Amain"
+    assert metrics["tests"]["url"] == checks
 
 
 def fake_gh(levels_by_run, calls):

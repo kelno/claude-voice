@@ -371,7 +371,6 @@ def test_a_plain_push_to_a_fork_goes(tmp_path, command):
         "git push origin feat/x\n",
         "FOO=1 git push origin feat/x",
         "git push origin $BRANCH",
-        "git push origin :feat/x",
         "git push origin +feat/x",
     ],
 )
@@ -421,6 +420,23 @@ def test_a_push_option_outside_the_allowed_few_fails_the_plain_shape(option):
 def test_a_git_variable_in_the_hook_environment_fails_the_plain_shape(monkeypatch):
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh")
     assert decide(PLAIN, {"origin": FORK})[0] == "deny"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=current git push origin feat/x",
+        "GIT_CONFIG_PARAMETERS=\"'push.default'='current'\" git push origin feat/x",
+        "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=current git push origin feat/x",
+        "cd {there} && GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push.default GIT_CONFIG_VALUE_0=x git push origin feat/x",
+    ],
+)
+def test_a_git_setting_given_in_the_environment_on_the_line_fails_the_plain_shape(tmp_path, command):
+    """Settings given this way reach git as if they were in its own files, so the guard cannot
+    see what the push will do. Both clones push to a fork, so the same push without them goes."""
+    here, there = clone(tmp_path / "here", FORK), clone(tmp_path / "there", FORK)
+    verdict, _ = decision(guard.answer(hook(here, command.format(there=there.as_posix())), UPSTREAM))
+    assert verdict == "deny"
 
 
 @pytest.mark.parametrize("name", ["GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_PAGER", "GIT_TERMINAL_PROMPT"])

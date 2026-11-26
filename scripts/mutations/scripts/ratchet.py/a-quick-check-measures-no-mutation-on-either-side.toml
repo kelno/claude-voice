@@ -1,5 +1,0 @@
-[[rule]]
-name = "a quick check measures no mutation on either side"
-file = "scripts/ratchet.py"
-find = '^\s*mutation = recorded\["mutation"\] if recorded else None$'
-replace = 'mutation = {"killed": 0, "total": 1}'

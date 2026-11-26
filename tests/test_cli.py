@@ -34,6 +34,7 @@ def test_the_command_lists_its_subcommands_the_forks_passkey_and_texts_included(
         "roles",
         "set",
         "tracker",
+        "decisions",
     )
 
 

@@ -273,6 +273,7 @@ async def test_status_tools_are_marked_read_only_so_clients_need_no_confirmation
         "read_session_output",
         "search_session_history",
         "update_changes",
+        "update_status",
         "session_tree",
         "org_chart",
         "health",

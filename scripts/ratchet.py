@@ -11,17 +11,16 @@ reached. A change that makes one worse fails, unless its pull request has a line
 naming the measure. Main keeps its levels: continuous integration measures them after every
 push to main and keeps them with that run, so a pull request never records them
 (ADR-CV-009). When those levels are missing, the base is measured in a copy of it, which
-takes as long again. `quality.json` holds only the suite's time budget, a limit set by hand.
+takes as long again. The time the suite takes is shown, never judged (ADR-CV-021).
 
     uv run python scripts/ratchet.py check --base REF   # measure and compare with REF
     uv run python scripts/ratchet.py check --base REF --levels FILE --out FILE
     uv run python scripts/ratchet.py measure --out FILE  # measure only
 
 `check` reads exceptions from the environment variable RATCHET_EXCEPTIONS (continuous
-integration passes the pull request's text). `--skip-mutation` leaves out the mutation
-sweep, which switches every rule off in turn, for a quick local look: the check keeps main's
-kept figures, or, measuring main in a copy, skips it there too and compares no mutation.
-Continuous integration never skips it.
+integration passes the pull request's text). `--skip-mutation`, for a quick local look,
+runs no mutation on either side: it keeps the figures in `--levels` when given, and
+otherwise leaves mutation out of the comparison. Continuous integration never skips it.
 """
 
 from __future__ import annotations
@@ -45,13 +44,11 @@ if TYPE_CHECKING:
 
 # The tree to measure: this one, or a copy of the base named by RATCHET_ROOT (see measure_at).
 ROOT = Path(os.environ.get("RATCHET_ROOT") or Path(__file__).resolve().parent.parent)
-FILE = ROOT / "quality.json"
 SOURCE = ROOT / "src"
 PACKAGE = SOURCE / "claude_voice"
 COVERAGE_WOBBLE = 0.5  # percentage points: coverage differs slightly between machines and versions
 HIGHER = ("coverage", "mutation", "tests")
 LOWER = ("lint_errors", "type_errors", "cycles", "layer_violations", "duplication")
-DEFAULT_BUDGET = {"seconds": 120, "tolerance": 0.25}
 NEW_MODULE_CEILING = 15  # the most tangled function a new module may have
 BLOCK = 6  # lines in a row that count as a copied block
 # Each module's layer: a module may use, when it loads, only modules in the layers below it.
@@ -85,6 +82,7 @@ LAYERS = {
             "beads",
             "app_links",
             "owner_rules",
+            "waivers",
             "never_touch",
             "cpu_watch",
             "uvlock",
@@ -92,6 +90,7 @@ LAYERS = {
             "literal_gh",
             "org_rules",
             "access",
+            "redact",
         ),
         0,
     ),
@@ -137,6 +136,9 @@ LAYERS = {
             "activity",
             "boxed",
             "approver_token",
+            "decisions",
+            "backlog",
+            "stalled",
         ),
         1,
     ),  # parts, each about one thing
@@ -163,6 +165,7 @@ LAYERS = {
             "setup",
             "shipped",
             "settings_edit",
+            "idle",
         ),
         2,
     ),
@@ -331,6 +334,45 @@ def mutation_command(report: Path | None) -> list[str]:
     return ["uv", "run", "python", "scripts/mutate.py", *(["--json", str(report)] if report else [])]
 
 
+def mutation_figures(
+    skip_mutation: bool, recorded: dict[str, Any] | None, mutations: Path | None
+) -> dict[str, int] | None:
+    """How many rules the mutation run saw guarded. A quick look keeps the recorded figures,
+    or has none when nothing was recorded: then mutation is left out of the comparison."""
+    if skip_mutation:
+        # RULE: a quick measure with no recorded figures runs no mutation
+        return recorded.get("mutation") if recorded else None
+    mutate = _run(*mutation_command(mutations))
+    tally = re.search(r"(\d+)/(\d+) rules turned off", mutate.stdout)
+    killed, total = (int(tally[1]), int(tally[2])) if tally else (0, 1)
+    return {"killed": killed if mutate.returncode == 0 else min(killed, total - 1), "total": total}
+
+
+#: What a measure run says when the tree's own suite fails, and how a check knows it.
+SUITE_RED = "The suite fails; the ratchet measures a green tree."
+
+#: The exit status of a check whose base cannot be measured: neither a pass (0) nor a level
+#: made worse by the change (1).
+BASE_UNMEASURED = 3
+
+
+class BaseUnmeasured(SystemExit):
+    """The base's own suite is red, so it has no levels to compare a change with."""
+
+    def __init__(self, ref: str, said: str) -> None:
+        failed = re.search(r"^FAILED (\S+)", said, re.MULTILINE)
+        self.ref, self.first = ref, failed[1] if failed else None
+        super().__init__(BASE_UNMEASURED)
+
+    def __str__(self) -> str:
+        short = self.ref[:7] if re.fullmatch(r"[0-9a-f]{8,40}", self.ref) else self.ref
+        first = self.first or "its first failure is in the log above"
+        return (
+            f"base {short} can't be measured: main's own suite is red ({first}). "
+            "This is not this pull request's fault. Fix main first; until then this check stays red."
+        )
+
+
 def measure(
     skip_mutation: bool = False, recorded: dict[str, Any] | None = None, mutations: Path | None = None
 ) -> dict[str, Any]:
@@ -341,23 +383,15 @@ def measure(
             lambda: _run("uv", "run", "pytest", "-q", "-p", "no:cacheprovider", "--cov", f"--cov-report=json:{report}")
         )
         if suite.returncode:
-            raise SystemExit("The suite fails; the ratchet measures a green tree.\n" + suite.stdout[-2000:])
+            raise SystemExit(f"{SUITE_RED}\n" + suite.stdout[-2000:])
         coverage = round(json.loads(report.read_text())["totals"]["percent_covered"], 2)
     passed = re.search(r"(\d+) passed", suite.stdout)
     lint = _run("uv", "run", "ruff", "check", ".", "--output-format", "json")
     types = _run("uv", "run", "mypy", "src")
     type_errors = re.search(r"Found (\d+) errors?", types.stdout)
-    if skip_mutation:
-        # RULE: a quick check measures no mutation on either side
-        mutation = recorded["mutation"] if recorded else None
-    else:
-        mutate = _run(*mutation_command(mutations))
-        tally = re.search(r"(\d+)/(\d+) rules turned off", mutate.stdout)
-        killed, total = (int(tally[1]), int(tally[2])) if tally else (0, 1)
-        mutation = {"killed": killed if mutate.returncode == 0 else min(killed, total - 1), "total": total}
     return {
         "coverage": coverage,
-        "mutation": mutation,
+        "mutation": mutation_figures(skip_mutation, recorded, mutations),
         "tests": int(passed[1]) if passed else 0,
         "lint_errors": len(json.loads(lint.stdout or "[]")),
         "type_errors": int(type_errors[1]) if type_errors else 0,
@@ -367,7 +401,6 @@ def measure(
         "complexity": complexity(SOURCE),
         "test_seconds": seconds,
         "test_cpu_seconds": cpu,
-        "test_budget": None,
     }
 
 
@@ -392,13 +425,21 @@ def _differs(metric: str, recorded: Any, now: Any) -> bool:
     return abs(_score(now) - _score(recorded)) > wobble
 
 
-def compare(base: dict[str, Any], now: dict[str, Any], allowed: set[str], budget: dict[str, Any]) -> list[str]:
-    """What is wrong: a measure worse than the base without an exception, or the suite over
-    its time budget. Better levels need no recording: main measures its own."""
+def compare(base: dict[str, Any], now: dict[str, Any], allowed: set[str], skip_mutation: bool = False) -> list[str]:
+    """What is wrong: a measure worse than the base without an exception, or a measure one side
+    has no figure for. The time the suite takes is never one of them. Better levels need no
+    recording: main measures its own. Only a check asked to skip the mutation run may lack it."""
     found = []
     for metric in (*HIGHER, *LOWER):
-        if base.get(metric) is None:
-            continue  # a measure added since the base, or one a quick check left out: nothing to compare with
+        if metric not in base:
+            continue  # a measure added since the base: nothing to compare with yet
+        if base[metric] is None or now[metric] is None:
+            # RULE: a mutation run is left out only when the check was asked to skip it
+            if metric == "mutation" and skip_mutation:
+                continue
+            # RULE: a measure missing on either side fails the check
+            found.append(f"{metric} has no figure on one side: {base[metric]} -> {now[metric]}")
+            continue
         # RULE: a measure that gets worse fails the check
         if _worse(metric, base[metric], now[metric]) and metric not in allowed:
             found.append(f"{metric} got worse: {base[metric]} -> {now[metric]}")
@@ -408,32 +449,15 @@ def compare(base: dict[str, Any], now: dict[str, Any], allowed: set[str], budget
             found.append(f"complexity of {module} got worse: {before} -> {score}")
         if before is None and score > NEW_MODULE_CEILING and "complexity" not in allowed:
             found.append(f"{module} is new and has a function of complexity {score}; keep it at {NEW_MODULE_CEILING}")
-    # RULE: wall time never fails the check
-    # A busy machine waits, and that is not the code's work: only CPU time is judged.
-    cpu = now.get("test_cpu_seconds")
-    # RULE: the suite's CPU time must stay inside its budget
-    if cpu is not None and cpu > _limit(budget):
-        found.append(f"test_cpu_seconds is {cpu}, over the budget of {budget['seconds']} (+{budget['tolerance']:.0%})")
     return found
 
 
-def _limit(budget: dict[str, Any]) -> float:
-    return float(budget["seconds"]) * (1 + float(budget["tolerance"]))
-
-
-def notes(now: dict[str, Any], budget: dict[str, Any], ci: bool) -> list[str]:
-    """Lines that say something about time and fail nothing."""
+def notes(now: dict[str, Any]) -> list[str]:
+    """How long the suite took, shown and never judged."""
     wall, cpu = now.get("test_seconds"), now.get("test_cpu_seconds")
-    said = []
     if cpu is None:
-        said.append(f"CPU time cannot be read on this system; the suite took {wall} s on the clock, judged by nothing")
-    # RULE: in ci a suite that waits is reported as waiting and passes
-    if ci and wall is not None and wall > _limit(budget) and (cpu is None or cpu <= _limit(budget)):
-        work = "" if cpu is None else f" but only {cpu} s of it was work"
-        said.append(
-            f"test_seconds is {wall} (wall){work}; the suite is waiting on something (a sleep, a lock, the network)"
-        )
-    return said
+        return [f"CPU time cannot be read on this system; the suite took {wall} s on the clock, judged by nothing"]
+    return [f"The suite took {wall} s on the clock and {cpu} s of CPU work, judged by nothing"]
 
 
 def exceptions(text: str) -> set[str]:
@@ -441,18 +465,9 @@ def exceptions(text: str) -> set[str]:
     return {m.lower() for m in EXCEPTION.findall(text or "")}
 
 
-def budget(path: Path) -> dict[str, Any]:
-    """The suite's time budget, the one thing `quality.json` keeps."""
-    try:
-        return dict(json.loads(path.read_text(encoding="utf-8"))["test_budget"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return dict(DEFAULT_BUDGET)
-
-
 def write_levels(path: Path, now: dict[str, Any]) -> None:
     """Write the measured levels, for main to keep with its run."""
-    levels = {k: v for k, v in now.items() if k != "test_budget"}
-    path.write_text(json.dumps(levels, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(now, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def base_levels(kept: Path | None, measure_base: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -524,7 +539,8 @@ def measure_at(ref: str, skip_mutation: bool = False) -> dict[str, Any]:
     """Measure `ref` in a copy of it, with this ratchet, so both sides are measured alike.
 
     The copy keeps its own tests and scripts unchanged: this ratchet runs from where it is
-    and is pointed at the copy, so the base is measured exactly as it stands."""
+    and is pointed at the copy, so the base is measured exactly as it stands. A quick look
+    measures the base without its mutation run, as it does the change."""
     held = hold()
     try:  # the copy is made inside the held folder, so a stop at any point removes it too
         copy, out = held.path / "base", held.path / "levels.json"
@@ -534,8 +550,12 @@ def measure_at(ref: str, skip_mutation: bool = False) -> dict[str, Any]:
             raise SystemExit(f"Cannot install {ref} to measure it:\n{synced.stderr[-2000:]}")
         env = {**os.environ, "RATCHET_ROOT": str(copy)}
         here = str(Path(__file__).resolve())
+        # RULE: a quick check measures the base without its mutation run
         quick = ["--skip-mutation"] if skip_mutation else []
         measured = _run("uv", "run", "python", here, "measure", "--out", str(out), *quick, cwd=copy, env=env)
+        # RULE: a base whose own suite is red is said to be unmeasurable
+        if measured.returncode and SUITE_RED in measured.stdout + measured.stderr:
+            raise BaseUnmeasured(ref, measured.stdout + measured.stderr)
         if measured.returncode:
             raise SystemExit(f"Measuring {ref} failed:\n{measured.stdout[-2000:]}{measured.stderr[-2000:]}")
         return dict(json.loads(out.read_text()))
@@ -583,13 +603,17 @@ def main() -> int:
     if not args.base:
         print("check needs --base, the ref to compare with (usually origin/main).", file=sys.stderr)
         return 1
-    base = base_levels(args.levels, lambda: measure_at(args.base, args.skip_mutation))
+    try:
+        base = base_levels(args.levels, lambda: measure_at(args.base, args.skip_mutation))
+    except BaseUnmeasured as red:
+        # RULE: the check names mains red suite and not the pull request
+        print(str(red), file=sys.stderr)
+        return BASE_UNMEASURED
     now = measure(args.skip_mutation, base, args.mutations)
     if args.out:
         write_levels(args.out, now)
-    limits = budget(FILE)
-    found = compare(base, now, exceptions(os.environ.get("RATCHET_EXCEPTIONS", "")), limits)
-    for note in notes(now, limits, ci=bool(os.environ.get("CI"))):
+    found = compare(base, now, exceptions(os.environ.get("RATCHET_EXCEPTIONS", "")), args.skip_mutation)
+    for note in notes(now):
         print(note)
     for problem in found:
         print(problem, file=sys.stderr)

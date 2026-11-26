@@ -1,5 +1,5 @@
 [[rule]]
 name = "a session woken from a compaction without its Remote Control link is logged"
 file = "src/claude_voice/server.py"
-find = 'if remote:$'
-replace = 'if False:'
+find = '^\s*"compact_after_turn %s \(%s\): woken without Remote Control, so it is out of the Claude app.s list",$'
+replace = '"",'

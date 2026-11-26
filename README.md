@@ -102,6 +102,7 @@ the bridge says which are missing, with the exact fix, through its
 | `check_dependencies` | which dependencies are missing for full use of the bridge, and the exact fix for each |
 | `update_bridge` | update claude-voice: pull, install, test when asked (`run_tests`), restart, and roll back if anything fails; on Windows the script that runs the bridge restarts it when it ends with code 75 |
 | `update_changes` | what an update would bring: the new commits on GitHub, grouped by kind |
+| `update_status` | how the latest update is going or how it ended: its step, whether it was rolled back, and why |
 | `health` | the bridge's own state: uptime, version, memory, calls and errors per tool, courier and watcher, and whether developer mode is on |
 | `session_tree` | the sessions as a tree, including which ones have been messaging each other |
 | `list_active_sessions` | every Claude Code session running on the computer now, terminal or background |
@@ -273,6 +274,7 @@ also the default.
 | `CLAUDE_VOICE_UI_DIR` | — | a folder with a companion app's built files, served at `/ui/` |
 | `CLAUDE_VOICE_PERMISSION_MODE` | `default` | the permission mode for conversations that have none recorded, e.g. `auto` to match the desktop app |
 | `CLAUDE_VOICE_DB` | `~/.local/state/claude-voice/bridge.db` | where sessions and events are kept |
+| `CLAUDE_VOICE_PROOF` | — | `1` marks a bridge started for a test or a proof. It starts no plugins, whatever the settings list, and its health answer says `proof: true`. Give it a spare port and a database of its own, such as `CLAUDE_VOICE_PROOF=1 CLAUDE_VOICE_PORT=8899 CLAUDE_VOICE_DB=/tmp/proof.db claude-voice serve --transport http` |
 | `CLAUDE_VOICE_ENV_FILE` | `~/.config/claude-voice/env` | the environment file `check` and the bridge look over for lines a shell would misread |
 | `CLAUDE_VOICE_ACCESS_TOKEN_SECONDS` | `3600` | how long a sign-in's access token lasts before the app must refresh it; set it to a week (`604800`) on a computer that sleeps, since the Claude app gives a connector up after about an hour of failed refreshes |
 
@@ -422,6 +424,26 @@ claude-voice: Refused: give your own verdict file's name, --by with your reviewe
 
 When fewer than 500 GraphQL points are left, a run does nothing, and the journal
 (`journalctl --user -u claude-voice-board`) says so once.
+
+### Check a yes the support role recorded
+
+A support session records each decision of yours as one line in
+`~/.local/state/claude-voice/decisions.jsonl`, with the uuid of the turn that holds your words.
+Before acting on one, the manager checks it against support's own transcript:
+
+```console
+$ claude-voice decisions check no-such-uuid --head 0000000000000000000000000000000000000000
+claude-voice: Refused: there is no decision line with that uuid.
+```
+
+The check accepts a line only when the turn is yours. That means typed in support's own
+window, or carried from the voice by the bridge's own courier. The quote must be all of your
+words in that turn, not a part of them. Support's question just before it must name the item,
+the action and the sha. The item must still be at that sha, given in full, and each uuid
+counts once. Support's transcript is read only from the folder the bridge started it in. A
+support session started before the bridge recorded that folder is refused until it is started
+again with `start_role`. Every check is logged to `decision-checks.jsonl` beside it, for you to read after.
+The reasons are in `src/claude_voice/decisions.py`.
 
 ## Answer questions and approvals from the phone
 

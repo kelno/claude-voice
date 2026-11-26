@@ -2,9 +2,10 @@
 
 Read from the levels main keeps with each run of its checks on GitHub (ADR-CV-009), and,
 for the time before that or a repository that still records them, from each clone's
-``quality.json`` and its git history. The time budget is read from ``quality.json``. So the
-trend is what was measured change by change. Nothing is estimated: a repository with
-nothing recorded says so.
+``quality.json`` and its git history, kept after the file is gone. A time budget is read
+from ``quality.json`` where a repository still sets one; claude-voice sets none
+(ADR-CV-021). So the trend is what was measured change by change. Nothing is
+estimated: a repository with nothing recorded says so.
 """
 
 from __future__ import annotations
@@ -61,7 +62,8 @@ def _gh(args: list[str]) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
-def _cache() -> Path:
+def levels_cache() -> Path:
+    """Where main's kept levels and mutation reports are kept once downloaded, in this home."""
     return Path.home() / ".cache" / "claude-voice" / "levels"
 
 
@@ -120,7 +122,7 @@ def kept_levels(
     and then read from disk, and one that kept none is remembered as having none. The newest
     are downloaded first, so a page shows today's numbers before it fills in their history.
     """
-    folder = (cache or _cache()) / repo.replace("/", "__")
+    folder = (cache or levels_cache()) / repo.replace("/", "__")
     out, fetched = [], 0
     for run_id in _finished_runs(repo, branch, limit, run):  # newest first
         saved = folder / f"{run_id}.json"
@@ -156,7 +158,7 @@ def kept_mutations(
     a run that kept none remembered as having none, and no more downloads per look than the
     levels get.
     """
-    folder = (cache or _cache()) / repo.replace("/", "__")
+    folder = (cache or levels_cache()) / repo.replace("/", "__")
     fetched = 0
     for run_id in _finished_runs(repo, branch, limit, run):  # newest first
         # RULE: mutation reports are cached apart from the levels
@@ -363,7 +365,8 @@ def _measured(folder: Path | None, kept: list[dict[str, Any]] | None) -> list[di
     except (OSError, ValueError):
         recorded = None
     budget = (recorded or {}).get("test_budget")
-    past = [q for q in history(folder) if "coverage" in q] if folder and recorded is not None else []
+    # RULE: a repository whose quality file is gone still shows its recorded trend
+    past = [q for q in history(folder) if "coverage" in q] if folder else []
     return past + [{**q, "test_budget": budget} for q in kept or []]
 
 
@@ -413,7 +416,10 @@ def repo_report(
     """One repository's measures, each with its value, status and trend, and its latest
     mutation report rule by rule (None when it keeps none)."""
     past = _measured(folder, kept)
-    link = f"{url}/actions/workflows/checks.yml?query=branch%3A{branch}" if kept else f"{url}/blob/{branch}/{FILE}"
+    has_file = folder is not None and (folder / FILE).is_file()
+    # RULE: a measure links to the quality file only where the repository has one
+    checks = f"{url}/actions/workflows/checks.yml?query=branch%3A{branch}"
+    link = f"{url}/blob/{branch}/{FILE}" if has_file and not kept else checks
     exempt = exemptions(folder)
     # RULE: a measure only some repositories publish is left out where none is kept
     shown = [m for m in MEASURES if m[0] not in PUBLISHED_ONLY or any(m[0] in q for q in past)]

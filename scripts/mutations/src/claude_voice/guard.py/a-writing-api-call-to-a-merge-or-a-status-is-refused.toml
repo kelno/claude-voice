@@ -1,0 +1,5 @@
+[[rule]]
+name = "a writing api call to a merge or a status is refused"
+file = "src/claude_voice/guard.py"
+find = '^\s*if GH_PATH\.search\(path\) and writes:$'
+replace = 'if False:'
