@@ -64,8 +64,8 @@ def known(store: Store, session: str, jobs_dir: Path) -> dict[str, Any] | None:
 
 
 def by_spoken_name(store: Store, session: str, records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """A session that isn't running, by its name as a relay says it: without the braces of a name an
-    agent chose, in other capitals, or a name it had before (renames.find, as for a running one).
+    """A session that isn't running, by its name as a relay says it: without the asterisk of a name
+    the owner chose, in other capitals, or a name it had before (renames.find, as for a running one).
     None when it names none, or several that differ only by capitals."""
     from . import renames  # a part beside this one: imported when needed, not when loaded
 

@@ -1,8 +1,9 @@
-"""Keeping session names current: who chose a name, shown by a marker.
+"""Keeping session names current: whose name it is, shown by an asterisk.
 
-A name an agent chose is in curly braces, so the owner sees it may change by itself. An agent
-may rename such a session, and Claude Code's own automatic title; a name the owner chose is renamed
-only at the owner's request (owner_chose), so a session only proposes one."""
+A name with an asterisk anywhere in it is the owner's, in the name Claude Code and the app show,
+so the owner sees which names are protected (owner, 2026-11-26). An agent may rename any other
+session, but never adds an asterisk; a name with one is renamed only at the owner's request
+(owner_chose), so a session only proposes one."""
 
 import json
 import os
@@ -62,83 +63,88 @@ def server(tmp_path, root, live, deliver=None, clock=None):
     )
 
 
-async def test_a_name_an_agent_gives_gets_the_marker(tmp_path, root, live):
+async def test_a_name_an_agent_gives_is_kept_as_given(tmp_path, root, live):
     session(live, root, "fix the thing", source="auto")
     async with Client(server(tmp_path, root, live)) as c:
         out = await call(c, "rename_session", session="fix the thing", new_name="billing export")
-        assert await names(c) == ["{billing export}"]
-    assert out["name"] == "{billing export}"
+        assert await names(c) == ["billing export"]
+    assert out["name"] == "billing export"
 
 
-async def test_claude_code_s_own_title_may_be_renamed_by_an_agent(tmp_path, root, live):
-    session(live, root, "Fix the export bug", source="auto")  # made from the first message
+async def test_a_name_without_an_asterisk_may_be_renamed_by_an_agent(tmp_path, root, live):
+    # Claude Code records a launch title as chosen by someone ("peer"), as it does a name the owner
+    # gave: only the asterisk tells them apart.
+    session(live, root, "Billing", source="peer")
     async with Client(server(tmp_path, root, live)) as c:
-        out = await call(c, "rename_session", session="Fix the export bug", new_name="billing export")
-    assert out["name"] == "{billing export}"
+        out = await call(c, "rename_session", session="Billing", new_name="billing export")
+    assert out["name"] == "billing export"
 
 
-async def test_a_name_already_marked_keeps_one_marker(tmp_path, root, live):
-    session(live, root, "{billing export}")
-    async with Client(server(tmp_path, root, live)) as c:
-        out = await call(c, "rename_session", session="{billing export}", new_name="{billing import}")
-    assert out["name"] == "{billing import}"
-
-
-async def test_a_name_the_owner_chose_for_is_kept_as_given(tmp_path, root, live):
+async def test_a_name_the_owner_chose_is_kept_as_given(tmp_path, root, live):
     session(live, root, "fix the thing", source="auto")
     async with Client(server(tmp_path, root, live)) as c:
-        out = await call(c, "rename_session", session="fix the thing", new_name="Billing", owner_chose=True)
-    assert out["name"] == "Billing"
+        out = await call(c, "rename_session", session="fix the thing", new_name="Billing*", owner_chose=True)
+    assert out["name"] == "Billing*"
 
 
 async def test_an_agent_cannot_rename_a_session_the_owner_named(tmp_path, root, live):
-    session(live, root, "Billing", source="user")
+    session(live, root, "Billing*", source="user")
     async with Client(server(tmp_path, root, live)) as c:
         res = await c.call_tool("rename_session", {"session": "Billing", "new_name": "billing export"})
-        assert await names(c) == ["Billing"]
+        assert await names(c) == ["Billing*"]
     assert res.is_error
     assert "owner chose" in res.content[0].text and "propose_session_name" in res.content[0].text
 
 
-async def test_an_agent_may_add_and_drop_a_status_after_a_name_the_owner_chose(tmp_path, root, live):
-    session(live, root, "Billing", source="user")
+async def test_an_asterisk_anywhere_makes_a_name_the_owner_s(tmp_path, root, live):
+    session(live, root, "Bill*ing", source="user")
     async with Client(server(tmp_path, root, live)) as c:
-        added = await call(c, "rename_session", session="Billing", new_name="Billing (waiting)")
-        dropped = await call(c, "rename_session", session="Billing (waiting)", new_name="Billing")
-    assert added["name"] == "Billing (waiting)" and dropped["name"] == "Billing"
-
-
-async def test_a_status_cannot_replace_part_of_a_name_the_owner_chose(tmp_path, root, live):
-    session(live, root, "Billing (v2)", source="user")
-    async with Client(server(tmp_path, root, live)) as c:
-        res = await c.call_tool("rename_session", {"session": "Billing (v2)", "new_name": "Billing (waiting)"})
+        res = await c.call_tool("rename_session", {"session": "Bill*ing", "new_name": "billing export"})
     assert res.is_error and "owner chose" in res.content[0].text
 
 
-async def test_a_name_the_owner_marked_themselves_is_free_to_change(tmp_path, root, live):
-    session(live, root, "{Billing}", source="user")  # the owner added the braces with /rename
-    async with Client(server(tmp_path, root, live)) as c:
-        out = await call(c, "rename_session", session="{Billing}", new_name="billing export")
-    assert out["name"] == "{billing export}"
-
-
-async def test_a_name_renamed_at_the_owners_request_is_the_owners(tmp_path, root, live):
+async def test_only_the_owner_gives_a_session_name_an_asterisk(tmp_path, root, live):
     session(live, root, "fix the thing", source="auto")
     async with Client(server(tmp_path, root, live)) as c:
-        await call(c, "rename_session", session="fix the thing", new_name="Billing", owner_chose=True)
+        res = await c.call_tool("rename_session", {"session": "fix the thing", "new_name": "Billing*"})
+        assert await names(c) == ["fix the thing"]
+    assert res.is_error and "asterisk" in res.content[0].text and "owner_chose" in res.content[0].text
+
+
+async def test_an_agent_may_add_and_drop_a_status_after_a_name_the_owner_chose(tmp_path, root, live):
+    session(live, root, "Billing*", source="user")
+    async with Client(server(tmp_path, root, live)) as c:
+        added = await call(c, "rename_session", session="Billing*", new_name="Billing* (waiting)")
+        dropped = await call(c, "rename_session", session="Billing* (waiting)", new_name="Billing*")
+    assert added["name"] == "Billing* (waiting)" and dropped["name"] == "Billing*"
+
+
+async def test_a_status_cannot_replace_part_of_a_name_the_owner_chose(tmp_path, root, live):
+    session(live, root, "Billing* (v2)", source="user")
+    async with Client(server(tmp_path, root, live)) as c:
+        res = await c.call_tool("rename_session", {"session": "Billing* (v2)", "new_name": "Billing* (waiting)"})
+    assert res.is_error and "owner chose" in res.content[0].text
+
+
+async def test_a_name_renamed_at_the_owners_request_with_an_asterisk_is_the_owners(tmp_path, root, live):
+    session(live, root, "fix the thing", source="auto")
+    async with Client(server(tmp_path, root, live)) as c:
+        await call(c, "rename_session", session="fix the thing", new_name="Billing*", owner_chose=True)
         res = await c.call_tool("rename_session", {"session": "Billing", "new_name": "other"})
     assert res.is_error and "owner chose" in res.content[0].text
 
 
-def test_a_session_is_found_by_its_name_without_the_marker():
-    # Said aloud, a name comes back without its marker.
-    rows = [{"name": "{session names upkeep}", "sessionId": "a"}]
-    assert renames.find(rows, "Session names upkeep")["sessionId"] == "a"
-    assert renames.find(rows, "{session names upkeep}")["sessionId"] == "a"
+def test_a_session_is_found_by_its_name_without_the_asterisk():
+    # Said aloud, a name comes back without its asterisk; a message to "Coordinator" still reaches
+    # "Coordinator*".
+    rows = [{"name": "Session names upkeep*", "sessionId": "a"}, {"name": "Co*ordinator", "sessionId": "b"}]
+    assert renames.find(rows, "session names upkeep")["sessionId"] == "a"
+    assert renames.find(rows, "Session names upkeep*")["sessionId"] == "a"
+    assert renames.find(rows, "Coordinator")["sessionId"] == "b"
 
 
-async def test_a_name_that_differs_only_by_the_marker_is_in_use(tmp_path, root, live):
-    session(live, root, "{billing}")
+async def test_a_name_that_differs_only_by_the_asterisk_is_in_use(tmp_path, root, live):
+    session(live, root, "billing*")
     write(live, os.getppid(), "other-id", "Payroll", root)
     async with Client(server(tmp_path, root, live)) as c:
         res = await c.call_tool("rename_session", {"session": "Payroll", "new_name": "billing", "owner_chose": True})
@@ -153,14 +159,32 @@ def world(tmp_path):
     return tmp_path
 
 
-async def test_a_started_session_gets_the_marker_unless_the_owner_named_it(world):
+async def test_a_started_session_keeps_the_name_given(world):
     starter = Starter(world / "live")
     async with Client(bridge(world, starter)) as c:
-        agents = (await c.call_tool("start_active_session", {"folder": "billing", "name": "inv"})).structured_content
+        out = (await c.call_tool("start_active_session", {"folder": "billing", "name": "inv"})).structured_content
+    assert out["name"] == "inv"
+
+
+class StarredStarter(Starter):
+    """Starter writes its record under the session's name, and Windows takes no asterisk in a file name."""
+
+    async def __call__(self, cwd, name, **options):
+        self.calls.append(name)
+        (self.live / f"{name.replace('*', '-')}.json").write_text(
+            json.dumps({"pid": os.getpid(), "sessionId": f"sid-{name}", "cwd": cwd, "name": name, "status": "idle"})
+        )
+
+
+async def test_only_the_owner_starts_a_session_under_a_name_with_an_asterisk(world):
+    starter = StarredStarter(world / "live")
+    async with Client(bridge(world, starter)) as c:
+        agents = await c.call_tool("start_active_session", {"folder": "billing", "name": "Inv*"})
         owners = (
-            await c.call_tool("start_active_session", {"folder": "billing", "name": "Inv", "owner_chose": True})
+            await c.call_tool("start_active_session", {"folder": "billing", "name": "Inv*", "owner_chose": True})
         ).structured_content
-    assert agents["name"] == "{inv}" and owners["name"] == "Inv"
+    assert agents.is_error and "asterisk" in agents.content[0].text
+    assert owners["name"] == "Inv*" and starter.calls == ["Inv*"]
 
 
 async def rows(c):

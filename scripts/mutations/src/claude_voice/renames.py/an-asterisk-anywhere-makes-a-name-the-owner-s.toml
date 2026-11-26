@@ -1,0 +1,5 @@
+[[rule]]
+name = "an asterisk anywhere makes a name the owner's"
+file = "src/claude_voice/renames.py"
+find = 'return MARK in name'
+replace = 'return name.endswith(MARK)'

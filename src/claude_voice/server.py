@@ -172,7 +172,7 @@ def session_note(sender: str, waits: bool) -> str:
 
 
 OWNERS_NAME_REFUSAL = (
-    'The owner chose the name "{name}", so only the owner renames it: propose the new name with '
+    'The owner chose the name "{name}", as its asterisk shows, so only the owner renames it: propose the new name with '
     "propose_session_name instead. The relay puts it to the owner, and renames with owner_chose true once "
     'they agree. Adding or dropping a status in round brackets at its end, such as "{name} (busy)", needs no one.'
 )
@@ -182,13 +182,17 @@ NAME_PROPOSAL_NEWS = (
     '{session}: proposes the name "{name}" ({why}); put it to the owner, and rename_session with owner_chose '
     "true if they agree; if not, nothing to do, it lapses in a day"
 )
+ASTERISK_REFUSAL = (
+    "An asterisk in a session name marks it as the owner's, and only the owner adds one: give the name without "
+    'it, or pass owner_chose true if the owner gave or agreed to "{name}".'
+)
 OWNER_CHOSE_PARAM = (
-    "True only for a name the owner chose or agreed to. Left out, the name is put in curly braces, marking an "
-    "agent's choice."
+    "True only for a name the owner chose or agreed to. Needed to give a name an asterisk, which marks it as the "
+    "owner's, or to rename a session whose name has one."
 )
 START_OWNER_CHOSE_PARAM = (
-    "True only for a name the owner chose or agreed to. Left out, the name, or the one made from the folder, "
-    "is put in curly braces, marking an agent's choice."
+    "True only for a name the owner chose or agreed to. Needed for a name with an asterisk, which marks it as the "
+    "owner's."
 )
 # The Claude desktop app names a side chat, opened from a session for a quick aside, "btw: <question>".
 SIDE_CHAT_PREFIX = "btw:"
@@ -593,11 +597,12 @@ Sessions
   link yet, or none at all when it isn't on Remote Control.
 - side_chat marks a "btw: ..." aside the owner opened from a desktop session:
   give it no work unless asked.
-- A session name in curly braces, such as {billing export}, was chosen by an
-  agent and may change by itself; say it without the braces, and the bridge
-  finds it either way. A name the owner gives, or agrees to when a session
-  proposes one (it shows in your news), goes to rename_session or
-  start_active_session with owner_chose true.
+- A session name with an asterisk, such as Billing*, is the owner's: only the
+  owner adds one, and agents don't rename it. Say it without the asterisk;
+  the bridge finds it either way. A name the owner gives, or agrees to when a
+  session proposes one (it shows in your news), goes to rename_session or
+  start_active_session with owner_chose true, with an asterisk only when the
+  owner asks for one.
 
 Confirmations
 - A session that needs the owner's OK past Claude Code's own blocks asks with
@@ -3039,9 +3044,10 @@ def build_server(
             path = manager.resolve_folder(folder)
         except ValueError as exc:
             raise ToolError(str(exc)) from None
-        if not owner_chose:
-            # RULE: a started session gets the marker unless the owner named it
-            name = renames.marked(renames.clean(name or "") or f"{path.name}-{secrets.token_hex(2)}")
+        name = renames.clean(name or "") or None
+        # RULE: only the owner starts a session under a name with an asterisk
+        if name and renames.is_marked(name) and not owner_chose:
+            raise ToolError(ASTERISK_REFUSAL.format(name=name))
         same = running_already(name, path)
         # RULE: starting the same session twice gives back the one already running
         if same is not None:  # a retry after an answer lost on the way must not open a second window
@@ -4410,13 +4416,12 @@ def build_server(
             raise ToolError(f"No running session called {session!r}; see list_active_sessions")
         sid, old = str(target["sessionId"]), str(target["name"])
         if not owner_chose:
+            # RULE: only the owner gives a session name an asterisk
+            if renames.is_marked(new_name) and not renames.is_marked(old):
+                raise ToolError(ASTERISK_REFUSAL.format(name=new_name))
             # RULE: an agent cannot rename a session the owner named
-            if renames.owners(target):
-                if not renames.only_status(old, new_name):
-                    raise ToolError(OWNERS_NAME_REFUSAL.format(name=old))
-            else:
-                # RULE: a name an agent gives gets the marker
-                new_name = renames.marked(new_name)
+            if renames.owners(target) and not renames.only_status(old, new_name):
+                raise ToolError(OWNERS_NAME_REFUSAL.format(name=old))
         # RULE: a new name already in use is refused
         if renames.in_use(new_name, rows, but=sid):
             raise ToolError(f"{new_name!r} is already in use by another session")
@@ -4488,7 +4493,7 @@ def build_server(
         why: Annotated[str, Field(description="Why, in a few words the owner can hear.")],
     ) -> dict[str, Any]:
         """Propose a new name for a session the owner named; the owner decides.
-        For a name in curly braces, an agent's, use rename_session instead. The proposal shows on the session's row in
+        For a name without an asterisk, use rename_session instead. The proposal shows on the session's row in
         list_active_sessions and once in each relay's news, for a day or until it is renamed; a
         later proposal replaces it."""
         new_name = renames.clean(new_name)

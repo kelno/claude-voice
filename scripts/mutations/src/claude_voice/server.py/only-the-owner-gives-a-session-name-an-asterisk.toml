@@ -1,0 +1,5 @@
+[[rule]]
+name = "only the owner gives a session name an asterisk"
+file = "src/claude_voice/server.py"
+find = 'if renames\.is_marked\(new_name\) and not renames\.is_marked\(old\):'
+replace = 'if False:'

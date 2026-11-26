@@ -125,7 +125,7 @@ async def test_a_link_that_never_comes_leaves_the_start_without_one_after_the_wa
     monkeypatch.setattr(app_links, "WAIT_SECONDS", 0.3)
     async with Client(bridge(tmp_path, world, Starter(world[1]))) as c:
         out = (await c.call_tool("start_active_session", {"folder": "billing", "name": "slow"})).structured_content
-    assert out["name"] == "{slow}" and "app_url" not in out
+    assert out["name"] == "slow" and "app_url" not in out
 
 
 async def test_a_resumed_conversation_comes_back_with_its_link(tmp_path, world):

@@ -71,5 +71,6 @@ def test_what_moved_to_the_relays_notes_left_the_manual():
         assert words not in MANUAL, words
 
 
-def test_the_manual_says_what_the_name_marker_means():
-    assert "in curly braces, such as {billing export}, was chosen by an" in MANUAL and "owner_chose true" in MANUAL
+def test_the_manual_says_what_the_asterisk_in_a_name_means():
+    assert "with an asterisk, such as billing*, is the owner's" in MANUAL and "owner_chose true" in MANUAL
+    assert "curly braces" not in MANUAL

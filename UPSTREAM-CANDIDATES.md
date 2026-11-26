@@ -162,11 +162,11 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Why: the assistant names a session at start and could never change its mind.
 - Expect pushback: it writes Claude Code's internal state, an undocumented format found by reading Claude Code's code (`jobStateNameSync`), which may change with any release. Tests: `tests/test_rename.py`.
 
-### 6g. Session names that show who chose them — fork "Keep session names current and mark the ones an agent chose", "Remove the bridge's hourly name check"
+### 6g. Session names that show which are the owner's — fork "Keep session names current and mark the ones an agent chose", "Remove the bridge's hourly name check", "Protect the session names the owner marks with an asterisk"
 
-- What: a name an agent gives (`rename_session` or `start_active_session` without `owner_chose`) is put in curly braces; a name without them is the owner's, unless Claude Code made it itself (`nameSource` "auto"), and only `owner_chose` renames it; others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. Name lookup ignores the braces.
+- What: a name with an asterisk anywhere in it is the owner's, and only `owner_chose` renames it or gives a name an asterisk (`rename_session`, `start_active_session`); others propose one with `propose_session_name`, which shows on the session's row and once in each relay's news. Name lookup ignores the asterisk. Claude Code's `nameSource` can't tell a title given at launch from a name the owner gave, so the mark lives in the name itself.
 - Why: names drift from what sessions do, and someone who remembers a name finds it gone.
-- Expect pushback: braces inside the name are a convention, and a new tool; upstream may prefer a field on the session. Builds on 6t. Tests: `tests/test_name_upkeep.py`, the news one in `tests/test_news.py`.
+- Expect pushback: an asterisk inside the name is a convention, and a new tool; upstream may prefer a field on the session. Builds on 6t. Tests: `tests/test_name_upkeep.py`, the news one in `tests/test_news.py`.
 
 ### 6u. A news line on every result, replacing whats_new — fork "Tell the relay in every result what it hasn't read yet", "Remove whats_new now that every result carries the news", "Keep a reply as news until the relay reads it, even after another send", "Follow a session from a message until its answer is read", "Follow sessions per relay handle", "Keep a session in a quiet follow once its reply is read", "Count a message the relay channel delivers as a turn", "Give a chat without an MCP session a handle and its news", "Refuse to stop a session whose reply a relay hasn't read", "Don't hold a stop for a reply sent to a Claude Code session"
 

@@ -16,11 +16,10 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 LONGEST = 64
-# Around a name an agent chose, so the owner sees it may change by itself; braces, which a voice
-# leaves unsaid and nothing else in the bridge puts around a word (owner, 2026-11-13).
-OPEN, CLOSE = "{", "}"
-# Claude Code's nameSource for a title it made itself, which nobody chose.
-AUTOMATIC = {"auto", "derived"}
+# Anywhere in a name, marks it as the owner's, in the name Claude Code and the app show, so the
+# owner sees which names are protected (owner, 2026-11-26). Claude Code's own record can't tell:
+# it records a title given at launch as chosen by someone, as it does a name the owner gave.
+MARK = "*"
 
 
 def clean(name: str) -> str:
@@ -36,29 +35,19 @@ def valid(name: str) -> bool:
 
 
 def is_marked(name: str) -> bool:
-    """Whether a name is in the braces that mark a name an agent chose."""
-    name = name.strip()
-    return len(name) > 2 and name.startswith(OPEN) and name.endswith(CLOSE)
+    """Whether a name holds the asterisk that marks it as the owner's."""
+    # RULE: an asterisk anywhere makes a name the owner's
+    return MARK in name
 
 
 def bare(name: str) -> str:
-    """A name without its braces: said aloud, a name comes back without them."""
-    return name.strip()[1:-1].strip() if is_marked(name) else name.strip()
-
-
-def marked(name: str) -> str:
-    """A name an agent chose, in one pair of braces, within LONGEST characters."""
-    return OPEN + bare(name)[: LONGEST - 2].strip() + CLOSE
+    """A name without its asterisks: said aloud, a name comes back without them."""
+    return " ".join(name.replace(MARK, "").split())
 
 
 def owners(d: dict[str, Any]) -> bool:
-    """Whether the owner chose this running session's name: not marked, and not Claude Code's own
-    automatic title (the bridge's name on top of it doesn't count as automatic)."""
-    name = str(d.get("name") or "")
-    if is_marked(name):
-        return False
-    # RULE: claude code's own title may be renamed by an agent
-    return d.get("deliver_to") is not None or d.get("nameSource") not in AUTOMATIC
+    """Whether this running session's name is the owner's: whether it holds the asterisk."""
+    return is_marked(str(d.get("name") or ""))
 
 
 # A status in round brackets at the end of a name, such as " (waiting)".
@@ -95,14 +84,14 @@ def apply(rows: Iterable[dict[str, Any]], names: dict[str, tuple[str, str]], ali
 
 def called(d: dict[str, Any], session: str, old_names: bool = False, any_case: bool = False) -> bool:
     """Whether `session` names this running session: by name or id, or with `old_names`
-    by a name it had before; with `any_case`, whatever the capitals and the marker."""
+    by a name it had before; with `any_case`, whatever the capitals and the asterisk."""
 
     def same(a: Any) -> bool:
         if a is None:
             return False
         name, wanted = str(a), session
         if any_case:
-            # RULE: a session is found by its name without the marker
+            # RULE: a session is found by its name without the asterisk
             name, wanted = bare(name), bare(wanted)
         # RULE: a session name is found whatever its capitals
         return name.casefold() == wanted.casefold() if any_case else name == wanted
@@ -156,19 +145,18 @@ def taken(rows: Iterable[dict[str, Any]], but: str | None = None) -> set[str]:
 
 
 def in_use(name: str, rows: Iterable[dict[str, Any]], but: str | None = None) -> bool:
-    """Whether `name` is taken, its marker aside: names that differ only by it would be found as one."""
-    # RULE: a name that differs only by the marker is in use
+    """Whether `name` is taken, its asterisk aside: names that differ only by it would be found as one."""
+    # RULE: a name that differs only by the asterisk is in use
     return bare(name) in {bare(n) for n in taken(rows, but)}
 
 
 def unique(wanted: str, taken_names: set[str]) -> str:
-    """`wanted`, or with a short suffix until no name in `taken_names` has it, inside its braces if it has them."""
-    mark, base = is_marked(wanted), bare(wanted)
+    """`wanted`, or with a short suffix until no name in `taken_names` has it, its asterisk aside."""
     bares = {bare(n) for n in taken_names}
-    name = base
-    while name in bares:
-        name = f"{base}-{secrets.token_hex(2)}"
-    return marked(name) if mark else name
+    name = wanted
+    while bare(name) in bares:
+        name = f"{wanted}-{secrets.token_hex(2)}"
+    return name
 
 
 class Tmux:

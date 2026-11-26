@@ -75,13 +75,13 @@ async def test_a_started_session_runs_in_the_background_and_is_listed_at_once(tm
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
     assert out["started_in"] == "background" and "note" not in out
     assert {k: out[k] for k in ("name", "claude_session_id", "folder", "status")} == {
-        "name": "{invoices}",  # a name the relay chose
-        "claude_session_id": "sid-{invoices}",
+        "name": "invoices",
+        "claude_session_id": "sid-invoices",
         "folder": "billing",
         "status": "idle",
     }
-    assert starter.calls == [(str(world[0] / "billing"), "{invoices}")]
-    assert "{invoices}" in {r["name"] for r in listed["sessions"]}
+    assert starter.calls == [(str(world[0] / "billing"), "invoices")]
+    assert "invoices" in {r["name"] for r in listed["sessions"]}
 
 
 async def test_without_a_name_one_is_made_from_the_folder_and_never_clashes(tmp_path, world):
@@ -89,8 +89,7 @@ async def test_without_a_name_one_is_made_from_the_folder_and_never_clashes(tmp_
     async with Client(bridge(tmp_path, world, starter)) as c:
         first = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
         second = (await c.call_tool("start_active_session", {"folder": "billing"})).structured_content
-    # Made by the bridge, not the owner, so in the braces that mark an agent's name.
-    assert first["name"].startswith("{billing-") and second["name"].startswith("{billing-")
+    assert first["name"].startswith("billing-") and second["name"].startswith("billing-")
     assert second["name"] != first["name"]  # no name given: a new session each time
 
 
@@ -221,8 +220,8 @@ async def test_a_message_to_a_session_claude_code_closed_for_low_memory_resumes_
 
 
 async def test_a_session_not_running_is_found_by_its_name_the_way_a_running_one_is(tmp_path, world):
-    # Seen 2026-11-14 (ledger F88): a session named {bridge stop keeps session listed}, closed for low
-    # memory, messaged by its name said without the braces as the guide says, got "No running
+    # Seen 2026-11-14 (ledger F88): a session named "bridge stop keeps session listed", closed for low
+    # memory, messaged by its name, got "No running
     # session"; its id resumed it. Said aloud, the capitals may differ too.
     async def known():
         return {OLD}
@@ -242,7 +241,7 @@ async def test_a_session_not_running_is_found_by_its_name_the_way_a_running_one_
     server = resuming(
         tmp_path, world, starter, background_sessions=known, deliver=deliver, daemon_log=log, jobs_dir=jobs
     )
-    Store(tmp_path / "b.db").record_started(OLD, "{Prompt test}", str(root / "billing"))
+    Store(tmp_path / "b.db").record_started(OLD, "Prompt test", str(root / "billing"))
     async with Client(server) as c:
         out = (
             await c.call_tool("message_active_session", {"session": "prompt test", "message": "Hi"})
@@ -437,7 +436,7 @@ async def test_a_session_the_bridge_started_can_be_stopped_and_is_gone_after(tmp
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
         again = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
     assert out == {"name": "invoices", "status": "stopped"}
-    assert stopper.calls == ["sid-{invoices}"]
+    assert stopper.calls == ["sid-invoices"]
     assert "invoices" not in {r["name"] for r in listed["sessions"]}
     assert again["status"] == "not_running"
 
@@ -456,7 +455,7 @@ async def test_an_idle_background_session_with_remote_control_is_parked_not_stop
     assert out["status"] == "parked" and stopper.calls == []
     # Said for the owner, who asked to stop it and will still see it in the app.
     assert "about 8 hours after it last worked" in out["say"] and "now=true" in out["say"]
-    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-{invoices}")
+    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-invoices")
     assert row["parked"] is True and row["status"] == "idle"
 
 
@@ -468,8 +467,8 @@ async def test_a_session_stopped_now_is_stopped_at_once_even_when_idle(tmp_path,
         out = (await c.call_tool("stop_active_session", {"name": "invoices", "now": True})).structured_content
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
     assert parked["status"] == "parked"
-    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
-    assert "sid-{invoices}" not in {r["claude_session_id"] for r in listed["sessions"]}
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-invoices"]
+    assert "sid-invoices" not in {r["claude_session_id"] for r in listed["sessions"]}
 
 
 async def test_a_session_at_work_is_stopped_at_once_even_with_remote_control(tmp_path, world):
@@ -479,7 +478,7 @@ async def test_a_session_at_work_is_stopped_at_once_even_with_remote_control(tmp
     async with Client(bridge_with_stop(tmp_path, world, busy, stopper)) as c:
         await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
-    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-invoices"]
 
 
 async def test_an_idle_session_with_a_background_task_still_running_is_stopped_at_once(tmp_path, world):
@@ -491,7 +490,7 @@ async def test_an_idle_session_with_a_background_task_still_running_is_stopped_a
     async with Client(bridge) as c:
         await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
-    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-{invoices}"]
+    assert out == {"name": "invoices", "status": "stopped"} and stopper.calls == ["sid-invoices"]
 
 
 async def test_a_parked_mark_goes_once_its_session_is_no_longer_running(tmp_path, world):
@@ -500,9 +499,9 @@ async def test_a_parked_mark_goes_once_its_session_is_no_longer_running(tmp_path
         await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         await c.call_tool("stop_active_session", {"name": "invoices"})
         parked = Store(tmp_path / "b.db").get_setting("parked")
-        (live / "{invoices}.json").unlink()  # Claude Code closed it
+        (live / "invoices.json").unlink()  # Claude Code closed it
         await c.call_tool("list_active_sessions", {})
-    assert set(parked) == {"sid-{invoices}"}
+    assert set(parked) == {"sid-invoices"}
     assert Store(tmp_path / "b.db").get_setting("parked") == {}
 
 
@@ -511,12 +510,12 @@ async def test_a_session_shows_as_parked_only_until_it_works_again(tmp_path, wor
     async with Client(bridge_with_stop(tmp_path, world, Starter(live, entry=REMOTE), Stopper(live))) as c:
         await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
         await c.call_tool("stop_active_session", {"name": "invoices"})
-        entry = live / "{invoices}.json"
+        entry = live / "invoices.json"
         # The owner wrote to it from the app: it worked, and is at rest again.
         worked = {**json.loads(entry.read_text(encoding="utf-8")), "statusUpdatedAt": 4_102_444_800_000}
         entry.write_text(json.dumps(worked))
         listed = (await c.call_tool("list_active_sessions", {})).structured_content
-    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-{invoices}")
+    row = next(r for r in listed["sessions"] if r["claude_session_id"] == "sid-invoices")
     assert "parked" not in row
 
 
