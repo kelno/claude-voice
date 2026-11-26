@@ -19,8 +19,6 @@ from typing import Any
 from . import config, relay_notes, roles
 from .server import (
     GUIDE_NOTE,
-    NAME_CHECK_FREE,
-    NAME_CHECK_OWNERS,
     RELAYED_MESSAGE_NOTE,
     build_server,
     session_note,
@@ -45,14 +43,6 @@ NOTES = (
     (
         f"under a question the Claude Code session {SENDER} asks with ask_active_session",
         session_note(SENDER, waits=True),
-    ),
-    (
-        "after that note, at most once an hour per session, when an agent chose the session's name",
-        NAME_CHECK_FREE.format(name=NAME),
-    ),
-    (
-        "after that note, at most once an hour per session, when the owner chose the session's name",
-        NAME_CHECK_OWNERS.format(name=NAME),
     ),
 )
 

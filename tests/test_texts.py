@@ -70,8 +70,6 @@ async def test_the_notes_under_a_relayed_message_have_placeholders_where_values_
     assert RELAYED_MESSAGE_NOTE in said.values()
     assert session_note("<sender>", waits=False) in said.values()
     assert session_note("<sender>", waits=True) in said.values()
-    checks = [t for t in said.values() if "about once an hour" in t]
-    assert len(checks) == 2 and all('"<session name>"' in t for t in checks)
     assert all(w and not re.search(r"\{\w+\}", t) for w, t in said.items())
 
 

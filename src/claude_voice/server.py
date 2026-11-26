@@ -167,23 +167,6 @@ def session_note(sender: str, waits: bool) -> str:
     return relayed_note(f"{sender}, a Claude Code session", answer)
 
 
-# Added after the note above at most once in this long per session, so names keep up with the work
-# (owner, 2026-11-13): the bridge can only reach a session with a message it relays anyway.
-NAME_CHECK_SECONDS = 3600.0
-# A session's name check clock is forgotten once it is this old, so the store doesn't keep every id.
-NAME_CHECKED_KEEP_SECONDS = 30 * 86400.0
-NAME_CHECK_FREE = (
-    '[From the claude-voice bridge, about once an hour: this session is named "{name}". If that no longer '
-    'says what it is working on, rename it with the bridge\'s rename_session tool (session "{name}"); the '
-    "bridge puts it in the braces {{ }} that mark a name an agent chose. If it still fits, do nothing and don't "
-    "mention this.]"
-)
-NAME_CHECK_OWNERS = (
-    '[From the claude-voice bridge, about once an hour: this session is named "{name}", which the owner '
-    "chose, so only the owner renames it. If that no longer says what it is working on, propose a new name "
-    "with the bridge's propose_session_name tool, for the relay to put to the owner. If it still fits, do "
-    "nothing and don't mention this.]"
-)
 OWNERS_NAME_REFUSAL = (
     'The owner chose the name "{name}", so only the owner renames it: propose the new name with '
     "propose_session_name instead. The relay puts it to the owner, and renames with owner_chose true once "
@@ -4287,7 +4270,7 @@ def build_server(
         """Propose a new name for a session the owner named; the owner decides.
         For a name in curly braces, an agent's, use rename_session instead. The proposal shows on the session's row in
         list_active_sessions and once in each relay's news, for a day or until it is renamed; a
-        later proposal replaces it, and no name check comes meanwhile."""
+        later proposal replaces it."""
         new_name = renames.clean(new_name)
         if not renames.valid(new_name):
             raise ToolError("A session name needs at least one visible character.")
@@ -4348,7 +4331,7 @@ def build_server(
         budget = repos.budgets.seconds(transcripts.current_client.get())
         # Upstream says what box holds the session up; here only once answering by voice is on.
         behind = answers.queued_behind(target, prompt_book, projects_dir) if answering_on else {}
-        delivery = asyncio.ensure_future(send_into(target, relayed(target, message, await relay_note(waits=False))))
+        delivery = asyncio.ensure_future(send_into(target, relayed(message, await relay_note(waits=False))))
         try:
             out = await asyncio.wait_for(asyncio.shield(delivery), budget)
         except TimeoutError:
@@ -4367,12 +4350,6 @@ def build_server(
             **behind,
         }
 
-    def name_checked() -> dict[str, float]:
-        """Session id: when its name was last checked, or first seen; kept in the store, since the
-        bridge restarts often and a clock in memory started over each time."""
-        # RULE: the name check clock survives a bridge restart
-        return dict(manager.store.get_setting("name_checked") or {})
-
     async def relay_note(waits: bool) -> str:
         """The note under a relayed message, by who sends it: the claude.ai relay, which has no inbox,
         or a Claude Code session on this PC, answered by direct message unless it waits for the reply."""
@@ -4382,29 +4359,9 @@ def build_server(
             return RELAYED_MESSAGE_NOTE
         return session_note(sender, waits)
 
-    def relayed(target: dict[str, Any], message: str, note: str = RELAYED_MESSAGE_NOTE) -> str:
-        """A relayed message as the session gets it: the bridge's note after it, and about once an hour
-        a check that its name still fits. A session first seen gets none, its name being new."""
-        text = f"{message}\n\n{note}"
-        sid, now, checked = str(target.get("sessionId")), manager.clock(), name_checked()
-        last = checked.setdefault(sid, now)
-        if last == now:
-            keep_name_checked(checked, now)
-        # RULE: the name check comes once an hour on the next relayed message
-        if now - last < NAME_CHECK_SECONDS:
-            return text
-        # RULE: no name check while a proposal waits for the owner
-        if name_proposal(target):
-            return text
-        checked[sid] = now
-        keep_name_checked(checked, now)
-        check = NAME_CHECK_OWNERS if renames.owners(target) else NAME_CHECK_FREE
-        return f"{text}\n\n{check.format(name=str(target.get('name')))}"
-
-    def keep_name_checked(checked: dict[str, float], now: float) -> None:
-        """Save the name check clocks, leaving out those not reset for a month."""
-        recent = {sid: at for sid, at in checked.items() if now - at < NAME_CHECKED_KEEP_SECONDS}
-        manager.store.set_setting("name_checked", recent)
+    def relayed(message: str, note: str = RELAYED_MESSAGE_NOTE) -> str:
+        """A relayed message as the session gets it: the bridge's note after it."""
+        return f"{message}\n\n{note}"
 
     def owner_typed(target: dict[str, Any]) -> dict[str, str]:
         """The note for a send to a session the owner typed in since the relay last read it."""
@@ -4691,7 +4648,7 @@ def build_server(
         before = len(numbered_turns(target))
         typed = owner_typed(target)
         was_busy = target.get("status") in BUSY
-        out = await send_into(target, relayed(target, message, await relay_note(waits=True)))
+        out = await send_into(target, relayed(message, await relay_note(waits=True)))
         if not out.get("delivered"):
             raise await undelivered(out)
 

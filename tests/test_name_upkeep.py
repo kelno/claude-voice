@@ -1,9 +1,8 @@
-"""Keeping session names current: who chose a name, shown by a marker, and a check now and then.
+"""Keeping session names current: who chose a name, shown by a marker.
 
 A name an agent chose is in curly braces, so the owner sees it may change by itself. An agent
 may rename such a session, and Claude Code's own automatic title; a name the owner chose is renamed
-only at the owner's request (owner_chose), so a session only proposes one. About once an hour, the
-note after a relayed message asks the session whether its name still fits."""
+only at the owner's request (owner_chose), so a session only proposes one."""
 
 import json
 import os
@@ -14,7 +13,7 @@ from test_launch import Starter, bridge
 from test_rename import Recorder, call, names, write
 
 from claude_voice import renames
-from claude_voice.server import RELAYED_MESSAGE_NOTE, build_server
+from claude_voice.server import build_server
 from claude_voice.sessions import SessionManager
 from claude_voice.store import Store
 
@@ -146,65 +145,6 @@ async def test_a_name_that_differs_only_by_the_marker_is_in_use(tmp_path, root, 
     assert res.is_error and "in use" in res.content[0].text
 
 
-def checks(deliver):
-    """For each message sent, the name check after the bridge's note, or None."""
-    out = []
-    for _, text in deliver.sent:
-        after = text.split(RELAYED_MESSAGE_NOTE, 1)[1].strip()
-        out.append(after or None)
-    return out
-
-
-async def test_the_name_check_comes_once_an_hour_on_the_next_relayed_message(tmp_path, root, live):
-    session(live, root, "{billing}")
-    deliver, clock = Recorder(), Clock()
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="{billing}", message="one")
-        clock.now += HOUR - 60
-        await call(c, "message_active_session", session="{billing}", message="two")
-        clock.now += 120
-        await call(c, "message_active_session", session="billing", message="three")
-        clock.now += 60
-        await call(c, "message_active_session", session="billing", message="four")
-    first, second, third, fourth = checks(deliver)
-    assert first is None and second is None and fourth is None
-    assert '"{billing}"' in third and "rename_session" in third
-
-
-async def test_the_name_check_clock_survives_a_bridge_restart(tmp_path, root, live):
-    # The bridge restarts often; a session messaged in short bursts after each restart was never checked.
-    session(live, root, "{billing}")
-    deliver, clock = Recorder(), Clock()
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="{billing}", message="before the restart")
-    clock.now += HOUR
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="{billing}", message="after the restart")
-    assert checks(deliver)[1] is not None
-
-
-async def test_the_name_check_asks_for_a_proposal_when_the_owner_chose_the_name(tmp_path, root, live):
-    session(live, root, "Billing", source="user")
-    deliver, clock = Recorder(), Clock()
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="Billing", message="one")
-        clock.now += HOUR
-        await call(c, "message_active_session", session="Billing", message="two")
-    check = checks(deliver)[1]
-    assert "the owner chose" in check and "propose_session_name" in check
-    assert "rename_session" not in check
-
-
-async def test_a_relayed_message_with_a_name_check_still_reads_as_one_line(tmp_path, root, live):
-    session(live, root, "{billing}")
-    deliver, clock = Recorder(), Clock()
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="{billing}", message="one")
-        clock.now += HOUR
-        await call(c, "message_active_session", session="{billing}", message="two")
-    assert deliver.sent[1][1].startswith("two\n\n" + RELAYED_MESSAGE_NOTE)
-
-
 @pytest.fixture
 def world(tmp_path):
     """A folder to start sessions in, as tests/test_launch.py sets it up."""
@@ -262,18 +202,3 @@ async def test_a_name_proposal_outlasts_a_bridge_restart(tmp_path, root, live):
     async with Client(server(tmp_path, root, live)) as c:
         row = (await rows(c))["Billing"]
     assert row["name_proposal"]["name"] == "billing export"
-
-
-async def test_no_name_check_while_a_proposal_waits_for_the_owner(tmp_path, root, live):
-    # A proposal the owner turned down would come back every hour otherwise.
-    session(live, root, "Billing", source="user")
-    deliver, clock = Recorder(), Clock()
-    async with Client(server(tmp_path, root, live, deliver=deliver, clock=clock)) as c:
-        await call(c, "message_active_session", session="Billing", message="one")
-        await call(c, "propose_session_name", session="Billing", new_name="payroll", why="work moved")
-        clock.now += HOUR
-        await call(c, "message_active_session", session="Billing", message="two")
-        clock.now += 24 * HOUR
-        await call(c, "message_active_session", session="Billing", message="three")
-    first, second, third = checks(deliver)
-    assert second is None and third is not None
