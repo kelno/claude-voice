@@ -73,6 +73,7 @@ def test_what_moved_to_the_relays_notes_left_the_manual():
 
 def test_the_manual_says_what_the_asterisk_in_a_name_means():
     assert "with an asterisk, such as billing*, is the owner's" in MANUAL and "owner_chose true" in MANUAL
-    # A voice rename of the owner's name keeps it protected (owner, 2026-11-26).
-    assert "rename of a name that has one keeps it, unless the owner says to drop it" in MANUAL
+    # A name the owner gives is protected by default, and a rename keeps it so (owner, 2026-11-26).
+    assert "a name the owner gives gets an asterisk unless they say not to" in MANUAL
+    assert "rename of a name that has one keeps it unless they say to drop it" in MANUAL
     assert "curly braces" not in MANUAL
