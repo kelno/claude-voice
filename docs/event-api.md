@@ -14,7 +14,9 @@ Only this computer and devices on the owner's tailnet. The bridge refuses
 reached through Tailscale Funnel even though the MCP endpoint is. Behind
 Tailscale the address that counts is the last one in `X-Forwarded-For`, the one
 Tailscale adds; a caller cannot get past by writing a tailnet address there
-itself. A UI reaches the bridge through a tailnet-only `tailscale serve` port,
+itself. That header counts only on a request from this computer, where Tailscale
+connects from: a request from another machine is that machine's, whatever it
+writes there. A UI reaches the bridge through a tailnet-only `tailscale serve` port,
 over HTTPS by name or over plain HTTP at the computer's tailnet address. The
 tailnet encrypts both.
 

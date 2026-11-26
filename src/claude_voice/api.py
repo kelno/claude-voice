@@ -53,14 +53,19 @@ PRIVATE_PATHS = ("/api/", "/ui")
 def caller_address(scope: Scope) -> str:
     """Where a request really comes from. Tailscale, for Funnel and for the tailnet port
     alike, connects from this computer and adds the caller to X-Forwarded-For; anything a
-    caller wrote there itself comes before that, so only the last entry counts."""
+    caller wrote there itself comes before that, so only the last entry counts. A request
+    from another machine is that machine's: whatever reaches the bridge directly could write
+    X-Forwarded-For itself, and pass for this computer or the tailnet."""
+    peer = str((scope.get("client") or ("", 0))[0])
+    # RULE: another machine cannot claim to be here or on the tailnet
+    if not _loopback(peer):
+        return peer
     for name, value in scope.get("headers") or []:
         if name == b"x-forwarded-for":
             last = value.decode("latin-1").split(",")[-1].strip()
             if last:
                 return last
-    client = scope.get("client") or ("", 0)
-    return str(client[0])
+    return peer
 
 
 def from_tailnet_or_here(address: str) -> bool:

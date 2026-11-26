@@ -353,6 +353,13 @@ In the order they'd best be offered. Each fork commit already follows upstream's
 - Expect pushback: deleting the lock is how the sweep asks whether it is held, which is a probe that acts; it only acts when nobody holds the lock. No owner is compared on Windows, where the temporary folder is the user's own.
 - Test first: `tests/test_held_folder_everywhere.py` was written first and seen failing on Windows.
 
+### 25. X-Forwarded-For read only from this computer — fork "Read X-Forwarded-For only from a proxy on this computer"
+
+- What: `caller_address` (`api.py`) reads the last `X-Forwarded-For` entry only when the request comes from this computer, as Tailscale's do; a request from another machine is that machine's address.
+- Why upstream would want it: anything that reaches the bridge's port directly (another machine on the LAN, a VPN peer, a container) can send `X-Forwarded-For: 127.0.0.1` and pass the gate on `/api/` and `/ui`, which then stands on the bearer token and sign-in alone. Tailscale's serve and Funnel connect from this computer, so they work as before.
+- Expect pushback: a proxy on another machine (nginx on a server, say) no longer passes on its caller's address, so the bridge sees the proxy. The event API stays closed through it, as before, since its callers were never this computer or the tailnet.
+- Test first: `test_another_machine_cannot_claim_to_be_here_or_on_the_tailnet` was written first and seen failing.
+
 ## Not for upstream
 
 - The owner's setup around the fork (Windows service scripts, the server proxy, its values and working notes), kept in a private repository: specific to that setup.

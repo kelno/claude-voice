@@ -23,6 +23,7 @@ SECRET = "s3cret-token-for-the-confirm-tests-x"
 PUBLIC = "http://127.0.0.1:8811"
 ANTHROPIC = "160.79.106.179"  # where the Claude app's calls come from
 PHONE = "10.40.70.5"  # the owner's phone, on the VPN
+PROXY = "10.40.70.1"  # nginx on the server, which reaches the bridge over the VPN
 
 
 # -- the requests ----------------------------------------------------------------------
@@ -176,9 +177,10 @@ def bridge(tmp_path, monkeypatch):
 
 
 @contextlib.asynccontextmanager
-async def reached(server):
-    """The bridge over HTTP, as the Claude app, Claude Code and the owner's phone reach it."""
-    transport = httpx.ASGITransport(app=build_app(server), client=("127.0.0.1", 4321))
+async def reached(server, peer="127.0.0.1"):
+    """The bridge over HTTP, as the Claude app, Claude Code and the owner's phone reach it,
+    through a proxy at `peer`."""
+    transport = httpx.ASGITransport(app=build_app(server), client=(peer, 4321))
     async with (
         server.session_manager.run(),
         httpx.AsyncClient(transport=transport, base_url=PUBLIC) as c,
@@ -292,6 +294,16 @@ async def test_the_page_refuses_whoever_reaches_it_from_the_internet(bridge):
         link = outcome(await call(app, "confirm_link", {"code": code}))["link"]
         assert (await app.get(path_of(link), headers={"x-forwarded-for": ANTHROPIC})).status_code == 403
         assert (await owner_confirms(app, link, key, address=ANTHROPIC)).status_code == 403
+
+
+async def test_the_owner_confirms_through_a_proxy_on_another_machine(bridge):
+    async with reached(bridge["server"], peer=PROXY) as app:
+        key = await owner_registers(app, bridge["store"])
+        transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
+        code = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))["code"]
+        link = outcome(await call(app, "confirm_link", {"code": code}))["link"]
+        assert (await app.get(path_of(link), headers={"x-forwarded-for": PHONE})).status_code == 200
+        assert (await owner_confirms(app, link, key)).status_code == 200
 
 
 async def test_a_folder_opens_only_once_the_owner_confirms_it(bridge, tmp_path):

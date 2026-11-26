@@ -1,0 +1,6 @@
+[[rule]]
+name = "another machine cannot claim to be here or on the tailnet"
+file = "src/claude_voice/api.py"
+find = 'if not _loopback\(peer\):'
+replace = 'if False:'
+occurrence = 1

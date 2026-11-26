@@ -316,6 +316,25 @@ async def test_behind_tailscale_the_address_tailscale_added_last_decides(bridge,
     assert api.status_code == code
 
 
+@pytest.mark.parametrize("forwarded", ["127.0.0.1", "::1", "100.101.102.103"])
+async def test_another_machine_cannot_claim_to_be_here_or_on_the_tailnet(bridge, forwarded):
+    # A container or VPN peer reaching the bridge directly writes X-Forwarded-For itself.
+    _, app, _, _ = bridge
+    async with from_address(app, "10.40.70.9") as c:
+        api = await c.get("/api/v1/sessions", headers={**BEARER, "X-Forwarded-For": forwarded})
+        ui = await c.get("/ui/", headers={"X-Forwarded-For": forwarded})
+    assert api.status_code == 403 and ui.status_code == 403
+
+
+async def test_through_a_proxy_on_another_machine_the_event_api_stays_closed_and_mcp_open(bridge):
+    _, app, _, _ = bridge
+    async with from_address(app, "10.40.70.1") as c:  # nginx on the server, passing on a phone on the VPN
+        api = await c.get("/api/v1/sessions", headers={**BEARER, "X-Forwarded-For": "10.40.70.5"})
+        mcp = await c.post("/mcp", json={}, headers={"X-Forwarded-For": "10.40.70.5"})
+    assert api.status_code == 403
+    assert mcp.status_code == 401  # reached, behind its own login
+
+
 @pytest.mark.parametrize(("proto", "secure"), [("http", False), ("https", True)])
 async def test_the_sign_in_cookie_follows_the_scheme_the_request_came_in_on(tmp_path, root, live, proto, secure):  # noqa: F811
     store = Store(tmp_path / "b.db")
