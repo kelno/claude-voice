@@ -19,7 +19,12 @@ from typing import Any
 from .store import Store
 
 REQUEST_SECONDS = 15 * 60
-FIND_SECONDS = 3.0  # how long to look for a call in its session's transcript
+# How long to look for a call in its session's transcript. Claude Code may write the call there
+# seconds after sending it: 4.5 s and over 6 s late on 2026-11-27, past the 3 s once allowed
+# (ledger F230). Only a call that is never found waits it all.
+FIND_SECONDS = 20.0
+FIND_PAUSE = 0.25  # between two looks
+FIND_CLOCK: Callable[[], float] = time.monotonic  # what the search is timed by
 MAX_SUMMARY = 300  # read on a phone, so short
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, to be read aloud
 # At the running commit, so a session weighs the design of the code it is actually trusting (owner,

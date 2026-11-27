@@ -6,6 +6,7 @@ Design and reasoning: docs/owner-confirmation.md, ADR-CV-106.
 import asyncio
 import contextlib
 import json
+import math
 import time
 
 import httpx
@@ -324,6 +325,52 @@ async def test_a_caller_no_session_on_this_pc_made_cannot_ask(bridge, monkeypatc
     async with reached(bridge["server"]) as app:
         refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_nowhere")
     assert refused.get("isError")
+
+
+def written_late(bridge, monkeypatch, lands_at: float, round_takes: float) -> list[float]:
+    """The call reaches the transcript `lands_at` seconds into the bridge's search, on a clock that
+    each round of the search moves on by `round_takes`; returns the clock at each round."""
+    transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_late")
+    find = transcripts.session_of_tool_use
+    clock = [0.0]
+    searching = [False]  # other lookups run before the call's own search; they find nothing yet
+    rounds: list[float] = []
+
+    def look(tool_use_id, sessions, projects_dir):
+        if not searching[0]:
+            return None
+        rounds.append(clock[0])
+        clock[0] += round_takes
+        return find(tool_use_id, sessions, projects_dir) if rounds[-1] >= lands_at else None
+
+    def now():
+        searching[0] = True
+        return clock[0]
+
+    monkeypatch.setattr(transcripts, "session_of_tool_use", look)
+    monkeypatch.setattr(confirm, "FIND_CLOCK", now)
+    monkeypatch.setattr(confirm, "FIND_PAUSE", 0.001)
+    return rounds
+
+
+async def test_a_call_its_session_writes_down_seconds_later_is_still_found(bridge, monkeypatch):
+    # Claude Code may write a call to its transcript seconds after sending it: on 2026-11-27 one
+    # session's call was written about 4.5 s late, and two more over 6 s late, past the 3 s the
+    # bridge looked for them, so the owner's request was refused (ledger F230).
+    written_late(bridge, monkeypatch, lands_at=6.5, round_takes=0.25)
+    async with reached(bridge["server"]) as app:
+        asked = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
+    assert not asked.get("isError"), asked
+    assert outcome(asked)["code"]
+
+
+async def test_the_search_for_a_call_ends_by_the_clock(bridge, monkeypatch):
+    # Each round reads every running session's transcript: slow rounds must not stretch the wait.
+    rounds = written_late(bridge, monkeypatch, lands_at=math.inf, round_takes=5.0)
+    async with reached(bridge["server"]) as app:
+        refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
+    assert refused.get("isError")
+    assert rounds[-1] < confirm.FIND_SECONDS <= rounds[-1] + 5.0  # no round begun past the end
 
 
 async def test_a_call_with_no_call_id_is_refused_at_once(bridge):
