@@ -25,6 +25,7 @@ REQUEST_SECONDS = 15 * 60
 FIND_SECONDS = 20.0
 FIND_PAUSE = 0.25  # between two looks
 FIND_CLOCK: Callable[[], float] = time.monotonic  # what the search is timed by
+FIND_SLOW = 1.0  # a call found later than this is logged, with how late
 MAX_SUMMARY = 300  # read on a phone, so short
 CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O or 1/I, to be read aloud
 # At the running commit, so a session weighs the design of the code it is actually trusting (owner,

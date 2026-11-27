@@ -4045,6 +4045,10 @@ def build_server(
             sid = transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
             took = confirm.FIND_CLOCK() - began
             if sid:
+                # How late Claude Code wrote it (ledger F230, Q181), counted from this search, which may
+                # begin up to a second after the call arrived (the relay-handle lookup runs first).
+                if took > confirm.FIND_SLOW:
+                    log.info("found call %s in its transcript after %.1f s", tool_use, took)
                 return next(d for d in running_now if str(d.get("sessionId")) == sid)
             if took >= confirm.FIND_SECONDS:
                 raise ToolError(refusal)

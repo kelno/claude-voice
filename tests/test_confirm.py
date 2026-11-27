@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import math
+import re
 import time
 
 import httpx
@@ -371,6 +372,15 @@ async def test_the_search_for_a_call_ends_by_the_clock(bridge, monkeypatch):
         refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
     assert refused.get("isError")
     assert rounds[-1] < confirm.FIND_SECONDS <= rounds[-1] + 5.0  # no round begun past the end
+
+
+async def test_a_call_found_late_is_logged_with_how_late(bridge, monkeypatch, caplog):
+    # So the next late write shows how late it was, and whether the wait is long enough (review, F230).
+    written_late(bridge, monkeypatch, lands_at=6.5, round_takes=0.25)
+    with caplog.at_level("INFO", logger="claude_voice"):
+        async with reached(bridge["server"]) as app:
+            await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
+    assert any(re.search(r"toolu_late in its transcript after 6\.\d s", r.getMessage()) for r in caplog.records)
 
 
 async def test_a_call_with_no_call_id_is_refused_at_once(bridge):
