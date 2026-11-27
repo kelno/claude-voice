@@ -9,6 +9,7 @@ stands for the owner's OK, and its limits: docs/owner-confirmation.md.
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
 import secrets
 import time
@@ -19,10 +20,13 @@ from typing import Any
 from .store import Store
 
 REQUEST_SECONDS = 15 * 60
-# How long to look for a call in its session's transcript. Claude Code may write the call there
-# seconds after sending it: 4.5 s and over 6 s late on 2026-11-27, past the 3 s once allowed
-# (ledger F230). Only a call that is never found waits it all.
-FIND_SECONDS = 20.0
+# How long to look for a call in its session's transcript before answering with a receipt. Claude
+# Code may write the call there only together with its result (ledger F230, Q181), so waiting longer
+# can't find that one; the receipt finds it after the answer (ADR-CV-109).
+FIND_SECONDS = 3.0
+# How long a receipt can be used: its retry comes seconds later, and anyone who reads the session's
+# transcript can read the receipt there (ADR-CV-109, "Consequences").
+RECEIPT_SECONDS = 2 * 60
 FIND_PAUSE = 0.25  # between two looks
 FIND_CLOCK: Callable[[], float] = time.monotonic  # what the search is timed by
 FIND_SLOW = 1.0  # a call found later than this is logged, with how late
@@ -67,6 +71,98 @@ current_caller: contextvars.ContextVar[Caller] = contextvars.ContextVar("current
 def caller_from(meta: Mapping[str, Any]) -> Caller:
     tool_use = meta.get("claudecode/toolUseId")
     return Caller(str(tool_use) if tool_use else None)
+
+
+class Receipts:
+    """Calls answered before the bridge could tell which session made them (ADR-CV-109).
+
+    A receipt stands for one such call. Its retry brings the receipt back, and by then the first call
+    is in its session's transcript, written there with its answer: the bridge finds that session by
+    the first call's id, as if it had been found in time.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.time) -> None:
+        self.clock = clock
+        self._open: dict[str, Held] = {}
+        # Receipts a retry took, until they would have expired: one brought again shows that two calls
+        # had it, which a reader of the session's transcript could be (ADR-CV-109).
+        self._taken: dict[str, float] = {}  # receipt -> given at
+
+    def _forget_expired(self) -> None:
+        now = self.clock()
+        for receipt in [r for r, held in self._open.items() if now - held.given_at > RECEIPT_SECONDS]:
+            del self._open[receipt]
+        for receipt in [r for r, at in self._taken.items() if now - at > RECEIPT_SECONDS]:
+            del self._taken[receipt]
+
+    def was_taken(self, receipt: str) -> bool:
+        """Whether a retry already took this receipt, within its two minutes."""
+        self._forget_expired()
+        return receipt in self._taken
+
+    def give(self, tool: str, arguments: str, tool_use_id: str) -> str:
+        """A new receipt for this call of `tool` with these `arguments`."""
+        self._forget_expired()
+        receipt = secrets.token_urlsafe(12)
+        self._open[receipt] = Held(tool, digest(arguments), tool_use_id, self.clock())
+        return receipt
+
+    def take(self, receipt: str, tool: str, arguments: str) -> Held | None:
+        """The call this receipt stands for, while it is open for `tool` and these `arguments`. It is
+        taken out at once, so two retries at the same time can't both use it: put_back returns it."""
+        self._forget_expired()
+        held = self._open.get(receipt)
+        # RULE: a receipt works only for the tool that gave it
+        if not held or held.tool != tool:
+            return None
+        # RULE: a receipt works only with the arguments of the call that gave it
+        if held.arguments != digest(arguments):
+            return None
+        # RULE: a receipt works once
+        del self._open[receipt]
+        self._taken[receipt] = held.given_at
+        return held
+
+    def put_back(self, receipt: str, held: Held) -> None:
+        """Open a taken receipt again, as it was: its call is still in no transcript."""
+        self._taken.pop(receipt, None)
+        self._open[receipt] = held
+
+
+@dataclass(frozen=True)
+class Held:
+    """What a receipt stands for."""
+
+    tool: str
+    arguments: str  # their digest: a retry must repeat them
+    tool_use_id: str  # the first call's id
+    given_at: float
+
+
+def digest(arguments: str) -> str:
+    return hashlib.sha256(arguments.encode("utf-8")).hexdigest()
+
+
+class NotSeenYet(Exception):
+    """A call no running session's transcript holds yet: it is answered with a receipt, and nothing else."""
+
+    def __init__(self, tool: str, receipt: str, retried: bool = False) -> None:
+        super().__init__(tool, receipt)
+        if retried:  # its first call is in no transcript even after its answer: likely a caller the bridge can't see
+            step = (
+                "Your first call is still in no transcript the bridge reads, so it did nothing again. A subagent's"
+                f" calls never are: if you are one, stop calling {tool} and ask the session you work for to make"
+                f" this call itself, with these arguments. If you aren't, call {tool} once more with the same"
+                f' arguments and receipt "{receipt}"; if that is not_seen_yet too, stop and tell the owner the'
+                " bridge can't see your calls."
+            )
+        else:
+            step = (
+                "Claude Code hasn't written this call into your transcript yet, so the bridge can't tell which"
+                f' session made it, and did nothing. Call {tool} again with the same arguments and receipt "{receipt}":'
+                " by then this call is in your transcript."
+            )
+        self.answer = {"status": "not_seen_yet", "receipt": receipt, "next_step": step}
 
 
 def iso(ts: float | None) -> str | None:

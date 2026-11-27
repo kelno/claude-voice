@@ -1,0 +1,5 @@
+[[rule]]
+name = "a receipt works only with the arguments of the call that gave it"
+file = "src/claude_voice/confirm.py"
+find = 'if held\.arguments != digest\(arguments\):'
+replace = 'if False:'

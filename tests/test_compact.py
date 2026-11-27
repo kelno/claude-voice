@@ -143,6 +143,7 @@ def bridge(tmp_path, monkeypatch):
         "held": held,
         "broken": broken,
         "cwd": str(home / "app"),
+        "projects": projects,
     }
 
 
@@ -165,6 +166,16 @@ async def test_a_session_the_bridge_started_is_compacted_after_the_turn_that_ask
         ("compact", bridge["cwd"], "sid-7", "Keep the plan."),
         ("wake", bridge["cwd"], "sid-7"),
     ]
+
+
+async def test_a_compaction_asked_before_its_call_is_in_the_transcript_is_scheduled_on_the_retry(bridge):
+    # Claude Code may write a call to its transcript only with its result (ledger F230, ADR-CV-109).
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "compact_after_turn", {}, tool_use_id="toolu_held"))
+        transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_held")  # written with its answer
+        retried = await call(app, "compact_after_turn", {"receipt": first["receipt"]}, tool_use_id="toolu_held2")
+    assert first["status"] == "not_seen_yet"
+    assert outcome(retried)["status"] == "scheduled"
 
 
 async def test_a_message_to_a_session_stopped_for_its_compaction_says_it_is_coming_back(bridge):

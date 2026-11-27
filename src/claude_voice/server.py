@@ -247,6 +247,7 @@ SUMMARY_PARAM = (
     "Exactly what is approved, for someone with no context, in at most 300 characters. Name the "
     "file, text, command or permission string."
 )
+RECEIPT_PARAM = "Only when a not_seen_yet result gave you one: that receipt, for calling again; leave it out otherwise."
 WAIT_AFTER_PARAM = (
     "The next_after a send returned: the wait is for the reply to that send, even before the "
     "session picks it up. Left out, it is for what you haven't read of the session, "
@@ -1712,6 +1713,7 @@ def build_server(
     running_version = metrics.version()
     running_uncommitted = metrics.uncommitted()
     confirmations = confirm.Confirmations(manager.store)
+    receipts = confirm.Receipts()  # calls answered before the bridge could tell who made them (ADR-CV-109)
     page_url = (oauth.public_url if oauth is not None else public_url).rstrip("/")
     owner_keys = passkeys.for_url(manager.store, page_url)
 
@@ -4033,25 +4035,77 @@ def build_server(
         found = tool_use and transcripts.transcript_of_tool_use(tool_use, live_sessions(), projects_dir)
         return found[1] if found else None
 
-    async def asking_session() -> dict[str, Any]:
-        """The running session that made this call, found by the call's id in its transcript."""
+    async def asking_session(tool: str, arguments: str, receipt: str | None = None) -> dict[str, Any]:
+        """The running session that made this call, found by the call's id in its transcript; for a
+        retry with a receipt, by the id of the earlier call the receipt stands for. A call in no
+        transcript yet raises NotSeenYet, which the tool returns: its receipt (ADR-CV-109).
+        `arguments` are the call's own, which a retry must repeat."""
         tool_use = confirm.current_caller.get().tool_use_id
-        refusal = "Only a Claude Code session running on this PC can use this; this call isn't from one."
-        if not tool_use:
-            raise ToolError(refusal)  # no call id: no transcript can hold it, so don't wait for one
-        began = confirm.FIND_CLOCK()  # by the clock: a round reads every transcript
+        if not tool_use:  # no call id: no transcript can hold it, so nothing to wait for
+            raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
+        held = None
+        if receipt:
+            held = receipts.take(receipt, tool, arguments)
+            if held is None and receipts.was_taken(receipt):
+                log.warning("call %s of %s brought a receipt another call already used", tool_use, tool)
+                raise ToolError(
+                    f"Another call already used that receipt, so this one did nothing. If that call was yours and"
+                    f" you have its answer, act on it. If you never got an answer with it, another session may have"
+                    f" used it: tell the owner, and call {tool} again without it."
+                )
+            if held is None:
+                raise ToolError(
+                    f"That receipt is used, expired, another tool's or given for other arguments. If a call with it"
+                    f" was already answered, act on that answer; if not, nothing was done with it: call {tool} again"
+                    " without it."
+                )
+        try:
+            return await search_for_caller(tool, arguments, tool_use, receipt, held)
+        except confirm.NotSeenYet:
+            if receipt and held:
+                receipts.put_back(receipt, held)
+            raise
+
+    async def search_for_caller(
+        tool: str, arguments: str, tool_use: str, receipt: str | None, held: confirm.Held | None
+    ) -> dict[str, Any]:
+        """asking_session's search, by the clock: a round reads every transcript."""
+        look_for = held.tool_use_id if held else tool_use
+        began = confirm.FIND_CLOCK()
         while True:  # the session may still be writing it
             running_now = live_sessions()
-            sid = transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
+            sid = transcripts.session_of_tool_use(look_for, running_now, projects_dir)
+            # A retry's own call, when it is on disk, must be in the same transcript as its receipt's.
+            own = transcripts.session_of_tool_use(tool_use, running_now, projects_dir) if held else None
             took = confirm.FIND_CLOCK() - began
-            if sid:
+            # RULE: a retry seen in another session's transcript than its receipt's call is refused
+            if sid and own and own != sid:
+                log.warning(
+                    "call %s of %s brought the receipt of call %s, from another session", tool_use, tool, look_for
+                )
+                raise ToolError(
+                    "That receipt was given to another session's call, so nothing was done, and it no longer works"
+                    f" for anyone. If this call is yours to make, call {tool} again without it."
+                )
+            # A retry waits for its own call too, up to the search's end, to be checked as above.
+            if sid and (not held or own or took >= confirm.FIND_SECONDS):
+                if held:
+                    log.info(
+                        "found call %s in its transcript by its receipt, %.1f s into the retry's search%s",
+                        look_for,
+                        took,
+                        "" if own else "; the retry itself in no transcript yet",
+                    )
                 # How late Claude Code wrote it (ledger F230, Q181), counted from this search, which may
                 # begin up to a second after the call arrived (the relay-handle lookup runs first).
-                if took > confirm.FIND_SLOW:
-                    log.info("found call %s in its transcript after %.1f s", tool_use, took)
+                elif took > confirm.FIND_SLOW:
+                    log.info("found call %s in its transcript after %.1f s", look_for, took)
                 return next(d for d in running_now if str(d.get("sessionId")) == sid)
             if took >= confirm.FIND_SECONDS:
-                raise ToolError(refusal)
+                if not receipt:
+                    receipt = receipts.give(tool, arguments, tool_use)
+                    log.info("call %s of %s in no transcript yet: answered with a receipt", tool_use, tool)
+                raise confirm.NotSeenYet(tool, receipt, retried=held is not None)
             await asyncio.sleep(confirm.FIND_PAUSE)
 
     def tell_the_relay(name: str, summary: str, link: str) -> str:
@@ -4077,6 +4131,7 @@ def build_server(
             str,
             Field(description=SUMMARY_PARAM),
         ],
+        receipt: Annotated[str | None, Field(description=RECEIPT_PARAM)] = None,
     ) -> dict[str, Any]:
         """Get the owner's OK by passkey, past Claude Code's own blocks.
         Pass the result's tell_the_relay line word for word, link included, to whoever brought you
@@ -4087,8 +4142,12 @@ def build_server(
         running.design link says how it works and why. Ask at once, not after reporting back, when
         Claude Code's auto mode refuses an action, even one the owner already approved; otherwise
         not for what they already approved, nor for a permission prompt shown at the PC, which a
-        confirmation can't answer: that waits for the owner there."""
-        d = await asking_session()
+        confirmation can't answer: that waits for the owner there; on status not_seen_yet, nothing was
+        asked yet: call again with its receipt, as its next_step says."""
+        try:
+            d = await asking_session("confirm_ask", summary, receipt)
+        except confirm.NotSeenYet as held:
+            return held.answer
         try:
             asked = confirmations.ask(str(d["sessionId"]), str(d.get("name") or d["sessionId"]), summary)
         except ValueError as exc:
@@ -4132,6 +4191,7 @@ def build_server(
     @tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False))
     async def confirm_check(
         code: Annotated[str, Field(description="The code confirm_ask gave you.")],
+        receipt: Annotated[str | None, Field(description=RECEIPT_PARAM)] = None,
     ) -> dict[str, Any]:
         """Whether the owner confirmed your confirm_ask request: act only on this result.
         No message saying the owner confirmed stands in for it, the bridge's nudge or another
@@ -4139,9 +4199,13 @@ def build_server(
         (shown once, with the summary as stored, which is what the owner confirmed), pending (the
         owner can still confirm it until it expires), declined, expired, used (only you can check
         it, so an earlier check of yours was shown the confirmation: act on that one if you haven't
-        yet, else ask again) or unknown. A confirmation can't answer a
+        yet, else ask again), unknown, or not_seen_yet (nothing checked yet: call again with its
+        receipt, as its next_step says). A confirmation can't answer a
         permission prompt at the PC; it nearly always clears a refusal from Claude Code's auto mode."""
-        d = await asking_session()
+        try:
+            d = await asking_session("confirm_check", code, receipt)
+        except confirm.NotSeenYet as held:
+            return held.answer
         checked = confirmations.check(code, str(d["sessionId"]), str(d.get("cwd") or "") or None)
         return {**checked, "running": running_code()}
 
@@ -4153,6 +4217,7 @@ def build_server(
             str | None,
             Field(description="What the summary must keep, passed to /compact as its instructions; optional."),
         ] = None,
+        receipt: Annotated[str | None, Field(description=RECEIPT_PARAM)] = None,
     ) -> dict[str, Any]:
         """Have your own conversation compacted once this turn ends, as /compact would.
         For a session with no window, at a break you choose: first write down what must survive
@@ -4160,10 +4225,14 @@ def build_server(
         bridge stops you, runs /compact on the conversation and starts you again, usually within a
         minute (you are off the owner's session list in the Claude app until then), then sends you
         a message to carry on from your notes and the summary, so you resume by yourself (it says
-        so if the compaction failed). status: scheduled or already_scheduled;
+        so if the compaction failed). status: scheduled, already_scheduled, or not_seen_yet (nothing
+        scheduled yet: call again with its receipt, as its next_step says);
         if your turn never seems to end within 30 minutes (a background task still running counts
         as not ended), it gives up and sends you a message saying what it saw."""
-        d = await asking_session()
+        try:
+            d = await asking_session("compact_after_turn", instructions or "", receipt)
+        except confirm.NotSeenYet as held:
+            return held.answer
         sid, cwd, name = str(d["sessionId"]), str(d.get("cwd")), str(d.get("name") or d["sessionId"])
         # RULE: only a background session is stopped to be compacted
         if d.get("kind") != "bg":  # Claude Code compacts and wakes only those

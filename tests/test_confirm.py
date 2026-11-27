@@ -322,10 +322,16 @@ async def test_a_folder_opens_only_once_the_owner_confirms_it(bridge, tmp_path):
 
 
 async def test_a_caller_no_session_on_this_pc_made_cannot_ask(bridge, monkeypatch):
+    # Its call is in no transcript here, before its answer or after: its receipt never finds a session.
     monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
     async with reached(bridge["server"]) as app:
-        refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_nowhere")
-    assert refused.get("isError")
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_nowhere"))
+        again = await call(
+            app, "confirm_ask", {"summary": "Allow it", "receipt": first["receipt"]}, tool_use_id="toolu_nowhere2"
+        )
+    assert first["status"] == "not_seen_yet" and "code" not in first
+    assert outcome(again)["status"] == "not_seen_yet" and "code" not in outcome(again)
+    assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 0
 
 
 def written_late(bridge, monkeypatch, lands_at: float, round_takes: float) -> list[float]:
@@ -354,33 +360,201 @@ def written_late(bridge, monkeypatch, lands_at: float, round_takes: float) -> li
     return rounds
 
 
-async def test_a_call_its_session_writes_down_seconds_later_is_still_found(bridge, monkeypatch):
-    # Claude Code may write a call to its transcript seconds after sending it: on 2026-11-27 one
-    # session's call was written about 4.5 s late, and two more over 6 s late, past the 3 s the
-    # bridge looked for them, so the owner's request was refused (ledger F230).
-    written_late(bridge, monkeypatch, lands_at=6.5, round_takes=0.25)
+async def test_a_call_found_a_little_late_is_still_answered_at_once(bridge, monkeypatch):
+    # Claude Code may write a call to its transcript seconds after sending it (ledger F230).
+    written_late(bridge, monkeypatch, lands_at=2.0, round_takes=0.25)
     async with reached(bridge["server"]) as app:
         asked = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
-    assert not asked.get("isError"), asked
-    assert outcome(asked)["code"]
+    assert outcome(asked)["code"], asked
 
 
 async def test_the_search_for_a_call_ends_by_the_clock(bridge, monkeypatch):
     # Each round reads every running session's transcript: slow rounds must not stretch the wait.
     rounds = written_late(bridge, monkeypatch, lands_at=math.inf, round_takes=5.0)
     async with reached(bridge["server"]) as app:
-        refused = await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
-    assert refused.get("isError")
+        answered = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late"))
+    assert answered["status"] == "not_seen_yet"
     assert rounds[-1] < confirm.FIND_SECONDS <= rounds[-1] + 5.0  # no round begun past the end
 
 
 async def test_a_call_found_late_is_logged_with_how_late(bridge, monkeypatch, caplog):
-    # So the next late write shows how late it was, and whether the wait is long enough (review, F230).
-    written_late(bridge, monkeypatch, lands_at=6.5, round_takes=0.25)
+    # So a late write shows how late it was, and whether the search is long enough (review, F230).
+    written_late(bridge, monkeypatch, lands_at=2.0, round_takes=0.25)
     with caplog.at_level("INFO", logger="claude_voice"):
         async with reached(bridge["server"]) as app:
             await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_late")
-    assert any(re.search(r"toolu_late in its transcript after 6\.\d s", r.getMessage()) for r in caplog.records)
+    assert any(re.search(r"toolu_late in its transcript after 2\.\d s", r.getMessage()) for r in caplog.records)
+
+
+# -- a call Claude Code writes down only with its answer (ADR-CV-109) ----------------------
+
+
+def lands_with_its_answer(bridge, tool_use_id):
+    """As Claude Code does when it holds a call back: its line reaches the transcript with its result."""
+    transcript(bridge["projects"], bridge["cwd"], "sid-7", tool_use_id)
+
+
+async def test_a_call_not_yet_in_its_transcript_gets_a_receipt_and_its_retry_is_answered(bridge, monkeypatch):
+    # On 2026-11-27 a session's calls reached its transcript only with their results, over 21 s after
+    # being sent, so no wait could find them in time (ledger F230).
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        asked = outcome(await call(app, "confirm_ask", retried, tool_use_id="toolu_held_again"))
+    assert first["status"] == "not_seen_yet" and "code" not in first
+    assert f'receipt "{first["receipt"]}"' in first["next_step"] and "confirm_ask again" in first["next_step"]
+    assert asked["code"] and '"desk"' in asked["tell_the_relay"]  # the session whose transcript holds the call
+    assert [tuple(r) for r in bridge["store"].db.execute("SELECT session_id FROM owner_requests")] == [("sid-7",)]
+
+
+async def test_a_receipt_whose_call_is_not_yet_written_gives_the_same_receipt(bridge, monkeypatch):
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        again = outcome(await call(app, "confirm_ask", retried, tool_use_id="toolu_held_again"))
+    assert again["status"] == "not_seen_yet" and again["receipt"] == first["receipt"]
+    # Still unseen after its answer: likely a caller the bridge can't see, told to stop (review, F230).
+    assert "subagent" not in first["next_step"]
+    assert "subagent" in again["next_step"] and "stop calling confirm_ask" in again["next_step"]
+
+
+async def test_a_receipt_works_once(bridge, monkeypatch, caplog):
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        assert outcome(await call(app, "confirm_ask", retried, tool_use_id="toolu_2"))["code"]
+        with caplog.at_level("WARNING", logger="claude_voice"):
+            reused = await call(app, "confirm_ask", retried, tool_use_id="toolu_3")
+    assert reused.get("isError") and "already used that receipt" in reused["content"][0]["text"]
+    # Logged, since a second call with one receipt may be a session that read it in the transcript.
+    assert any(
+        "toolu_3 of confirm_ask brought a receipt another call already used" in r.getMessage() for r in caplog.records
+    )
+
+
+async def test_two_retries_at_once_with_one_receipt_act_once(bridge, monkeypatch):
+    # Both arrive while the first call is still in no transcript, and it lands while they wait (review, F230).
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 2.0)
+    monkeypatch.setattr(confirm, "FIND_PAUSE", 0.01)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        # The first call lands once both retries look for it, or half a second after the first one does.
+        find, asking, began = transcripts.session_of_tool_use, set(), []
+
+        def look(tool_use_id, sessions, projects_dir):
+            if tool_use_id == "toolu_held":
+                asking.add(asyncio.current_task())
+                began.append(time.monotonic())
+                if len(asking) == 2 or time.monotonic() - began[0] > 0.5:
+                    lands_with_its_answer(bridge, "toolu_held")
+            return find(tool_use_id, sessions, projects_dir)
+
+        monkeypatch.setattr(transcripts, "session_of_tool_use", look)
+        one, other = await asyncio.gather(
+            call(app, "confirm_ask", retried, tool_use_id="toolu_r1"),
+            call(app, "confirm_ask", retried, tool_use_id="toolu_r2"),
+        )
+    assert sorted(bool(r.get("isError")) for r in (one, other)) == [False, True]
+    assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 1
+
+
+async def test_a_receipt_works_only_with_the_arguments_of_the_call_that_gave_it(bridge, monkeypatch):
+    # So a receipt read in another session's transcript can't ask the owner something else (review, F230).
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        other = {"summary": "Allow everything", "receipt": first["receipt"]}
+        refused = await call(app, "confirm_ask", other, tool_use_id="toolu_2")
+    assert refused.get("isError") and "other arguments" in refused["content"][0]["text"]
+    assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 0
+
+
+async def test_a_retry_seen_in_another_session_s_transcript_than_its_receipt_s_call_is_refused(
+    bridge, monkeypatch, tmp_path
+):
+    # Another session read sid-7's receipt in its transcript; its own call is on disk in time (review, F230).
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    other = {"pid": 8, "sessionId": "sid-8", "cwd": str(bridge["cwd"]), "name": "other", "status": "idle"}
+    (tmp_path / "live" / "8.json").write_text(json.dumps(other), encoding="utf-8")
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        transcript(bridge["projects"], bridge["cwd"], "sid-8", "toolu_taker")
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        taken = await call(app, "confirm_ask", retried, tool_use_id="toolu_taker")
+        # The receipt no longer works, for anyone: the session it was given to asks again without it.
+        late = await call(app, "confirm_ask", retried, tool_use_id="toolu_held_again")
+    assert taken.get("isError") and "another session's call" in taken["content"][0]["text"]
+    assert late.get("isError") and "receipt" in late["content"][0]["text"]
+    assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 0
+
+
+async def test_a_retry_found_with_its_own_call_is_answered_at_once(bridge, monkeypatch, caplog):
+    # A retry whose own call is in the same transcript needs no wait to the search's end.
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        folder = bridge["projects"] / transcripts.project_key_for_directory(str(bridge["cwd"]))
+        both = [
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": i, "name": "x"}]}}
+            for i in ("toolu_held", "toolu_again")
+        ]
+        (folder / "sid-7.jsonl").write_text("".join(json.dumps(x) + "\n" for x in both), encoding="utf-8")
+        monkeypatch.setattr(confirm, "FIND_SECONDS", 30.0)  # would time the test out if it waited
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        began = time.monotonic()
+        with caplog.at_level("INFO", logger="claude_voice"):
+            asked = outcome(await call(app, "confirm_ask", retried, tool_use_id="toolu_again"))
+        took = time.monotonic() - began
+    assert asked["code"] and took < 5.0
+    assert any(
+        re.search(r"toolu_held in its transcript by its receipt, \d+\.\d s", r.getMessage()) for r in caplog.records
+    )
+
+
+async def test_a_receipt_works_only_for_the_tool_that_gave_it(bridge, monkeypatch):
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
+        code = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))["code"]
+        # The same arguments, so only the tool tells the two calls apart.
+        first = outcome(await call(app, "confirm_ask", {"summary": code}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        crossed = await call(app, "confirm_check", {"code": code, "receipt": first["receipt"]}, tool_use_id="toolu_4")
+    assert crossed.get("isError") and "receipt" in crossed["content"][0]["text"]
+
+
+async def test_a_check_not_yet_in_its_transcript_gets_its_verdict_on_the_retry(bridge, monkeypatch):
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    async with reached(bridge["server"]) as app:
+        transcript(bridge["projects"], bridge["cwd"], "sid-7", "toolu_ask")
+        code = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_ask"))["code"]
+        first = outcome(await call(app, "confirm_check", {"code": code}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        checked = outcome(
+            await call(app, "confirm_check", {"code": code, "receipt": first["receipt"]}, tool_use_id="toolu_5")
+        )
+    assert first["status"] == "not_seen_yet" and "confirm_check again" in first["next_step"]
+    assert checked["status"] == "pending" and checked["code"] == code
+
+
+def test_a_receipt_expires_after_two_minutes():
+    now = [1_800_000_000.0]
+    book = confirm.Receipts(clock=lambda: now[0])
+    receipt = book.give("confirm_check", "K4Q2", "toolu_x")
+    held = book.take(receipt, "confirm_check", "K4Q2")
+    assert held and held.tool_use_id == "toolu_x"
+    book.put_back(receipt, held)  # its call still in no transcript: it keeps its first time
+    now[0] += 2 * 60 + 1
+    assert book.take(receipt, "confirm_check", "K4Q2") is None
 
 
 async def test_a_call_with_no_call_id_is_refused_at_once(bridge):
