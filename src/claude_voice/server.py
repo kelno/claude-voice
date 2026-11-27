@@ -4075,11 +4075,13 @@ def build_server(
         while True:  # the session may still be writing it
             running_now = live_sessions()
             sid = transcripts.session_of_tool_use(look_for, running_now, projects_dir)
-            # A retry's own call, when it is on disk, must be in the same transcript as its receipt's.
-            own = transcripts.session_of_tool_use(tool_use, running_now, projects_dir) if held else None
+            # A retry's own call, where it is on disk, must be in the receipt's call's transcript alone:
+            # every transcript recording it, so one in two can't pass as in none.
+            recording = transcripts.transcripts_recording(tool_use, running_now, projects_dir) if held else []
+            own = sorted({s for s, _ in recording})
             took = confirm.FIND_CLOCK() - began
             # RULE: a retry seen in another session's transcript than its receipt's call is refused
-            if sid and own and own != sid:
+            if sid and any(s != sid for s in own):
                 log.warning(
                     "call %s of %s brought the receipt of call %s, from another session", tool_use, tool, look_for
                 )

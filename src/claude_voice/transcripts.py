@@ -163,11 +163,30 @@ TOOL_USE_TAIL = 1_048_576  # a call being made is near the end of its session's 
 def transcript_of_tool_use(
     tool_use_id: str, sessions: Iterable[Mapping[str, Any]], projects_dir: Path = PROJECTS_DIR
 ) -> tuple[str, Path] | None:
-    """The running session whose transcript records this tool call, and that transcript."""
+    """The running session whose transcript records this tool call, and that transcript: the only
+    one, since a call two transcripts record (a copy of a conversation) can't say which made it."""
+    found = transcripts_recording(tool_use_id, sessions, projects_dir)
+    # RULE: a call two running transcripts record belongs to neither
+    if len(found) > 1:
+        log.warning(
+            "call %s is recorded in %d running sessions' transcripts: it belongs to none", tool_use_id, len(found)
+        )
+        return None
+    return found[0] if found else None
+
+
+def transcripts_recording(
+    tool_use_id: str, sessions: Iterable[Mapping[str, Any]], projects_dir: Path = PROJECTS_DIR
+) -> list[tuple[str, Path]]:
+    """Every running session whose transcript records this tool call, each transcript once: one
+    conversation run by two processes is listed twice in Claude Code's registry (ledger Q150)."""
     needle = json.dumps(tool_use_id).encode()
+    found: list[tuple[str, Path]] = []
     for d in sessions:
         sid, cwd = str(d.get("sessionId")), str(d.get("cwd"))
         path = projects_dir / project_key_for_directory(cwd) / f"{sid}.jsonl"
+        if (sid, path) in found:
+            continue
         try:
             with path.open("rb") as f:
                 f.seek(0, 2)
@@ -175,10 +194,35 @@ def transcript_of_tool_use(
                 tail = f.read()
         except OSError:
             continue
+        holds = needle in tail
+        # RULE: only claude code's own record of a call counts, not a quote of its id
+        recorded = holds and any(records_call(line, tool_use_id) for line in tail.splitlines() if needle in line)
         # RULE: a request belongs to the session whose transcript holds the call
-        if needle in tail:
-            return sid, path
-    return None
+        if recorded:
+            found.append((sid, path))
+    return found
+
+
+def records_call(line: bytes, tool_use_id: str) -> bool:
+    """Whether this transcript line is Claude Code's own record of the call: the call itself, in the
+    model's turn, or its data-flow record. Not a tool's input or result that only quotes the id,
+    which any session can write into its own transcript (ADR-CV-109, review)."""
+    try:
+        entry = json.loads(line)
+    # The tail's first line, cut, or not JSON. So a call with a megabyte or more written after it, a
+    # long data-flow snapshot line included, is missed: a retry comes seconds after its first call.
+    except ValueError:
+        return False
+    if not isinstance(entry, dict):
+        return False
+    if entry.get("type") == "assistant":
+        content = (entry.get("message") or {}).get("content")
+        blocks = content if isinstance(content, list) else []
+        return any(isinstance(b, dict) and b.get("type") == "tool_use" and b.get("id") == tool_use_id for b in blocks)
+    if entry.get("type") == "data-flow-records":  # where Claude Code may list a call (F230)
+        records = entry.get("records")
+        return any(isinstance(r, dict) and r.get("tool_use_id") == tool_use_id for r in records or [])
+    return False
 
 
 def session_of_tool_use(

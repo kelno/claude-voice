@@ -145,6 +145,47 @@ def test_a_request_belongs_to_the_session_whose_transcript_holds_the_call(tmp_pa
     assert transcripts.session_of_tool_use("toolu_C", sessions, projects) is None
 
 
+def test_only_claude_code_s_own_record_of_a_call_counts_not_a_quote_of_its_id(tmp_path):
+    # Any session can write another's call id into its own transcript, as a tool's input, unescaped
+    # (review, ADR-CV-109): only the call itself, or Claude Code's data-flow record of it, counts.
+    projects = tmp_path / "projects"
+    folder = projects / transcripts.project_key_for_directory(str(tmp_path / "b"))
+    folder.mkdir(parents=True)
+    quoting = [
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "tool_use", "id": "toolu_B", "input": {"id": "toolu_A"}}]},
+        },
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_A", "content": "x"}]}},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "toolu_A"}]}, "id": "toolu_A"},
+    ]
+    (folder / "sid-b.jsonl").write_text("".join(json.dumps(x) + "\n" for x in quoting), encoding="utf-8")
+    sessions = [{"sessionId": "sid-b", "cwd": str(tmp_path / "b")}]
+    assert transcripts.session_of_tool_use("toolu_A", sessions, projects) is None
+    assert transcripts.session_of_tool_use("toolu_B", sessions, projects) == "sid-b"
+    flow = {"type": "data-flow-records", "records": [{"tool_name": "x", "tool_use_id": "toolu_F"}]}
+    with (folder / "sid-b.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(flow) + "\n")
+    assert transcripts.session_of_tool_use("toolu_F", sessions, projects) == "sid-b"
+
+
+def test_a_call_two_running_transcripts_record_belongs_to_neither(tmp_path):
+    # A copy of a conversation holds its calls too: neither copy can be told to be the caller.
+    projects = tmp_path / "projects"
+    transcript(projects, tmp_path / "a", "sid-a", "toolu_A")
+    transcript(projects, tmp_path / "b", "sid-b", "toolu_A")
+    sessions = [{"sessionId": "sid-a", "cwd": str(tmp_path / "a")}, {"sessionId": "sid-b", "cwd": str(tmp_path / "b")}]
+    assert transcripts.session_of_tool_use("toolu_A", sessions, projects) is None
+
+
+def test_a_session_listed_twice_in_the_registry_is_still_found(tmp_path):
+    # One conversation run by two processes, background and desktop, is listed twice (review, ledger Q150).
+    projects = tmp_path / "projects"
+    transcript(projects, tmp_path / "a", "sid-a", "toolu_A")
+    listed = {"sessionId": "sid-a", "cwd": str(tmp_path / "a")}
+    assert transcripts.session_of_tool_use("toolu_A", [listed, dict(listed, kind="desktop")], projects) == "sid-a"
+
+
 # -- through the bridge, as the callers reach it -----------------------------------------
 
 
@@ -493,6 +534,23 @@ async def test_a_retry_seen_in_another_session_s_transcript_than_its_receipt_s_c
         late = await call(app, "confirm_ask", retried, tool_use_id="toolu_held_again")
     assert taken.get("isError") and "another session's call" in taken["content"][0]["text"]
     assert late.get("isError") and "receipt" in late["content"][0]["text"]
+    assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 0
+
+
+async def test_a_retry_whose_own_call_two_other_transcripts_record_is_refused(bridge, monkeypatch, tmp_path):
+    # In two transcripts its call belongs to neither, which must not pass for "in none" (review, F230).
+    monkeypatch.setattr(confirm, "FIND_SECONDS", 0.25)
+    for pid, sid in ((8, "sid-8"), (9, "sid-9")):
+        entry = {"pid": pid, "sessionId": sid, "cwd": str(bridge["cwd"]), "name": sid, "status": "idle"}
+        (tmp_path / "live" / f"{pid}.json").write_text(json.dumps(entry), encoding="utf-8")
+    async with reached(bridge["server"]) as app:
+        first = outcome(await call(app, "confirm_ask", {"summary": "Allow it"}, tool_use_id="toolu_held"))
+        lands_with_its_answer(bridge, "toolu_held")
+        for sid in ("sid-8", "sid-9"):
+            transcript(bridge["projects"], bridge["cwd"], sid, "toolu_taker")
+        retried = {"summary": "Allow it", "receipt": first["receipt"]}
+        taken = await call(app, "confirm_ask", retried, tool_use_id="toolu_taker")
+    assert taken.get("isError") and "another session's call" in taken["content"][0]["text"]
     assert bridge["store"].db.execute("SELECT COUNT(*) FROM owner_requests").fetchone()[0] == 0
 
 

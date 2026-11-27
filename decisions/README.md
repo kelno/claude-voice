@@ -62,7 +62,7 @@ decision nobody writes down.
 | [ADR-CV-106](ADR-CV-106-the-owner-confirms-with-a-passkey-on-the-bridges-page.md) | The owner confirms with a passkey on the bridge's own page | Accepted |
 | [ADR-CV-107](ADR-CV-107-an-idle-session-is-parked-rather-than-stopped.md) | An idle session with Remote Control is parked for Claude Code to close, so it stays in the app's list | Accepted, as a trial |
 | [ADR-CV-108](ADR-CV-108-the-bridge-handles-every-session-not-only-those-it-started.md) | The bridge handles every session, not only those it started | Accepted |
-| [ADR-CV-109](ADR-CV-109-a-call-not-yet-in-its-transcript-gets-a-receipt.md) | A call not yet in its session's transcript gets a receipt, and its retry is told apart by it | Proposed |
+| [ADR-CV-109](ADR-CV-109-a-call-not-yet-in-its-transcript-gets-a-receipt.md) | A call not yet in its session's transcript gets a receipt, and its retry is told apart by it | Accepted |
 
 What is deliberately left undone, and what would make each worth doing, is
 [`deferred.md`](deferred.md). A thing left undone with no trigger is a thing

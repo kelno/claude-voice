@@ -984,7 +984,11 @@ async def test_a_claude_code_session_follows_its_own_sessions(tmp_path, world):
     planner = Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
     record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
     record.parent.mkdir(parents=True)
-    record.write_text(json.dumps({"type": "assistant", "id": "toolu_planner_1"}) + "\n", encoding="utf-8")
+    record.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_planner_1"}]}})
+        + "\n",
+        encoding="utf-8",
+    )
     from_planner = {"claudecode/toolUseId": "toolu_planner_1"}
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), planner) as url:
         http, client = conversation(url)
@@ -1009,7 +1013,10 @@ async def test_a_claude_code_session_s_handle_is_its_session_id_not_its_name(tmp
     planner = Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
     record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
     record.parent.mkdir(parents=True)
-    calls = [json.dumps({"type": "assistant", "id": f"toolu_planner_{n}"}) for n in (1, 2)]
+    calls = [
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"toolu_planner_{n}"}]}})
+        for n in (1, 2)
+    ]
     record.write_text("\n".join(calls) + "\n", encoding="utf-8")
     async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), planner) as url:
         http, client = conversation(url)

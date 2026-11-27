@@ -71,7 +71,11 @@ async def from_a_claude_code_session(tmp_path, world, *calls):  # noqa: F811
     planner = news.Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
     record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
     record.parent.mkdir(parents=True)
-    record.write_text(json.dumps({"type": "assistant", "id": "toolu_planner_1"}) + "\n", encoding="utf-8")
+    record.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_planner_1"}]}})
+        + "\n",
+        encoding="utf-8",
+    )
     got = []
     async with news.bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), planner) as url:
         http, client = news.conversation(url)
@@ -124,7 +128,11 @@ async def test_a_reply_to_a_claude_code_session_does_not_hold_its_stop(tmp_path,
     planner = news.Desk(live, str(root / "billing"), name="planner", sid="sid-cc", pid=os.getppid())
     record = tmp_path / "projects" / project_key_for_directory(planner.cwd) / "sid-cc.jsonl"
     record.parent.mkdir(parents=True)
-    record.write_text(json.dumps({"type": "assistant", "id": "toolu_planner_1"}) + "\n", encoding="utf-8")
+    record.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_planner_1"}]}})
+        + "\n",
+        encoding="utf-8",
+    )
     store = Store(tmp_path / "bridge.db")
     store.record_started("sid-1", "billing-ab", desk.cwd)
     stopped = []

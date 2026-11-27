@@ -1,0 +1,5 @@
+[[rule]]
+name = "only claude code's own record of a call counts, not a quote of its id"
+file = "src/claude_voice/transcripts.py"
+find = 'recorded = holds and any\(records_call'
+replace = 'recorded = holds'

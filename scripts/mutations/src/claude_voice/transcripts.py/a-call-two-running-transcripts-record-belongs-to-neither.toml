@@ -1,0 +1,5 @@
+[[rule]]
+name = "a call two running transcripts record belongs to neither"
+file = "src/claude_voice/transcripts.py"
+find = 'if len\(found\) > 1:'
+replace = 'if False:'
