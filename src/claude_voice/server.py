@@ -4036,13 +4036,16 @@ def build_server(
     async def asking_session() -> dict[str, Any]:
         """The running session that made this call, found by the call's id in its transcript."""
         tool_use = confirm.current_caller.get().tool_use_id
+        refusal = "Only a Claude Code session running on this PC can use this; this call isn't from one."
+        if not tool_use:
+            raise ToolError(refusal)  # no call id: no transcript can hold it, so don't wait for one
         for _ in range(int(confirm.FIND_SECONDS / 0.25)):  # the session may still be writing it
             running_now = live_sessions()
-            sid = tool_use and transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
+            sid = transcripts.session_of_tool_use(tool_use, running_now, projects_dir)
             if sid:
                 return next(d for d in running_now if str(d.get("sessionId")) == sid)
             await asyncio.sleep(0.25)
-        raise ToolError("Only a Claude Code session running on this PC can use this; this call isn't from one.")
+        raise ToolError(refusal)
 
     def tell_the_relay(name: str, summary: str, link: str) -> str:
         """How the relay gets the owner's OK, either way: the one home of that line, which confirm_ask and

@@ -326,6 +326,16 @@ async def test_a_caller_no_session_on_this_pc_made_cannot_ask(bridge, monkeypatc
     assert refused.get("isError")
 
 
+async def test_a_call_with_no_call_id_is_refused_at_once(bridge):
+    # A voice chat's call carries no Claude Code call id, so there is nothing to look for in a
+    # transcript: waiting for one would only keep the relay waiting before the same refusal.
+    async with reached(bridge["server"]) as app:
+        began = time.monotonic()
+        refused = await call(app, "confirm_ask", {"summary": "Allow it"})
+        took = time.monotonic() - began
+    assert refused.get("isError") and took < 1.0
+
+
 async def test_the_relay_gets_one_confirmation_line_from_either_tool(bridge):
     # A relay handed only a code still learns the at-the-PC path: the line has one home (owner, 2026-11-15).
     async with reached(bridge["server"]) as app:
