@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session whose transcript has not been written for minutes is at rest"
+file = "src/claude_voice/server.py"
+find = 'if time.time\(\) - path.stat\(\).st_mtime > WRITTEN_WITHIN:'
+replace = 'if False:'

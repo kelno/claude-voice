@@ -322,6 +322,10 @@ RENAMEABLE = ("idle", "shell")
 # finished turn the relay hasn't read, such as one the owner typed or another session asked for,
 # until stopped, until it ends, or after this long with nothing new (owner, 2026-11-13).
 QUIET_SECONDS = 24 * 3600
+# A session listed idle whose transcript stops mid-turn is taken for still writing its turn's last
+# words only while the transcript was written this recently: Claude writes the final message whole,
+# after it is generated, so the last line before it can be a long reply's time older (ledger F250).
+WRITTEN_WITHIN = 300.0
 # Who started a turn, by the origin Claude Code records on the message that started it.
 STARTED_BY = {"human": "the owner typing", "peer": "another session", "task-notification": "a background task"}
 # Who wrote a message in a session, as a digest names them: the owner unless Claude Code says otherwise.
@@ -2399,8 +2403,15 @@ def build_server(
         """Whether a session Claude Code lists idle is still writing its turn's last words: its
         transcript stops mid-turn, as it does for a moment after the listing changes (ledger F250).
         Believed for writing_grace seconds at most, since a turn can also end there, on a tool
-        refused at the PC; the same transcript growing starts the count again."""
+        refused at the PC or a session stopped mid-turn; the same transcript growing starts the count
+        again. Never once the transcript has gone unwritten for WRITTEN_WITHIN seconds: counted from
+        the first look alone, a bridge just started would take such a session for busy."""
         sid = str(d.get("sessionId"))
+        path = projects_dir / project_key_for_directory(str(d.get("cwd"))) / f"{sid}.jsonl"
+        with contextlib.suppress(OSError):
+            # RULE: a session whose transcript has not been written for minutes is at rest
+            if time.time() - path.stat().st_mtime > WRITTEN_WITHIN:
+                return False
         messages = read_transcript(sid, str(d.get("cwd")))
         if not transcripts.ends_mid_turn(messages):
             writing_since.pop(sid, None)

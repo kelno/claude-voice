@@ -464,6 +464,28 @@ async def test_a_session_handed_over_at_rest_is_already_done_not_followed(served
     assert "news" not in out
 
 
+async def test_a_session_whose_transcript_has_not_been_written_for_minutes_is_at_rest(served, tmp_path):
+    # Its turn ended on a tool's result, refused at the PC or stopped mid-turn: taken for still
+    # writing its last words (ledger F250), it would be followed for a reply that never comes.
+    from claude_voice import transcripts
+
+    url, desk = served
+    result = [{"type": "tool_result", "tool_use_id": "t1", "content": "refused"}]
+    desk.transcript.append(
+        SimpleNamespace(type="user", message={"content": result}, error=None, origin=None, source=None)
+    )
+    path = tmp_path / "projects" / transcripts.project_key_for_directory(desk.cwd) / "sid-1.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text("{}\n", encoding="utf-8")
+    hour_ago = time.time() - 3600
+    os.utime(path, (hour_ago, hour_ago))
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "list_active_sessions")
+        handed = await call(c, "follow_session", session="billing-ab")
+    assert handed["status"] == "already_done"
+
+
 async def test_the_rest_of_a_turn_read_part_way_is_not_shown_after_a_later_message(served):
     # Only a turn that ran on, from the relay's last read until its send, is the reply it skipped:
     # history it chose not to read further, or a turn another message cut short, is not.
