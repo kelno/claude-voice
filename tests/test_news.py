@@ -464,6 +464,24 @@ async def test_a_session_handed_over_at_rest_is_already_done_not_followed(served
     assert "news" not in out
 
 
+async def test_the_rest_of_a_turn_read_part_way_is_not_shown_after_a_later_message(served):
+    # Only a turn that ran on, from the relay's last read until its send, is the reply it skipped:
+    # history it chose not to read further, or a turn another message cut short, is not.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Where is the draft?")
+        desk.transcript.append(turn("assistant", "I'm writing it now."))
+        await call(c, "wait_for_session")
+        desk.transcript.append(turn("assistant", "Here is the full proposal."))
+        desk.transcript.append(turn("user", "Rename the branch."))  # the owner, at the PC
+        desk.transcript.append(turn("assistant", "Branch renamed."))
+        await call(c, "message_active_session", session="billing-ab", message="Send it to the team.")
+        desk.transcript.append(turn("assistant", "Sent to the team."))
+        out = await call(c, "wait_for_session")
+    assert [t["text"] for t in out["turns"] if t["role"] == "assistant"] == ["Sent to the team."]
+
+
 async def test_following_can_be_stopped(served):
     url, desk = served
     http, client = conversation(url)
@@ -633,6 +651,62 @@ async def test_a_wait_on_all_followed_sessions_returns_at_the_first_with_news(tm
             later = await call(c, "list_active_sessions")
     assert out["session"] == "ledger" and out["reply"] == "Month closed." and out["reply_final"] is True
     assert later["news"] == "[Juniper] billing-ab (busy): nothing new"  # ledger's reply was read: no longer followed
+
+
+async def test_a_reply_written_between_the_relay_s_last_read_and_its_next_send_is_read_too(served):
+    # The relay read a turn's first words, the turn's full reply came, and the relay sent again
+    # before reading it: the next wait began after that send and skipped the reply (ledger F250).
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Where is the draft?")
+        desk.transcript.append(turn("assistant", "I'm writing it now."))
+        await call(c, "wait_for_session")
+        await call(c, "list_active_sessions")
+        desk.transcript.append(turn("assistant", "Here is the full proposal."))
+        await call(c, "message_active_session", session="billing-ab", message="Your turn ended mid-way.")
+        desk.transcript.append(turn("assistant", "The draft is done."))
+        out = await call(c, "wait_for_session")
+    assert [t["text"] for t in out["turns"] if t["role"] == "assistant"] == [
+        "Here is the full proposal.",
+        "The draft is done.",
+    ]
+    assert out["reply"] == "The draft is done."
+
+
+async def test_turns_after_the_relay_s_last_read_that_another_message_started_stay_unshown(served):
+    # Only the rest of the turn the relay was reading is unread news: what the owner, or another
+    # relay, then asked the session at the PC and got answered is theirs, not the relay's.
+    url, desk = served
+    http, client = conversation(url)
+    async with http, client as c:
+        await call(c, "message_active_session", session="billing-ab", message="Where is the draft?")
+        desk.transcript.append(turn("assistant", "Here is the draft."))
+        await call(c, "wait_for_session")
+        desk.transcript.append(turn("user", "Rename the branch."))  # the owner, at the PC
+        desk.transcript.append(turn("assistant", "Branch renamed."))
+        await call(c, "message_active_session", session="billing-ab", message="Send it to the team.")
+        desk.transcript.append(turn("assistant", "Sent to the team."))
+        out = await call(c, "wait_for_session")
+    assert [t["text"] for t in out["turns"] if t["role"] == "assistant"] == ["Sent to the team."]
+
+
+async def test_a_reply_written_between_the_relay_s_last_read_and_its_next_send_holds_a_stop(tmp_path, world):
+    # The relay sent again before reading the turn's full reply: until it reads it, a stop would lose it.
+    root, live = world
+    desk = Desk(live, str(root / "billing"))
+    stopped = []
+    async with bridge(tmp_path, desk, Store(tmp_path / "bridge.db"), stop_window=stopped.append) as url:
+        http, client = conversation(url)
+        async with http, client as c:
+            await call(c, "message_active_session", session="billing-ab", message="Where is the draft?")
+            desk.transcript.append(turn("assistant", "I'm writing it now."))
+            await call(c, "wait_for_session")
+            desk.transcript.append(turn("assistant", "Here is the full proposal."))
+            await call(c, "message_active_session", session="billing-ab", message="Your turn ended mid-way.")
+            refused = await stop_from_elsewhere(url, {"name": "billing-ab"})
+    # Read from after "I'm writing it now.", turn 3: the desk starts with two turns of its own.
+    assert refused["status"] == "reply_unread" and refused["read_from"] == 3 and stopped == []
 
 
 async def test_a_wait_on_all_followed_sessions_runs_out_while_they_work(served):

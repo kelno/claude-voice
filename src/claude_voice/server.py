@@ -2317,7 +2317,7 @@ def build_server(
         where, last = follow_state(sid, mark, d)
         state = session_state(d)
         if where == "unread":
-            news.append(f"reply to you, read with after={max(mark['sent'], mark['seen'])}")
+            news.append(f"reply to you, read with after={read_from(sid, mark, d)}")
             mark["state"] = "unread"
         elif where == "read" and mark.get("then") is not None:
             # RULE: a send while a reply is unread is followed once that reply is read
@@ -2373,9 +2373,15 @@ def build_server(
             mark = record.get("sessions", {}).get(sid)
             if mark is None or following.stance(mark) != "followed":
                 continue
-            if follow_state(sid, dict(mark), d)[0] == "unread":  # a copy: asking changes nothing
+            # A copy, so asking changes nothing. The rest of a turn the relay read only the start of,
+            # before it sent again, is unread too.
+            if follow_state(sid, dict(mark), d)[0] == "unread" or read_from(sid, mark, d) < mark["sent"]:
                 waiting[relays.label(handle)] = mark
         return waiting
+
+    def read_from(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> int:
+        """Where a followed session's unread turns start: following.read_from."""
+        return following.read_from(all_turns(sid, str(d.get("cwd") or mark.get("cwd"))), mark)
 
     def follow_state(sid: str, mark: dict[str, Any], d: dict[str, Any]) -> tuple[str, str | None]:
         """Where a followed, running session stands, and its latest message: following.follow_state."""
@@ -3503,8 +3509,8 @@ def build_server(
         waiting = unread_by(sid, target)
         # RULE: a session whose reply a relay has not read is not stopped
         if waiting and not even_unread:
-            read_from = min(max(m["sent"], m["seen"]) for m in waiting.values())
-            return {"name": name, "status": "reply_unread", "unread_by": list(waiting), "read_from": read_from}
+            unread_from = min(read_from(sid, m, target) for m in waiting.values())
+            return {"name": name, "status": "reply_unread", "unread_by": list(waiting), "read_from": unread_from}
         # Claude Code's own close of a session at rest keeps its claude.ai session; `claude stop`
         # archives it, so the app no longer lists it (ADR-CV-107).
         remote = target.get("kind") == "bg" and bool(target.get("bridgeSessionId"))
@@ -4905,7 +4911,7 @@ def build_server(
                 mark = followed_now[sid]
                 if sid not in live:
                     return {"status": "session_ended", "session": mark.get("name") or sid, "session_ended": True}
-                return await wait_on(sid, 0, max(mark["sent"], mark["seen"]), max_chars)
+                return await wait_on(sid, 0, read_from(sid, mark, live[sid]), max_chars)
             for sid, mark in mine().items():
                 quiet = following.stance(mark) == "quiet" and sid in live
                 # RULE: a new turn in a quiet follow wakes a wait

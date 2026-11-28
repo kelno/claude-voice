@@ -94,6 +94,20 @@ def follow_state(turns: list[dict[str, Any]], mark: dict[str, Any], state: str) 
     return "working", last
 
 
+def read_from(turns: list[dict[str, Any]], mark: dict[str, Any]) -> int:
+    """Where a followed session's unread turns start: after the relay's last send, unless the turn
+    the relay last read ran on until that send: the rest of it is unread too, and was skipped (ledger
+    F250). Once another message came in between, the owner's at the PC or another relay's, what
+    followed isn't the relay's to read."""
+    sent, seen = mark["sent"], mark["seen"]
+    if sent is None or sent <= seen:
+        return seen
+    cut = any(t["role"] == "user" and seen < i <= sent for i, t in enumerate(turns))
+    # RULE: a reply written between the relay's last read and its next send is read too
+    between = not cut and any(t["role"] == "assistant" and seen < i <= sent for i, t in enumerate(turns))
+    return seen if between else sent
+
+
 def unread_reply(turns: list[dict[str, Any]], mark: dict[str, Any]) -> bool:
     """Whether the session wrote anything after the relay's message that the relay hasn't read."""
     return any(t["role"] == "assistant" and i > max(mark["sent"], mark["seen"]) for i, t in enumerate(turns))

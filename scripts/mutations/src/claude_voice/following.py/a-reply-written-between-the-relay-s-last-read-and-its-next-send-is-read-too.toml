@@ -1,0 +1,5 @@
+[[rule]]
+name = "a reply written between the relay's last read and its next send is read too"
+file = "src/claude_voice/following.py"
+find = 'between = not cut and any\('
+replace = 'between = False'
