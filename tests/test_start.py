@@ -459,6 +459,18 @@ async def test_an_idle_background_session_with_remote_control_is_parked_not_stop
     assert row["parked"] is True and row["status"] == "idle"
 
 
+async def test_an_idle_session_whose_transcript_ends_on_a_tool_s_result_is_parked_too(tmp_path, world):
+    # Taken for still writing its last words (ledger F250), it would be archived by `claude stop`
+    # instead: a turn can end there, on a tool refused at the PC or a shutdown mid-tool.
+    stopper = Stopper(world[1])
+    result = SimpleNamespace(type="user", message={"content": [{"type": "tool_result", "tool_use_id": "t1"}]})
+    server = bridge_with_stop(tmp_path, world, Starter(world[1], entry=REMOTE), stopper, transcript=[result])
+    async with Client(server) as c:
+        await c.call_tool("start_active_session", {"folder": "billing", "name": "invoices"})
+        out = (await c.call_tool("stop_active_session", {"name": "invoices"})).structured_content
+    assert out["status"] == "parked" and stopper.calls == []
+
+
 async def test_a_session_stopped_now_is_stopped_at_once_even_when_idle(tmp_path, world):
     stopper = Stopper(world[1])
     async with Client(bridge_with_stop(tmp_path, world, Starter(world[1], entry=REMOTE), stopper)) as c:

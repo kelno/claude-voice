@@ -500,6 +500,7 @@ def _lean(raw: bytes) -> Any:
     return SimpleNamespace(
         type=entry["type"],
         message={"role": message.get("role"), "content": content},
+        stop=message.get("stop_reason"),  # Claude's: "tool_use" mid-turn, "end_turn" at its end
         error=entry.get("error"),
         origin=(entry.get("origin") or {}).get("kind"),
         source=(entry.get("origin") or {}).get("server"),  # the channel's, for a channel event
@@ -541,6 +542,23 @@ def _started_in_background(entry: dict[str, Any]) -> str | None:
     # RULE: a helper agent resumed runs again until its next note
     task = task or result.get("resumedAgentId")
     return str(task) if task else None
+
+
+def ends_mid_turn(messages: list[Any]) -> bool:
+    """Whether a transcript, as far as it is on disk, stops in the middle of a turn: its last message
+    is Claude's, stopped to call a tool or with only its thinking written, or a tool's result. A
+    turn's own last words follow those: every turn ended on Claude's text in 150 transcripts read
+    on 2026-11-28. Claude Code may list a session idle a moment before those words reach the
+    transcript (ledger F250)."""
+    for m in reversed(messages):
+        content = m.message.get("content")
+        if m.type == "assistant":
+            # Nothing kept: its thinking alone, whose words, in the same message, come on the next line.
+            return getattr(m, "stop", None) == "tool_use" or content == []
+        if m.type == "user":
+            # A tool's result, which keeps no text here: a prompt has some.
+            return isinstance(content, list) and not any(b.get("type") == "text" for b in content)
+    return False
 
 
 def background_tasks(messages: Iterable[Any], since_ms: float | None = None) -> list[str]:

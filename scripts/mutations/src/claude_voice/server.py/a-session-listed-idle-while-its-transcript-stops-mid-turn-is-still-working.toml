@@ -1,0 +1,5 @@
+[[rule]]
+name = "a session listed idle while its transcript stops mid-turn is still working"
+file = "src/claude_voice/server.py"
+find = 'return "busy" if d is not None and state == "idle" and still_writing\(d\) else state'
+replace = 'return state'

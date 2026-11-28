@@ -1554,6 +1554,7 @@ def build_server(
     side_chars: int = 8_000,
     poll_seconds: float = 0.25,  # four looks a second (upstream: one), so a reply reaches the relay sooner
     silent_grace: float = 1.0,
+    writing_grace: float = 5.0,  # how long a session listed idle mid-turn is still taken for working (F250)
     receive_seconds: float = 15.0,
     projects_dir: Path = PROJECTS_DIR,
     public_url: str = "http://localhost",
@@ -2382,7 +2383,27 @@ def build_server(
         return following.follow_state(turns, mark, session_state(d))
 
     def session_state(d: dict[str, Any] | None) -> str:
-        return following.session_state(d, background_running)
+        state = following.session_state(d, background_running)
+        # RULE: a session listed idle while its transcript stops mid-turn is still working
+        return "busy" if d is not None and state == "idle" and still_writing(d) else state
+
+    writing_since: dict[str, tuple[int, float]] = {}  # session -> (messages read, first seen so)
+
+    def still_writing(d: dict[str, Any]) -> bool:
+        """Whether a session Claude Code lists idle is still writing its turn's last words: its
+        transcript stops mid-turn, as it does for a moment after the listing changes (ledger F250).
+        Believed for writing_grace seconds at most, since a turn can also end there, on a tool
+        refused at the PC; the same transcript growing starts the count again."""
+        sid = str(d.get("sessionId"))
+        messages = read_transcript(sid, str(d.get("cwd")))
+        if not transcripts.ends_mid_turn(messages):
+            writing_since.pop(sid, None)
+            return False
+        count, first = writing_since.get(sid, (-1, 0.0))
+        if count != len(messages):
+            count, first = len(messages), manager.clock()
+            writing_since[sid] = (count, first)
+        return manager.clock() - first < writing_grace
 
     def background_running(d: dict[str, Any]) -> bool:
         """Whether a session's turn ended with a task it started still running in the background.
@@ -3487,8 +3508,10 @@ def build_server(
         # Claude Code's own close of a session at rest keeps its claude.ai session; `claude stop`
         # archives it, so the app no longer lists it (ADR-CV-107).
         remote = target.get("kind") == "bg" and bool(target.get("bridgeSessionId"))
+        # Claude Code's own listing: a session taken for still writing its last words (still_writing)
+        # may have ended there, and parking one about to rest loses nothing.
         # RULE: an idle background session with Remote Control is parked, not stopped
-        if remote and session_state(target) == "idle":
+        if remote and following.session_state(target, background_running) == "idle":
             # RULE: a session stopped now is stopped at once, even when idle
             if not now:
                 parking.park(store, sid, manager.clock() * 1000)
@@ -4811,6 +4834,8 @@ def build_server(
             now = live_by_pid(pid)
             if now is None:
                 return target, "session_ended", None
+            if now.get("status") == "idle" and still_writing(now):
+                now = {**now, "status": "busy"}  # its turn's last words are still on their way (F250)
             target = now
             # A quick turn can start and end between two looks, so a new reply
             # counts as much as having seen the session busy.
